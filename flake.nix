@@ -1,0 +1,40 @@
+{
+  description = "Rust TUIs for ham rig control and satellite work";
+
+  inputs.nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
+
+  outputs =
+    { self, nixpkgs }:
+    let
+      systems = [
+        "x86_64-linux"
+        "aarch64-linux"
+      ];
+      forAllSystems = f: nixpkgs.lib.genAttrs systems (system: f nixpkgs.legacyPackages.${system});
+    in
+    {
+      packages = forAllSystems (pkgs: rec {
+        # All workspace binaries (kx3-cw, sat-tui).
+        hamtools = pkgs.rustPlatform.buildRustPackage {
+          pname = "hamtools";
+          version = "0.1.0";
+          src = self;
+          cargoLock.lockFile = ./Cargo.lock;
+        };
+        default = hamtools;
+      });
+
+      devShells = forAllSystems (pkgs: {
+        default = pkgs.mkShell {
+          packages = with pkgs; [
+            cargo
+            clippy
+            rustc
+            rustfmt
+            rust-analyzer
+            hamlib_4
+          ];
+        };
+      });
+    };
+}

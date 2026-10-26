@@ -1,0 +1,12 @@
+[package]
+name = "kx3-cw"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+rigctld-client = { path = "../rigctld-client" }
