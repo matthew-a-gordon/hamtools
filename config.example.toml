@@ -6,3 +6,10 @@ callsign = "N0CALL"
 [kx3]
 # The KX3's rigctld (see CLAUDE.md for the command).
 addr = "127.0.0.1:4532"
+
+# Function-key macros, F1 to F6. Text is sent as CW when you press the key.
+# {call} expands to the callsign above.
+[macros]
+F1 = "CQ CQ CQ DE {call} {call} K"
+F2 = "{call}"
+F3 = "R R 73 TU DE {call} SK"

@@ -109,3 +109,42 @@ mod loading {
         assert!(Config::load(None, Some(Path::new(&path))).is_err());
     }
 }
+
+mod macros {
+    use kx3_cw::Config;
+
+    #[test]
+    fn none_by_default() {
+        assert!(Config::parse("").unwrap().macros.is_empty());
+    }
+
+    #[test]
+    fn f1_to_f6_are_read_and_uppercased() {
+        let config = Config::parse(
+            r#"
+            [macros]
+            F1 = "cq cq cq de {call} {call} k"
+            F6 = "73 TU"
+            "#,
+        )
+        .unwrap();
+
+        assert_eq!(config.macros.len(), 2);
+        assert_eq!(config.macros[&1], "CQ CQ CQ DE {CALL} {CALL} K");
+        assert_eq!(config.macros[&6], "73 TU");
+    }
+
+    #[test]
+    fn rejects_keys_other_than_f1_to_f6() {
+        for key in ["F0", "F7", "G1", "f1", "F10"] {
+            let text = format!("[macros]\n{key} = \"CQ\"");
+            assert!(Config::parse(&text).is_err(), "{key} should be rejected");
+        }
+    }
+
+    #[test]
+    fn rejects_blank_macro_text() {
+        assert!(Config::parse("[macros]\nF1 = \"\"").is_err());
+        assert!(Config::parse("[macros]\nF1 = \"   \"").is_err());
+    }
+}

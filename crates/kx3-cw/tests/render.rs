@@ -72,3 +72,50 @@ fn shows_a_status_message_such_as_a_rig_error() {
         "{rows:#?}"
     );
 }
+
+mod macro_hints {
+    use std::collections::BTreeMap;
+
+    use super::*;
+
+    #[test]
+    fn bound_function_keys_are_listed_with_their_text() {
+        let app = App::with_callsign(Some("KD0RHV".to_string())).with_macros(BTreeMap::from([
+            (1, "CQ CQ CQ DE {CALL} K".to_string()),
+            (2, "73 TU".to_string()),
+        ]));
+
+        let rows = screen(&app, 80, 10);
+
+        let hint = rows
+            .iter()
+            .find(|r| r.contains("F1 "))
+            .expect("no hint row");
+        assert!(hint.contains("F1 CQ CQ CQ DE KD0RHV K"), "{hint:?}");
+        assert!(hint.contains("F2 73 TU"), "{hint:?}");
+        assert!(!hint.contains("F3"), "{hint:?}");
+    }
+
+    #[test]
+    fn long_macros_are_shortened_so_every_key_still_fits() {
+        let app = App::new().with_macros(BTreeMap::from([
+            (1, "A".repeat(100)),
+            (2, "73 TU".to_string()),
+        ]));
+
+        let rows = screen(&app, 60, 10);
+
+        let hint = rows
+            .iter()
+            .find(|r| r.contains("F1 "))
+            .expect("no hint row");
+        assert!(hint.contains("F2 73 TU"), "{hint:?}");
+    }
+
+    #[test]
+    fn no_hint_row_without_macros() {
+        let rows = screen(&App::new(), 80, 10);
+
+        assert!(!rows.iter().any(|r| r.contains("F1 ")), "{rows:#?}");
+    }
+}

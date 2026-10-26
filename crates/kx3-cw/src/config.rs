@@ -1,5 +1,6 @@
 //! User configuration (`~/.config/hamtools/config.toml`).
 
+use std::collections::BTreeMap;
 use std::fmt;
 use std::path::{Path, PathBuf};
 
@@ -12,6 +13,8 @@ pub struct Config {
     /// Operator callsign, uppercase. Substituted for `{call}` in text you send.
     pub callsign: Option<String>,
     pub kx3: Kx3Config,
+    /// Function-key macros, keyed 1..=6 for F1..F6. Text is uppercase and may contain `{CALL}`.
+    pub macros: BTreeMap<u8, String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -24,6 +27,7 @@ impl Default for Config {
     fn default() -> Self {
         Self {
             callsign: None,
+            macros: BTreeMap::new(),
             kx3: Kx3Config {
                 addr: DEFAULT_ADDR.to_string(),
             },
@@ -36,12 +40,14 @@ pub enum ConfigError {
     Parse(String),
     Read(String),
     Callsign(String),
+    Macro(String),
 }
 
 impl fmt::Display for ConfigError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             ConfigError::Parse(e) | ConfigError::Read(e) => write!(f, "config: {e}"),
+            ConfigError::Macro(m) => write!(f, "config: invalid macro {m}"),
             ConfigError::Callsign(c) => write!(
                 f,
                 "config: invalid callsign {c:?} (3-12 letters, digits or '/')"
@@ -58,6 +64,8 @@ struct RawConfig {
     callsign: Option<String>,
     #[serde(default)]
     kx3: RawKx3,
+    #[serde(default)]
+    macros: BTreeMap<String, String>,
 }
 
 #[derive(Deserialize, Default)]
@@ -70,8 +78,14 @@ impl Config {
     pub fn parse(text: &str) -> Result<Self, ConfigError> {
         let raw: RawConfig = toml::from_str(text).map_err(|e| ConfigError::Parse(e.to_string()))?;
         let callsign = raw.callsign.map(normalize_callsign).transpose()?;
+        let macros = raw
+            .macros
+            .into_iter()
+            .map(|(key, text)| parse_macro(&key, &text))
+            .collect::<Result<_, _>>()?;
         Ok(Self {
             callsign,
+            macros,
             kx3: Kx3Config {
                 addr: raw.kx3.addr.unwrap_or_else(|| DEFAULT_ADDR.to_string()),
             },
@@ -120,4 +134,18 @@ impl Config {
             Err(e) => Err(ConfigError::Read(format!("{}: {e}", path.display()))),
         }
     }
+}
+
+/// `key` must be `F1`..`F6`; `text` must not be blank. Returns the key number and uppercase text.
+fn parse_macro(key: &str, text: &str) -> Result<(u8, String), ConfigError> {
+    let number = key
+        .strip_prefix('F')
+        .and_then(|n| n.parse::<u8>().ok())
+        .filter(|n| (1..=6).contains(n) && key == format!("F{n}"))
+        .ok_or_else(|| ConfigError::Macro(format!("{key:?} (only F1 to F6 are supported)")))?;
+    let text = text.trim().to_uppercase();
+    if text.is_empty() {
+        return Err(ConfigError::Macro(format!("{key} has no text")));
+    }
+    Ok((number, text))
 }

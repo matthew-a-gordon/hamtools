@@ -143,3 +143,83 @@ fn call_placeholder_without_a_callsign_blocks_the_send_and_keeps_the_input() {
         app.status()
     );
 }
+
+mod macros {
+    use std::collections::BTreeMap;
+
+    use super::*;
+
+    fn app() -> App {
+        App::with_callsign(Some("KD0RHV".to_string())).with_macros(BTreeMap::from([
+            (1, "CQ CQ CQ DE {CALL} {CALL} K".to_string()),
+            (2, "73 TU".to_string()),
+        ]))
+    }
+
+    fn f(n: u8) -> KeyEvent {
+        key(KeyCode::F(n))
+    }
+
+    #[test]
+    fn a_function_key_sends_its_macro_with_the_callsign_filled_in() {
+        let mut app = app();
+
+        let command = app.handle_key(f(1));
+
+        assert_eq!(
+            command,
+            Some(Command::Send("CQ CQ CQ DE KD0RHV KD0RHV K".to_string()))
+        );
+        assert_eq!(
+            app.lines(),
+            [Line {
+                source: Source::Tx,
+                text: "CQ CQ CQ DE KD0RHV KD0RHV K".to_string()
+            }]
+        );
+    }
+
+    #[test]
+    fn sending_a_macro_leaves_the_half_typed_input_alone() {
+        let mut app = app();
+        type_str(&mut app, "de w9");
+
+        app.handle_key(f(2));
+
+        assert_eq!(app.input(), "DE W9");
+    }
+
+    #[test]
+    fn an_unset_function_key_says_so_and_sends_nothing() {
+        let mut app = app();
+
+        assert_eq!(app.handle_key(f(3)), None);
+
+        assert_eq!(app.status(), Some("F3 is not set"));
+        assert!(app.lines().is_empty());
+    }
+
+    #[test]
+    fn a_macro_using_the_callsign_is_blocked_when_none_is_configured() {
+        let mut app = App::new().with_macros(BTreeMap::from([(1, "DE {CALL}".to_string())]));
+
+        assert_eq!(app.handle_key(f(1)), None);
+
+        assert!(
+            app.status().is_some_and(|s| s.contains("callsign")),
+            "{:?}",
+            app.status()
+        );
+        assert!(app.lines().is_empty());
+    }
+
+    #[test]
+    fn function_keys_beyond_f6_do_nothing() {
+        let mut app = app();
+
+        assert_eq!(app.handle_key(f(7)), None);
+
+        assert_eq!(app.status(), None);
+        assert!(app.lines().is_empty());
+    }
+}

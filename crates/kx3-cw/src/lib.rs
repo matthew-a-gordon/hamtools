@@ -3,6 +3,7 @@
 mod config;
 pub use config::{Config, ConfigError, Kx3Config, config_path};
 
+use std::collections::BTreeMap;
 use std::fmt;
 
 /// Decoded form of a KX3 `TB;` reply.
@@ -149,6 +150,7 @@ pub struct App {
     input: String,
     status: Option<String>,
     callsign: Option<String>,
+    macros: BTreeMap<u8, String>,
 }
 
 impl App {
@@ -158,6 +160,12 @@ impl App {
             callsign,
             ..Self::default()
         }
+    }
+
+    /// Bind F1..F6 to canned messages (text is uppercase; `{CALL}` expands to the callsign).
+    pub fn with_macros(mut self, macros: BTreeMap<u8, String>) -> Self {
+        self.macros = macros;
+        self
     }
 
     pub fn status(&self) -> Option<&str> {
@@ -195,6 +203,26 @@ impl App {
         }
     }
 
+    /// Expand `{CALL}` in `text` (typed text is uppercased, so the placeholder is uppercase) and
+    /// queue it for sending, echoing it into the transcript. Without a callsign, a text that
+    /// needs one is refused with a status message.
+    fn send(&mut self, text: &str) -> Option<Command> {
+        let text = if text.contains("{CALL}") {
+            let Some(call) = &self.callsign else {
+                self.status = Some("no callsign set in the config file".to_string());
+                return None;
+            };
+            text.replace("{CALL}", call)
+        } else {
+            text.to_string()
+        };
+        self.lines.push(Line {
+            source: Source::Tx,
+            text: text.clone(),
+        });
+        Some(Command::Send(text))
+    }
+
     pub fn handle_key(&mut self, key: KeyEvent) -> Option<Command> {
         match key.code {
             KeyCode::Esc => Some(Command::Quit),
@@ -210,23 +238,17 @@ impl App {
                 None
             }
             KeyCode::Enter if !self.input.trim().is_empty() => {
-                // Typed text is uppercased, so the placeholder arrives as `{CALL}`.
-                let text = if self.input.contains("{CALL}") {
-                    let Some(call) = &self.callsign else {
-                        self.status = Some("no callsign set in the config file".to_string());
-                        return None;
-                    };
-                    self.input.replace("{CALL}", call)
-                } else {
-                    self.input.clone()
-                };
+                let command = self.send(&self.input.clone())?;
                 self.input.clear();
-                self.lines.push(Line {
-                    source: Source::Tx,
-                    text: text.clone(),
-                });
-                Some(Command::Send(text))
+                Some(command)
             }
+            KeyCode::F(n @ 1..=6) => match self.macros.get(&n).cloned() {
+                Some(text) => self.send(&text),
+                None => {
+                    self.status = Some(format!("F{n} is not set"));
+                    None
+                }
+            },
             _ => None,
         }
     }
@@ -250,10 +272,64 @@ fn wrap(text: &str, width: usize) -> Vec<String> {
         .collect()
 }
 
+/// Cut `text` to at most `max` characters, ending in `…` when it was shortened.
+fn shorten(text: &str, max: usize) -> String {
+    if text.chars().count() <= max {
+        return text.to_string();
+    }
+    let keep: String = text.chars().take(max.saturating_sub(1)).collect();
+    format!("{keep}…")
+}
+
+/// One `F<n> <text>` entry per bound macro, with the callsign filled in, sharing `width`
+/// columns fairly: short entries stay whole and long ones give up the most.
+fn macro_hints(app: &App, width: usize) -> String {
+    const GAP: usize = 2;
+    let entries: Vec<String> = app
+        .macros
+        .iter()
+        .map(|(n, text)| {
+            let text = match &app.callsign {
+                Some(call) => text.replace("{CALL}", call),
+                None => text.clone(),
+            };
+            format!("F{n} {text}")
+        })
+        .collect();
+    let mut by_length: Vec<usize> = (0..entries.len()).collect();
+    by_length.sort_by_key(|&i| entries[i].chars().count());
+    let mut remaining = width.saturating_sub(GAP * entries.len().saturating_sub(1));
+    let mut budget = vec![0; entries.len()];
+    for (rank, &i) in by_length.iter().enumerate() {
+        let share = remaining / (entries.len() - rank);
+        budget[i] = entries[i].chars().count().min(share);
+        remaining -= budget[i];
+    }
+    entries
+        .iter()
+        .zip(&budget)
+        .map(|(entry, &max)| shorten(entry, max))
+        .collect::<Vec<_>>()
+        .join(&" ".repeat(GAP))
+}
+
 /// Draw the transcript (newest text at the bottom) above the input line.
 pub fn render(app: &App, frame: &mut Frame) {
-    let [transcript_area, input_area] =
-        Layout::vertical([Constraint::Min(3), Constraint::Length(3)]).areas(frame.area());
+    let hint_height = u16::from(!app.macros.is_empty());
+    let [transcript_area, hint_area, input_area] = Layout::vertical([
+        Constraint::Min(3),
+        Constraint::Length(hint_height),
+        Constraint::Length(3),
+    ])
+    .areas(frame.area());
+
+    if hint_height > 0 {
+        let hints = macro_hints(app, hint_area.width as usize);
+        frame.render_widget(
+            Paragraph::new(hints).style(Style::default().fg(Color::DarkGray)),
+            hint_area,
+        );
+    }
 
     let transcript_block = Block::default().borders(Borders::ALL).title("KX3 CW");
     let inner = transcript_block.inner(transcript_area);

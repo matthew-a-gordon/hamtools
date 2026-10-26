@@ -27,3 +27,4 @@ cargo test --workspace
 ## Configuration
 
 `kx3-cw` reads `~/.config/hamtools/config.toml` (or `--config PATH`); see `config.example.toml`. Set `callsign` once and type `{call}` in text you send, e.g. `CQ CQ DE {call} K`. The real config stays out of the repo.
+Bind `F1` to `F6` under `[macros]` to send canned messages with one key; the keys and their text are listed above the input line.

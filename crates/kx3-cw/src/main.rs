@@ -84,7 +84,7 @@ fn run(
     session: &mut Session,
     config: Config,
 ) -> Result<(), Box<dyn Error>> {
-    let mut app = App::with_callsign(config.callsign);
+    let mut app = App::with_callsign(config.callsign).with_macros(config.macros);
     let mut poll_failed = false;
     loop {
         terminal.draw(|frame| render(&app, frame))?;
