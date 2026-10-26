@@ -1,0 +1,8 @@
+# Copy to ~/.config/hamtools/config.toml (or pass --config PATH).
+
+# Your callsign. Typing {call} in kx3-cw expands to it when you send.
+callsign = "N0CALL"
+
+[kx3]
+# The KX3's rigctld (see CLAUDE.md for the command).
+addr = "127.0.0.1:4532"

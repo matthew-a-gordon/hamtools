@@ -23,3 +23,7 @@ cargo test --workspace
 ## Architecture
 
 `rigctld` owns each serial port; every tool here is a TCP client. KX3 is expected at `127.0.0.1:4532` (hamlib model 2045) and FT-847 at `127.0.0.1:4533` (model 1001).
+
+## Configuration
+
+`kx3-cw` reads `~/.config/hamtools/config.toml` (or `--config PATH`); see `config.example.toml`. Set `callsign` once and type `{call}` in text you send, e.g. `CQ CQ DE {call} K`. The real config stays out of the repo.
