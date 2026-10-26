@@ -141,3 +141,26 @@ async fn raw_command_reply_is_returned_clean() {
     assert_eq!(reply, "TB;");
     client.set_freq(7_030_000).await.unwrap();
 }
+
+#[tokio::test]
+async fn set_split_frequency_is_read_back() {
+    let (_rig, mut client) = DummyRig::start().await;
+    client.set_split(true, "VFOB").await.unwrap();
+
+    client.set_split_freq(435_640_000).await.unwrap();
+
+    assert_eq!(client.get_split_freq().await.unwrap(), 435_640_000);
+}
+
+#[tokio::test]
+async fn set_split_mode_is_read_back_with_passband() {
+    let (_rig, mut client) = DummyRig::start().await;
+    client.set_split(true, "VFOB").await.unwrap();
+
+    client.set_split_mode("LSB", 2400).await.unwrap();
+
+    assert_eq!(
+        client.get_split_mode().await.unwrap(),
+        ("LSB".to_string(), 2400)
+    );
+}

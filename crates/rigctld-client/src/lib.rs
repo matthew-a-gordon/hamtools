@@ -99,6 +99,31 @@ impl Client {
         Ok(())
     }
 
+    /// Transmit frequency in Hz while split is on (`i`).
+    pub async fn get_split_freq(&mut self) -> Result<u64> {
+        let reply = self.request("i").await?;
+        parse_field(&reply, "TX Frequency")
+    }
+
+    pub async fn set_split_freq(&mut self, hz: u64) -> Result<()> {
+        self.request(&format!("I {hz}")).await?;
+        Ok(())
+    }
+
+    /// Transmit mode and passband width in Hz while split is on (`x`).
+    pub async fn get_split_mode(&mut self) -> Result<(String, i64)> {
+        let reply = self.request("x").await?;
+        Ok((
+            parse_field(&reply, "TX Mode")?,
+            parse_field(&reply, "TX Passband")?,
+        ))
+    }
+
+    pub async fn set_split_mode(&mut self, mode: &str, passband_hz: i64) -> Result<()> {
+        self.request(&format!("X {mode} {passband_hz}")).await?;
+        Ok(())
+    }
+
     pub async fn get_ptt(&mut self) -> Result<bool> {
         let reply = self.request("t").await?;
         let state: u8 = parse_field(&reply, "PTT")?;
