@@ -5,21 +5,20 @@ on:
   pull_request:
 
 jobs:
+  # Runs in the flake's dev shell so tests use the same Hamlib (rigctld) as development.
   rust:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          components: rustfmt, clippy
-      - uses: Swatinem/rust-cache@v2
-      - run: sudo apt-get update && sudo apt-get install -y libhamlib-utils
-      - run: cargo fmt --check
-      - run: cargo clippy --workspace --all-targets -- -D warnings
-      - run: cargo test --workspace
+      - uses: DeterminateSystems/nix-installer-action@main
+      - run: nix develop -c cargo fmt --check
+      - run: nix develop -c cargo clippy --workspace --all-targets -- -D warnings
+      - run: nix develop -c cargo test --workspace
 
   nix:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
       - uses: DeterminateSystems/nix-installer-action@main

@@ -20,6 +20,8 @@
           version = "0.1.0";
           src = self;
           cargoLock.lockFile = ./Cargo.lock;
+          # Integration tests drive the dummy rig (`rigctld -m 1`).
+          nativeCheckInputs = [ pkgs.hamlib_4 ];
         };
         default = hamtools;
       });
