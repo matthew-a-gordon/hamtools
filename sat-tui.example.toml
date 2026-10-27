@@ -1,0 +1,20 @@
+# Copy to ~/.config/hamtools/sat-tui.toml (or pass --config PATH).
+
+# NORAD ids to show. Empty or absent: every satellite with a usable transmitter.
+# 25544 = ISS, 27607 = SO-50, 44909 = RS-44
+# watch = [25544, 27607, 44909]
+
+[rig]
+# The FT-847's rigctld (hamlib model 1001).
+addr = "127.0.0.1:4533"
+
+[passes]
+horizon_hours = 24
+min_elevation_deg = 10.0
+
+[observer]
+# Either a Maidenhead grid (4 or 6 characters) or lat/lon, not both.
+grid = "EN71"
+# lat_deg = 41.67
+# lon_deg = -85.71
+alt_m = 250.0

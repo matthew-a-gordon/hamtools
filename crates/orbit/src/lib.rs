@@ -5,6 +5,7 @@ use std::fmt;
 use chrono::{DateTime, Duration, Utc};
 
 /// A satellite parsed from a TLE, ready to propagate.
+#[derive(Clone)]
 pub struct Satellite {
     name: String,
     elements: sgp4::Elements,

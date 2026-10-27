@@ -13,8 +13,11 @@ rigctld-client = { path = "../rigctld-client" }
 orbit = { path = "../orbit" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-chrono = { version = "0.4", default-features = false, features = ["std"] }
-tokio = { version = "1", features = ["rt", "net"] }
+chrono = { version = "0.4", default-features = false, features = ["std", "clock"] }
+tokio = { version = "1", features = ["rt", "net", "time"] }
+ureq = "3.5.0"
+toml = "1.1.8"
+ratatui = "0.30.2"
 
 [dev-dependencies]
 tokio = { version = "1", features = ["rt", "macros", "net", "io-util", "sync"] }

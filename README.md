@@ -28,3 +28,14 @@ cargo test --workspace
 
 `kx3-cw` reads `~/.config/hamtools/config.toml` (or `--config PATH`); see `config.example.toml`. Set `callsign` once and type `{call}` in text you send, e.g. `CQ CQ DE {call} K`. The real config stays out of the repo.
 Bind `F1` to `F6` under `[macros]` to send canned messages with one key; the keys and their text are listed above the input line.
+
+## sat-tui
+
+Satellite pass predictor and Doppler-corrected tracker for the FT-847's satellite mode. Works with no rig attached (pass viewer). Downloads TLEs (CelesTrak) and transmitters (SatNOGS) into `~/.cache/hamtools/` and shows their age, so it keeps working offline.
+
+```sh
+sat-tui                       # position from sat-tui.toml, else a town-level default
+sat-tui --grid EN71 --rig 127.0.0.1:4533
+```
+
+Keys: `j`/`k` or arrows move, `Tab` switches pass list and transmitter picker, `t` starts or stops tracking, `[` `]` nudge the passband position by 1 kHz and `{` `}` by 100 Hz, `s` switches the radio's SAT mode off, `m` shows transmitters the radio cannot demodulate, `r` refreshes data, `q` quits. It never keys the transmitter; you press PTT. See `sat-tui.example.toml`.

@@ -101,3 +101,12 @@ impl Tracker {
         Ok(commands)
     }
 }
+
+impl Tracker {
+    /// Forget what was sent, so the next step sets the radio up from scratch. For use after the
+    /// rig connection has been lost and restored.
+    pub fn reset(&mut self) {
+        self.sent = Sent::default();
+        self.last_plan = None;
+    }
+}
