@@ -152,7 +152,37 @@ fn a_status_message_is_shown() {
     assert!(screen.contains("rig: connection refused"), "{screen}");
 }
 
-mod pass_list_columns {
+/// Render at an explicit size (the other helpers use 110x32).
+fn screen_sized(app: &App, footer: &Footer, width: u16, height: u16) -> Vec<String> {
+    let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
+    terminal.draw(|frame| render(app, footer, frame)).unwrap();
+    terminal
+        .backend()
+        .buffer()
+        .content()
+        .chunks(width as usize)
+        .map(|row| row.iter().map(|cell| cell.symbol()).collect())
+        .collect()
+}
+
+/// Screen rows reach across both panes; these cut a 110-column screen at the pass list's edge
+/// (30% of the width, 33 columns) so assertions say which pane they mean.
+const LIST_WIDTH: usize = 33;
+
+fn left_pane(rows: &[String]) -> Vec<String> {
+    rows.iter()
+        .map(|r| r.chars().take(LIST_WIDTH).collect())
+        .collect()
+}
+
+fn right_pane(rows: &[String]) -> String {
+    rows.iter()
+        .map(|r| r.chars().skip(LIST_WIDTH).collect::<String>())
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+mod list_and_detail {
     use super::*;
 
     fn app_with_short_threshold(secs: i64) -> App {
@@ -174,51 +204,136 @@ mod pass_list_columns {
         )
     }
 
-    // ISS pass 13:14:10.26 - 13:20:55.81 (6 min 45 s, durations are shown rounded down).
+    // ISS pass 13:14:10.26 - 13:20:55.81 (6 min 45 s, peak 69.8 degrees at 13:17:33).
 
     #[test]
-    fn each_row_shows_start_end_and_how_long_the_pass_lasts() {
-        let rows = screen(&app(), &footer(t(13, 15, 0)));
+    fn a_row_gives_start_length_and_peak_but_neither_the_end_time_nor_the_day() {
+        let list = left_pane(&screen(&app(), &footer(t(13, 15, 0))));
 
-        let row = rows
-            .iter()
-            .find(|r| r.contains("ISS (ZARYA)"))
-            .expect("ISS row");
-        assert!(row.contains("13:14"), "{row}");
-        assert!(row.contains("13:20"), "{row}");
+        let row = list.iter().find(|r| r.contains("13:14")).expect("ISS row");
         assert!(row.contains("6:45"), "{row}");
         assert!(row.contains("70°"), "{row}");
+        assert!(row.contains("ISS"), "{row}");
+        assert!(
+            !row.contains("13:20"),
+            "end time belongs in the detail panel: {row}"
+        );
+        assert!(
+            !row.contains("26"),
+            "the day belongs on a separator line: {row}"
+        );
+    }
+
+    #[test]
+    fn the_list_has_column_headings() {
+        let list = text(&left_pane(&screen(&app(), &footer(t(13, 15, 0)))));
+
+        assert!(list.contains("start"), "{list}");
+        assert!(list.contains("len"), "{list}");
+        assert!(list.contains("peak"), "{list}");
+    }
+
+    #[test]
+    fn each_day_gets_one_separator_line_above_its_passes() {
+        let list = left_pane(&screen(&app(), &footer(t(13, 15, 0))));
+
+        let at = |needle: &str| {
+            list.iter()
+                .position(|r| r.contains(needle))
+                .unwrap_or_else(|| panic!("no {needle:?}"))
+        };
+        assert!(at("Mon 26 Oct") < at("13:14"), "{list:#?}");
+        assert!(at("13:14") < at("21:34"), "{list:#?}");
+        assert!(at("21:34") < at("Tue 27 Oct"), "{list:#?}");
+        assert!(at("Tue 27 Oct") < at("05:35"), "{list:#?}");
+        assert_eq!(list.iter().filter(|r| r.contains("Oct")).count(), 2);
     }
 
     #[test]
     fn short_passes_get_a_marker_and_long_ones_do_not() {
         // The ISS pass at 27th 09:12 lasts 4:20; 300 s makes it, and only it, short.
-        let rows = screen(&app_with_short_threshold(300), &footer(t(13, 15, 0)));
+        let list = left_pane(&screen(
+            &app_with_short_threshold(300),
+            &footer(t(13, 15, 0)),
+        ));
 
-        let short = rows
+        let short = list
             .iter()
-            .find(|r| r.contains("27 09:12"))
+            .find(|r| r.contains("09:12"))
             .expect("short row");
         assert!(short.contains("4:20!"), "{short}");
-        let long = rows
-            .iter()
-            .find(|r| r.contains("26 13:14"))
-            .expect("long row");
+        let long = list.iter().find(|r| r.contains("13:14")).expect("long row");
         assert!(!long.contains('!'), "{long}");
     }
 
     #[test]
-    fn long_satellite_names_are_cut_to_fit_without_breaking_the_columns() {
-        let rows = screen(&app(), &footer(t(13, 15, 0)));
+    fn names_are_short_in_the_list_and_whole_in_the_detail() {
+        let mut app = app();
+        press(&mut app, KeyCode::Down); // RS-44's 19:40 pass
+        let rows = screen(&app, &footer(t(19, 30, 0)));
 
-        let row = rows
-            .iter()
-            .find(|r| r.contains("19:40"))
-            .expect("RS-44 row");
-        // Still shows the times and a recognisable name, inside the pane border.
-        assert!(row.contains("RS-44"), "{row}");
-        assert!(row.contains("16:33"), "{row}");
-        assert!(row.matches('│').count() >= 2, "{row}");
+        let list = text(&left_pane(&rows));
+        assert!(list.contains("RS-44"), "{list}");
+        assert!(!list.contains("BREEZE"), "{list}");
+        assert!(
+            right_pane(&rows).contains("RS-44 & BREEZE-KM R/B"),
+            "{rows:#?}"
+        );
+    }
+
+    #[test]
+    fn the_detail_gives_name_id_window_length_and_the_time_of_the_peak() {
+        let rows = screen(&app(), &footer(t(13, 0, 0)));
+        let detail = right_pane(&rows);
+
+        assert!(detail.contains("ISS (ZARYA)"), "{detail}");
+        assert!(detail.contains("NORAD 25544"), "{detail}");
+        assert!(detail.contains("13:14:10-13:20:55Z"), "{detail}");
+        assert!(detail.contains("6:45"), "{detail}");
+        assert!(detail.contains("peak 70° at 13:17:33Z"), "{detail}");
+        // Range stays in the live line.
+        assert!(detail.contains("Range"), "{detail}");
+    }
+
+    #[test]
+    fn the_selected_row_scrolls_into_view_in_a_short_terminal() {
+        let mut app = app();
+        for _ in 0..9 {
+            press(&mut app, KeyCode::Down);
+        }
+
+        let rows = screen_sized(&app, &footer(t(13, 15, 0)), 110, 14);
+
+        let list = left_pane(&rows);
+        let selected = list.iter().find(|r| r.contains("> ")).expect("cursor row");
+        assert!(selected.contains("10:50"), "{list:#?}");
+    }
+}
+
+mod tracking_strip {
+    use super::*;
+
+    #[test]
+    fn tracking_has_its_own_strip_apart_from_the_live_panel() {
+        let mut app = app();
+        press(&mut app, KeyCode::Char('t'));
+
+        let detail = right_pane(&screen(&app, &footer(t(13, 0, 0))));
+
+        assert!(detail.contains("Tracking"), "{detail}");
+        assert!(detail.contains("TRACKING Mode V APRS"), "{detail}");
+        assert!(
+            detail.contains("pass: AOS in 14:10  LOS in 20:55"),
+            "{detail}"
+        );
+    }
+
+    #[test]
+    fn without_tracking_there_is_no_strip() {
+        let detail = right_pane(&screen(&app(), &footer(t(13, 0, 0))));
+
+        assert!(!detail.contains("Tracking"), "{detail}");
+        assert!(!detail.contains("TRACKING"), "{detail}");
     }
 }
 
@@ -283,4 +398,18 @@ mod tracked_countdown {
 
         assert!(screen.contains("AOS in 14:10"), "{screen}");
     }
+}
+
+#[test]
+fn nothing_in_the_live_panel_is_cut_off_on_an_80_column_terminal() {
+    let rows = screen_sized(&app(), &footer(t(13, 15, 0)), 80, 24);
+    let detail = rows
+        .iter()
+        .map(|r| r.chars().skip(26).collect::<String>())
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    assert!(detail.contains("Rate -6.56 km/s"), "{detail}");
+    assert!(detail.contains("peak 70° at 13:17:33Z"), "{detail}");
+    assert!(detail.contains("RX     145,828,190 Hz  FM"), "{detail}");
 }
