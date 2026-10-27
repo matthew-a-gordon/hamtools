@@ -205,11 +205,11 @@ impl Satellite {
 /// One visible pass of a satellite above a minimum elevation.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Pass {
-    /// Acquisition of signal. Clipped to the search start if the pass was already under way.
+    /// Acquisition of signal: when the pass really began, even if before the search window.
     pub aos: DateTime<Utc>,
     /// Time of closest approach, i.e. maximum elevation.
     pub tca: DateTime<Utc>,
-    /// Loss of signal. Clipped to the search end if the pass is still under way.
+    /// Loss of signal: when the pass really ends, even if after the search window.
     pub los: DateTime<Utc>,
     pub max_elevation_deg: f64,
     pub aos_azimuth_deg: f64,
@@ -220,6 +220,8 @@ pub struct Pass {
 const SCAN_STEP: Duration = Duration::seconds(20);
 /// Crossing and peak times are refined to this resolution.
 const TIME_RESOLUTION_MS: i64 = 10;
+/// How far outside the search window to look for the true start or end of a pass.
+const MAX_PASS_SPAN: Duration = Duration::hours(6);
 
 impl Satellite {
     /// Passes whose elevation reaches `min_elevation_deg` between `from` and `to`, in time order.
@@ -234,7 +236,11 @@ impl Satellite {
         let above = |t| look(t).map(|l| l.elevation_deg >= min_elevation_deg);
 
         let mut passes = Vec::new();
-        let mut aos = above(from)?.then_some(from);
+        let mut aos = if above(from)? {
+            Some(self.true_edge(observer, from, false, min_elevation_deg)?)
+        } else {
+            None
+        };
         let mut prev = from;
         while prev < to {
             let cur = (prev + SCAN_STEP).min(to);
@@ -253,9 +259,41 @@ impl Satellite {
             prev = cur;
         }
         if let Some(start) = aos {
-            passes.push(self.build_pass(observer, start, to)?);
+            let los = self.true_edge(observer, to, true, min_elevation_deg)?;
+            passes.push(self.build_pass(observer, start, los)?);
         }
         Ok(passes)
+    }
+
+    /// Where a pass that is under way at `origin` really began (`forward == false`) or will end
+    /// (`forward == true`). Walks outward until the satellite is below `min_el`, then bisects.
+    /// If it stays above for [`MAX_PASS_SPAN`] (a geostationary satellite, say), the pass has no
+    /// edge worth reporting and `origin` is returned.
+    fn true_edge(
+        &self,
+        observer: &Observer,
+        origin: DateTime<Utc>,
+        forward: bool,
+        min_el: f64,
+    ) -> Result<DateTime<Utc>, PropagationError> {
+        let mut inside = origin;
+        while (inside - origin).abs() <= MAX_PASS_SPAN {
+            let outside = if forward {
+                inside + SCAN_STEP
+            } else {
+                inside - SCAN_STEP
+            };
+            if self.look_angle(observer, outside)?.elevation_deg < min_el {
+                let (earlier, later) = if forward {
+                    (inside, outside)
+                } else {
+                    (outside, inside)
+                };
+                return self.crossing(observer, earlier, later, min_el);
+            }
+            inside = outside;
+        }
+        Ok(origin)
     }
 
     /// Bisect for the instant elevation crosses `min_el` between `a` and `b`.

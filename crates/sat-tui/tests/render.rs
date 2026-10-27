@@ -28,6 +28,7 @@ fn app() -> App {
             watch: vec![],
             horizon_hours: 24,
             min_elevation_deg: 10.0,
+            short_pass_secs: 180,
         },
         t(12, 0, 0),
     )
@@ -149,4 +150,137 @@ fn a_status_message_is_shown() {
     let screen = text(&screen(&app, &footer(t(13, 15, 0))));
 
     assert!(screen.contains("rig: connection refused"), "{screen}");
+}
+
+mod pass_list_columns {
+    use super::*;
+
+    fn app_with_short_threshold(secs: i64) -> App {
+        App::new(
+            parse_tles(include_str!("fixtures/sample.tle")).unwrap(),
+            parse_transmitters(include_str!("fixtures/satnogs_transmitters.json")).unwrap(),
+            Observer {
+                lat_deg: 41.67,
+                lon_deg: -85.71,
+                alt_m: 250.0,
+            },
+            Settings {
+                watch: vec![],
+                horizon_hours: 24,
+                min_elevation_deg: 10.0,
+                short_pass_secs: secs,
+            },
+            t(12, 0, 0),
+        )
+    }
+
+    // ISS pass 13:14:10.26 - 13:20:55.81 (6 min 45 s, durations are shown rounded down).
+
+    #[test]
+    fn each_row_shows_start_end_and_how_long_the_pass_lasts() {
+        let rows = screen(&app(), &footer(t(13, 15, 0)));
+
+        let row = rows
+            .iter()
+            .find(|r| r.contains("ISS (ZARYA)"))
+            .expect("ISS row");
+        assert!(row.contains("13:14"), "{row}");
+        assert!(row.contains("13:20"), "{row}");
+        assert!(row.contains("6:45"), "{row}");
+        assert!(row.contains("70°"), "{row}");
+    }
+
+    #[test]
+    fn short_passes_get_a_marker_and_long_ones_do_not() {
+        // The ISS pass at 27th 09:12 lasts 4:20; 300 s makes it, and only it, short.
+        let rows = screen(&app_with_short_threshold(300), &footer(t(13, 15, 0)));
+
+        let short = rows
+            .iter()
+            .find(|r| r.contains("27 09:12"))
+            .expect("short row");
+        assert!(short.contains("4:20!"), "{short}");
+        let long = rows
+            .iter()
+            .find(|r| r.contains("26 13:14"))
+            .expect("long row");
+        assert!(!long.contains('!'), "{long}");
+    }
+
+    #[test]
+    fn long_satellite_names_are_cut_to_fit_without_breaking_the_columns() {
+        let rows = screen(&app(), &footer(t(13, 15, 0)));
+
+        let row = rows
+            .iter()
+            .find(|r| r.contains("19:40"))
+            .expect("RS-44 row");
+        // Still shows the times and a recognisable name, inside the pane border.
+        assert!(row.contains("RS-44"), "{row}");
+        assert!(row.contains("16:33"), "{row}");
+        assert!(row.matches('│').count() >= 2, "{row}");
+    }
+}
+
+mod tracked_countdown {
+    use super::*;
+
+    fn tracking_iss() -> App {
+        let mut app = app();
+        press(&mut app, KeyCode::Char('t'));
+        app
+    }
+
+    // ISS pass 26th 13:14:10.26 - 13:20:55.81; next 27th 05:57:35.31.
+
+    #[test]
+    fn before_the_pass_shows_time_to_start_and_to_end() {
+        let screen = text(&screen(&tracking_iss(), &footer(t(13, 0, 0))));
+
+        assert!(
+            screen.contains("pass: AOS in 14:10  LOS in 20:55"),
+            "{screen}"
+        );
+    }
+
+    #[test]
+    fn during_the_pass_shows_time_left() {
+        let screen = text(&screen(&tracking_iss(), &footer(t(13, 17, 0))));
+
+        assert!(screen.contains("pass: LOS in 3:55"), "{screen}");
+        assert!(!screen.contains("pass: AOS in"), "{screen}");
+    }
+
+    #[test]
+    fn long_waits_are_shown_in_hours() {
+        let screen = text(&screen(&tracking_iss(), &footer(t(14, 0, 0))));
+
+        assert!(screen.contains("pass: AOS in 15:57:35"), "{screen}");
+    }
+
+    #[test]
+    fn it_stays_on_the_tracked_satellite_when_the_cursor_moves_away() {
+        let mut app = tracking_iss();
+        press(&mut app, KeyCode::Tab);
+        press(&mut app, KeyCode::Tab);
+        press(&mut app, KeyCode::Down); // cursor on RS-44's pass
+
+        let screen = text(&screen(&app, &footer(t(13, 0, 0))));
+
+        assert!(screen.contains("pass: AOS in 14:10"), "{screen}");
+    }
+
+    #[test]
+    fn nothing_is_shown_when_not_tracking() {
+        let screen = text(&screen(&app(), &footer(t(13, 0, 0))));
+
+        assert!(!screen.contains("pass: "), "{screen}");
+    }
+
+    #[test]
+    fn the_selected_passs_own_countdown_uses_the_same_format() {
+        let screen = text(&screen(&app(), &footer(t(13, 0, 0))));
+
+        assert!(screen.contains("AOS in 14:10"), "{screen}");
+    }
 }

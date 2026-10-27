@@ -38,4 +38,6 @@ sat-tui                       # position from sat-tui.toml, else a town-level de
 sat-tui --grid EN71 --rig 127.0.0.1:4533
 ```
 
+The pass list shows each pass's start, end, length and peak elevation; passes shorter than `short_pass_secs` (default 180) are marked `!`. While tracking, the live panel counts down to the tracked pass's AOS and LOS.
+
 Keys: `j`/`k` or arrows move, `Tab` switches pass list and transmitter picker, `t` starts or stops tracking, `[` `]` nudge the passband position by 1 kHz and `{` `}` by 100 Hz, `s` switches the radio's SAT mode off, `m` shows transmitters the radio cannot demodulate, `r` refreshes data, `q` quits. It never keys the transmitter; you press PTT. See `sat-tui.example.toml`.

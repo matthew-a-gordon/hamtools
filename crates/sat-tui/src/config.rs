@@ -17,6 +17,8 @@ pub struct Config {
     pub horizon_hours: u32,
     /// A pass counts only if it climbs at least this high.
     pub min_elevation_deg: f64,
+    /// A pass shorter than this many seconds is flagged as short.
+    pub short_pass_secs: i64,
     /// Where the operator is, as far as the file says (see [`crate::observer::resolve`]).
     pub observer: Spec,
 }
@@ -28,6 +30,7 @@ impl Default for Config {
             rig_addr: "127.0.0.1:4533".to_string(),
             horizon_hours: 24,
             min_elevation_deg: 10.0,
+            short_pass_secs: 180,
             observer: Spec::default(),
         }
     }
@@ -67,6 +70,7 @@ struct RawRig {
 struct RawPasses {
     horizon_hours: Option<u32>,
     min_elevation_deg: Option<f64>,
+    short_pass_secs: Option<i64>,
 }
 
 #[derive(Deserialize, Default)]
@@ -97,11 +101,21 @@ impl Config {
                 "passes.min_elevation_deg {min_elevation_deg} must be 0 to 90"
             )));
         }
+        let short_pass_secs = raw
+            .passes
+            .short_pass_secs
+            .unwrap_or(defaults.short_pass_secs);
+        if !(1..=3600).contains(&short_pass_secs) {
+            return Err(ConfigError(format!(
+                "passes.short_pass_secs {short_pass_secs} must be 1 to 3600"
+            )));
+        }
         Ok(Self {
             watch: raw.watch.unwrap_or(defaults.watch),
             rig_addr: raw.rig.addr.unwrap_or(defaults.rig_addr),
             horizon_hours,
             min_elevation_deg,
+            short_pass_secs,
             observer: Spec {
                 grid: raw.observer.grid,
                 lat_deg: raw.observer.lat_deg,

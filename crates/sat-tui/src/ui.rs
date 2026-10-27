@@ -7,7 +7,7 @@ use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Paragraph};
 
-use crate::app::{App, Live};
+use crate::app::{App, Countdown, Live};
 use crate::cache::format_age;
 
 /// Everything shown that the [`App`] does not own: the clock, data ages and rig connection.
@@ -33,16 +33,24 @@ fn grouped(n: u64) -> String {
     out
 }
 
-fn countdown(secs: i64) -> String {
-    let secs = secs.max(0);
-    format!("{}m{:02}s", secs / 60, secs % 60)
+/// A time span as `6:45`, or `15:57:35` once it passes an hour (whole seconds, rounded down).
+pub fn format_countdown(d: Duration) -> String {
+    let secs = d.num_seconds().max(0);
+    if secs >= 3600 {
+        format!("{}:{:02}:{:02}", secs / 3600, secs % 3600 / 60, secs % 60)
+    } else {
+        format!("{}:{:02}", secs / 60, secs % 60)
+    }
 }
 
 pub fn render(app: &App, footer: &Footer, frame: &mut Frame) {
     let [main, foot] =
         Layout::vertical([Constraint::Min(8), Constraint::Length(2)]).areas(frame.area());
-    let [left, right] =
-        Layout::horizontal([Constraint::Length(40), Constraint::Min(30)]).areas(main);
+    let [left, right] = Layout::horizontal([
+        Constraint::Length(left_width(main.width)),
+        Constraint::Min(30),
+    ])
+    .areas(main);
     let [live_area, picker_area] =
         Layout::vertical([Constraint::Length(9), Constraint::Min(4)]).areas(right);
 
@@ -52,10 +60,16 @@ pub fn render(app: &App, footer: &Footer, frame: &mut Frame) {
     render_footer(app, footer, foot, frame);
 }
 
+/// `405 s` as `6:45` (whole seconds, rounded down).
+pub fn format_duration(d: Duration) -> String {
+    let secs = d.num_seconds().max(0);
+    format!("{}:{:02}", secs / 60, secs % 60)
+}
+
 fn render_passes(app: &App, area: Rect, frame: &mut Frame) {
     let block = Block::default()
         .borders(Borders::ALL)
-        .title("Passes (UTC)")
+        .title("Passes (UTC)  start-end  length  peak")
         .border_style(border(!app.picker_focused()));
     let inner = block.inner(area);
     let rows = app.rows();
@@ -69,17 +83,27 @@ fn render_passes(app: &App, area: Rect, frame: &mut Frame) {
         .take(height)
         .map(|(i, row)| {
             let cursor = if i == selected { ">" } else { " " };
-            let text = format!(
-                "{cursor} {}Z {:>3.0}° {}",
+            let flag = if row.short { "!" } else { " " };
+            let columns = format!(
+                "{cursor} {}-{}Z {:>5}{flag}{:>3.0}° ",
                 row.pass.aos.format("%d %H:%M"),
+                row.pass.los.format("%H:%M"),
+                format_duration(row.duration()),
                 row.pass.max_elevation_deg,
-                row.name
             );
-            let style = if i == selected {
-                Style::default().add_modifier(Modifier::BOLD)
-            } else {
-                Style::default()
-            };
+            // The name takes whatever room is left and is cut rather than wrapped.
+            let room = (inner.width as usize).saturating_sub(columns.chars().count());
+            let text = format!(
+                "{columns}{}",
+                row.name.chars().take(room).collect::<String>()
+            );
+            let mut style = Style::default();
+            if row.short {
+                style = style.fg(Color::Yellow);
+            }
+            if i == selected {
+                style = style.add_modifier(Modifier::BOLD);
+            }
             Line::from(Span::styled(text, style))
         })
         .collect();
@@ -107,6 +131,23 @@ fn render_live(app: &App, now: DateTime<Utc>, area: Rect, frame: &mut Frame) {
                 .fg(Color::Green)
                 .add_modifier(Modifier::BOLD),
         )));
+        if let Some(countdown) = app.tracked_countdown(now) {
+            let text = match countdown {
+                Countdown::Before { aos_in, los_in } => format!(
+                    "pass: AOS in {}  LOS in {}",
+                    format_countdown(aos_in),
+                    format_countdown(los_in)
+                ),
+                Countdown::During { los_in } => {
+                    format!("pass: LOS in {}", format_countdown(los_in))
+                }
+                Countdown::NoFurtherPass => "pass: no further pass listed".to_string(),
+            };
+            lines.push(Line::from(Span::styled(
+                text,
+                Style::default().fg(Color::Green),
+            )));
+        }
     }
     if let (Some(row), Some(live)) = (app.selected_pass(), app.live(now)) {
         lines.push(Line::from(format!(
@@ -118,9 +159,9 @@ fn render_live(app: &App, now: DateTime<Utc>, area: Rect, frame: &mut Frame) {
             live.azimuth_deg, live.elevation_deg, live.range_km, live.range_rate_km_s
         )));
         lines.push(Line::from(if now < row.pass.aos {
-            format!("AOS in {}", countdown((row.pass.aos - now).num_seconds()))
+            format!("AOS in {}", format_countdown(row.pass.aos - now))
         } else if now <= row.pass.los {
-            format!("LOS in {}", countdown((row.pass.los - now).num_seconds()))
+            format!("LOS in {}", format_countdown(row.pass.los - now))
         } else {
             "pass over".to_string()
         }));
@@ -229,4 +270,9 @@ fn render_footer(app: &App, footer: &Footer, area: Rect, frame: &mut Frame) {
         Paragraph::new(vec![Line::from(hints), Line::from(status)]),
         area,
     );
+}
+
+/// The pass list takes about 45% of the width, enough for its columns on a normal terminal.
+fn left_width(total: u16) -> u16 {
+    (total * 45 / 100).clamp(36, 54)
 }

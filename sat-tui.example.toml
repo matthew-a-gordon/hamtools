@@ -11,6 +11,8 @@ addr = "127.0.0.1:4533"
 [passes]
 horizon_hours = 24
 min_elevation_deg = 10.0
+# Passes shorter than this (seconds) are marked with ! in the list.
+short_pass_secs = 180
 
 [observer]
 # Either a Maidenhead grid (4 or 6 characters) or lat/lon, not both.

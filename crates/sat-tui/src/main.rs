@@ -107,6 +107,7 @@ fn build_app(cache: &Cache, config: &Config, observer: Observer) -> App {
             watch: config.watch.clone(),
             horizon_hours: config.horizon_hours,
             min_elevation_deg: config.min_elevation_deg,
+            short_pass_secs: config.short_pass_secs,
         },
         Utc::now(),
     )

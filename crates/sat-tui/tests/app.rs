@@ -20,6 +20,7 @@ fn settings(watch: &[u32]) -> Settings {
         watch: watch.to_vec(),
         horizon_hours: 24,
         min_elevation_deg: 10.0,
+        short_pass_secs: 180,
     }
 }
 
@@ -363,5 +364,161 @@ mod reconnecting {
         app.resync();
 
         assert_eq!(app.tick(at(13, 15, 0)).unwrap(), []);
+    }
+}
+
+mod durations {
+    use super::*;
+
+    // Skyfield pass lengths (LOS - AOS at 10 degrees): ISS 13:14:10.26-13:20:55.81 = 405.6 s,
+    // ISS 09:12:50.98-09:17:11.27 = 260.3 s, ISS 10:50:13.39-10:55:20.44 = 307.1 s.
+
+    fn app_at(now: DateTime<Utc>, short_pass_secs: i64) -> App {
+        let sats = parse_tles(include_str!("fixtures/sample.tle")).unwrap();
+        let observer = Observer {
+            lat_deg: 41.67,
+            lon_deg: -85.71,
+            alt_m: 250.0,
+        };
+        let settings = Settings {
+            watch: vec![],
+            horizon_hours: 24,
+            min_elevation_deg: 10.0,
+            short_pass_secs,
+        };
+        App::new(sats, transmitters(), observer, settings, now)
+    }
+
+    #[test]
+    fn every_row_knows_how_long_its_pass_lasts() {
+        let rows = app_at(now(), 180).rows();
+
+        let secs = rows[0].duration().num_milliseconds() as f64 / 1000.0;
+        assert!((secs - 405.6).abs() < 2.0, "{secs}");
+    }
+
+    #[test]
+    fn a_pass_already_under_way_still_shows_its_full_length() {
+        let during = Utc.with_ymd_and_hms(2026, 10, 26, 13, 17, 0).unwrap();
+
+        let rows = app_at(during, 180).rows();
+
+        let secs = rows[0].duration().num_milliseconds() as f64 / 1000.0;
+        assert!((secs - 405.6).abs() < 2.0, "{secs}");
+        assert!(rows[0].pass.aos < during);
+    }
+
+    #[test]
+    fn passes_shorter_than_the_threshold_are_flagged() {
+        let rows = app_at(now(), 300).rows();
+
+        let short: Vec<_> = rows.iter().filter(|r| r.short).collect();
+        assert_eq!(
+            short.len(),
+            1,
+            "{:?}",
+            rows.iter()
+                .map(|r| (r.name.clone(), r.duration()))
+                .collect::<Vec<_>>()
+        );
+        assert_eq!(short[0].pass.aos.format("%d %H:%M").to_string(), "27 09:12");
+    }
+
+    #[test]
+    fn nothing_is_flagged_when_every_pass_is_long_enough() {
+        let rows = app_at(now(), 180).rows();
+
+        assert!(rows.iter().all(|r| !r.short));
+    }
+}
+
+mod countdowns {
+    use sat_tui::app::Countdown;
+
+    use super::*;
+
+    fn at(day: u32, h: u32, m: u32, s: u32) -> DateTime<Utc> {
+        Utc.with_ymd_and_hms(2026, 10, day, h, m, s).unwrap()
+    }
+
+    fn secs(d: chrono::Duration) -> f64 {
+        d.num_milliseconds() as f64 / 1000.0
+    }
+
+    // ISS pass 26th 13:14:10.26 - 13:20:55.81; its last in the window is 27th 10:50-10:55.
+    // RS-44's next is 26th 19:40:27.08.
+
+    #[test]
+    fn there_is_no_countdown_when_nothing_is_tracked() {
+        assert_eq!(app().tracked_countdown(at(26, 13, 0, 0)), None);
+    }
+
+    #[test]
+    fn before_the_pass_both_the_start_and_the_end_are_counted_down() {
+        let mut app = app();
+        press(&mut app, KeyCode::Char('t'));
+
+        let Some(Countdown::Before { aos_in, los_in }) = app.tracked_countdown(at(26, 13, 0, 0))
+        else {
+            panic!("expected a countdown to the start");
+        };
+
+        assert!((secs(aos_in) - 850.26).abs() < 2.0, "{aos_in}");
+        assert!((secs(los_in) - 1255.81).abs() < 2.0, "{los_in}");
+    }
+
+    #[test]
+    fn during_the_pass_the_time_left_is_counted_down() {
+        let mut app = app();
+        press(&mut app, KeyCode::Char('t'));
+
+        let Some(Countdown::During { los_in }) = app.tracked_countdown(at(26, 13, 17, 0)) else {
+            panic!("expected a countdown to the end");
+        };
+
+        assert!((secs(los_in) - 235.81).abs() < 2.0, "{los_in}");
+    }
+
+    #[test]
+    fn after_the_pass_it_moves_on_to_the_satellites_next_one() {
+        let mut app = app();
+        press(&mut app, KeyCode::Char('t'));
+
+        let Some(Countdown::Before { aos_in, .. }) = app.tracked_countdown(at(26, 14, 0, 0)) else {
+            panic!("expected the next pass");
+        };
+
+        // Next ISS pass: 27th 05:57:35.31, 15h57m35s after 14:00.
+        assert!((secs(aos_in) - 57_455.31).abs() < 2.0, "{aos_in}");
+    }
+
+    #[test]
+    fn when_the_satellite_has_no_more_listed_passes_it_says_so() {
+        let mut app = app();
+        press(&mut app, KeyCode::Char('t'));
+
+        assert_eq!(
+            app.tracked_countdown(at(27, 11, 0, 0)),
+            Some(Countdown::NoFurtherPass)
+        );
+    }
+
+    #[test]
+    fn it_follows_the_tracked_satellite_whatever_the_cursor_is_on() {
+        let mut app = app();
+        press(&mut app, KeyCode::Down); // RS-44's 19:40 pass
+        press(&mut app, KeyCode::Tab);
+        press(&mut app, KeyCode::Char('t')); // track RS-44
+        press(&mut app, KeyCode::Tab);
+        press(&mut app, KeyCode::Up); // cursor back on the ISS pass
+        assert_eq!(app.selected_row(), Some(0));
+
+        let Some(Countdown::Before { aos_in, .. }) = app.tracked_countdown(at(26, 13, 15, 0))
+        else {
+            panic!("expected a countdown");
+        };
+
+        // RS-44 19:40:27.08 minus 13:15:00 = 6h25m27s.
+        assert!((secs(aos_in) - 23_127.08).abs() < 2.0, "{aos_in}");
     }
 }

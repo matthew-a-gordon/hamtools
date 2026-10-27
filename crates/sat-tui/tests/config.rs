@@ -119,3 +119,20 @@ mod loading {
         assert!(Config::load(None, Some(&broken)).is_err());
     }
 }
+
+#[test]
+fn short_pass_threshold_defaults_to_three_minutes_and_can_be_set() {
+    assert_eq!(Config::parse("").unwrap().short_pass_secs, 180);
+    assert_eq!(
+        Config::parse("[passes]\nshort_pass_secs = 120")
+            .unwrap()
+            .short_pass_secs,
+        120
+    );
+}
+
+#[test]
+fn rejects_an_unusable_short_pass_threshold() {
+    assert!(Config::parse("[passes]\nshort_pass_secs = 0").is_err());
+    assert!(Config::parse("[passes]\nshort_pass_secs = 7200").is_err());
+}

@@ -17,6 +17,8 @@ pub struct Settings {
     pub watch: Vec<u32>,
     pub horizon_hours: u32,
     pub min_elevation_deg: f64,
+    /// A pass shorter than this many seconds is flagged as short.
+    pub short_pass_secs: i64,
 }
 
 /// What the event loop must do in response to a key.
@@ -33,6 +35,8 @@ pub struct Row {
     pub name: String,
     pub norad_id: u32,
     pub pass: Pass,
+    /// Shorter than the configured threshold: easy to miss, worth a warning.
+    pub short: bool,
     sat_index: usize,
 }
 
@@ -103,9 +107,11 @@ impl App {
                 continue;
             };
             let sat_index = entries.len();
+            let short_below = Duration::seconds(settings.short_pass_secs);
             rows.extend(passes.into_iter().map(|pass| Row {
                 name: sat.name().to_string(),
                 norad_id,
+                short: pass.los - pass.aos < short_below,
                 pass,
                 sat_index,
             }));
@@ -222,6 +228,8 @@ struct Tracking {
     tracker: Tracker,
     transmitter: Transmitter,
     satellite: String,
+    /// Index into `entries`, to find this satellite's passes.
+    sat_index: usize,
 }
 
 /// What is being tracked, for the display.
@@ -275,10 +283,12 @@ impl App {
             self.status = Some("pick a supported transmitter first".to_string());
             return;
         };
+        let sat_index = self.rows[self.row].sat_index;
         let tracking = Tracking {
             tracker: Tracker::new(entry.sat.clone(), self.observer),
             transmitter: transmitter.clone(),
             satellite: entry.name.clone(),
+            sat_index,
         };
         self.status = Some(format!("tracking {}", tracking.transmitter.description));
         self.nudge_hz = 0;
@@ -350,5 +360,46 @@ impl App {
     /// The pass under the cursor.
     pub fn selected_pass(&self) -> Option<&Row> {
         self.rows.get(self.row)
+    }
+}
+
+impl Row {
+    /// The pass duration: AOS to LOS, however far through it we are.
+    pub fn duration(&self) -> Duration {
+        self.pass.los - self.pass.aos
+    }
+}
+
+/// Time until the tracked satellite's current or next pass starts and ends.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Countdown {
+    /// The pass has not started: time to AOS and to LOS.
+    Before { aos_in: Duration, los_in: Duration },
+    /// The pass is under way: time to LOS.
+    During { los_in: Duration },
+    /// The pass list holds no pass for this satellite from `now` on.
+    NoFurtherPass,
+}
+
+impl App {
+    /// Countdown for the tracked satellite's current pass, or its next one if none is under way.
+    /// Independent of where the cursor is; `None` when nothing is tracked.
+    pub fn tracked_countdown(&self, now: DateTime<Utc>) -> Option<Countdown> {
+        let sat_index = self.tracking.as_ref()?.sat_index;
+        let next = self
+            .rows
+            .iter()
+            .filter(|row| row.sat_index == sat_index && row.pass.los >= now)
+            .min_by_key(|row| row.pass.aos);
+        Some(match next {
+            None => Countdown::NoFurtherPass,
+            Some(row) if row.pass.aos > now => Countdown::Before {
+                aos_in: row.pass.aos - now,
+                los_in: row.pass.los - now,
+            },
+            Some(row) => Countdown::During {
+                los_in: row.pass.los - now,
+            },
+        })
     }
 }

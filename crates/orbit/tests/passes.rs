@@ -159,8 +159,12 @@ fn rs44_passes_match_skyfield() {
     check(1, &RS44);
 }
 
+// A pass is reported whole, even when the search window starts or ends part-way through it, so
+// its length and peak do not depend on when we happened to look. Times are Skyfield's for the
+// ISS pass 13:14:10 - 13:20:55 (peak 69.8 degrees at 13:17:33).
+
 #[test]
-fn pass_in_progress_at_window_start_is_clipped_to_it() {
+fn a_pass_under_way_at_the_window_start_reports_its_true_start() {
     let sat = &parse_tles(SAMPLE).unwrap()[0];
     let from = t("2026-10-26T13:17:00Z");
     let to = t("2026-10-26T13:30:00Z");
@@ -168,6 +172,23 @@ fn pass_in_progress_at_window_start_is_clipped_to_it() {
     let passes = sat.passes(&OBSERVER, from, to, 10.0).unwrap();
 
     assert_eq!(passes.len(), 1);
-    assert_eq!(passes[0].aos, from);
+    close_in_time(passes[0].aos, "2026-10-26T13:14:10.26Z", "AOS");
+    close_in_time(passes[0].tca, "2026-10-26T13:17:33.49Z", "TCA");
     close_in_time(passes[0].los, "2026-10-26T13:20:55.81Z", "LOS");
+    assert!((passes[0].max_elevation_deg - 69.815).abs() < 0.1);
+    assert!((passes[0].aos_azimuth_deg - 301.284).abs() < 0.3);
+}
+
+#[test]
+fn a_pass_under_way_at_the_window_end_reports_its_true_end() {
+    let sat = &parse_tles(SAMPLE).unwrap()[0];
+    let from = t("2026-10-26T12:00:00Z");
+    let to = t("2026-10-26T13:17:00Z");
+
+    let passes = sat.passes(&OBSERVER, from, to, 10.0).unwrap();
+
+    assert_eq!(passes.len(), 1);
+    close_in_time(passes[0].aos, "2026-10-26T13:14:10.26Z", "AOS");
+    close_in_time(passes[0].los, "2026-10-26T13:20:55.81Z", "LOS");
+    assert!((passes[0].los_azimuth_deg - 134.168).abs() < 0.3);
 }
