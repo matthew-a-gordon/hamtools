@@ -10,14 +10,17 @@ mod config_dialog;
 mod cw;
 mod general;
 pub mod geocode;
+pub mod layout;
 mod logging;
 mod panel;
+pub mod refdata;
 pub mod reference;
 mod rig;
+pub mod softkeys;
 mod style;
 mod ui;
 
-pub use activity::{Activity, ActivityCtx, ActivityOutput, ContactView};
+pub use activity::{Activity, ActivityCtx, ActivityOutput};
 pub use app::{
     App, Focus, Overlay, OverlayAction, RECONNECT_EVERY, SMETER_POLL_EVERY, STALE_AFTER,
     STATE_POLL_EVERY,

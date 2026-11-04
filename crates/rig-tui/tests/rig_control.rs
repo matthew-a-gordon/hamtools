@@ -50,7 +50,7 @@ async fn polling_reads_vfo_split_ptt_and_the_s_meter() {
     assert_eq!(app.split(), Some((false, "VFOA")));
     assert_eq!(app.ptt(), Some(false));
     assert_eq!(app.strength(), Some(20));
-    let rows = screen(&app, 80, 14);
+    let rows = screen(&app, 80, 24);
     assert!(has(&rows, "VFO B"), "{rows:#?}");
     assert!(has(&rows, "S9+20"), "{rows:#?}");
 }
@@ -72,7 +72,7 @@ async fn set_frequency_is_read_back_and_the_strip_shows_the_rig_value() {
         commands[set + 1..].contains(&"+f".to_string()),
         "no read-back after the set: {commands:?}"
     );
-    assert!(has(&screen(&app, 80, 14), "7.030.000"));
+    assert!(has(&screen(&app, 80, 24), "7.030.000"));
 }
 
 #[tokio::test]
@@ -137,7 +137,7 @@ async fn vfo_select_is_read_back() {
     dispatch(&mut rig, &mut app, commands).await;
 
     assert_eq!(app.vfo(), Some("VFOB"));
-    assert!(has(&screen(&app, 80, 14), "VFO B"));
+    assert!(has(&screen(&app, 80, 24), "VFO B"));
 }
 
 #[tokio::test]
@@ -154,7 +154,7 @@ async fn split_on_then_a_transmit_frequency_is_read_back_and_shown() {
     dispatch(&mut rig, &mut app, commands).await;
 
     assert_eq!(app.transmit_frequency(), Some(14_080_000));
-    let rows = screen(&app, 80, 14);
+    let rows = screen(&app, 80, 24);
     assert!(has(&rows, "split B 14.080.000"), "{rows:#?}");
     assert!(fake.commands().contains(&"+S 1 VFOB".to_string()));
     assert!(fake.commands().contains(&"+I 14080000".to_string()));
@@ -179,7 +179,7 @@ async fn split_off_is_read_back() {
     dispatch(&mut rig, &mut app, commands).await;
 
     assert_eq!(app.split(), Some((false, "VFOA")));
-    assert!(has(&screen(&app, 80, 14), "split off"));
+    assert!(has(&screen(&app, 80, 24), "split off"));
     assert!(fake.commands().contains(&"+S 0 VFOA".to_string()));
 }
 
@@ -202,7 +202,7 @@ async fn a_rig_without_vfo_support_says_so_is_not_asked_again_and_the_control_is
     .await;
 
     assert!(app.is_unsupported(Feature::Vfo));
-    assert!(has(&screen(&app, 80, 14), "VFO not supported"));
+    assert!(has(&screen(&app, 80, 24), "VFO not supported"));
     assert_eq!(press(&mut app, "v"), vec![]);
     assert!(app.status().is_some_and(|s| s.contains("not supported")));
     let asked = fake
@@ -228,7 +228,7 @@ async fn a_rig_without_split_support_says_so_and_log_frequency_is_the_receive_on
     let (_rig, app) = ready(&fake).await;
 
     assert!(app.is_unsupported(Feature::Split));
-    assert!(has(&screen(&app, 80, 14), "split not supported"));
+    assert!(has(&screen(&app, 80, 24), "split not supported"));
     assert_eq!(app.transmit_frequency(), Some(14_074_000));
 }
 

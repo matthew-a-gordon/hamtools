@@ -12,7 +12,6 @@ use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::text::Line;
 use ratatui::widgets::Paragraph;
 
-use crate::activity::ContactView;
 use crate::panel::{LogDefaults, LogMode, Role};
 use crate::rig::RigMode;
 use crate::style::{dim, red};
@@ -59,6 +58,15 @@ pub(crate) fn default_log_mode(mode: &RigMode) -> Option<LogMode> {
         submode: submode.map(String::from),
         default_rst: Some(rst.to_string()),
     })
+}
+
+/// The form's in-progress values, which `App` publishes as Soft key variables.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct ContactView<'a> {
+    pub their_call: &'a str,
+    pub their_ref: &'a str,
+    pub rst_sent: &'a str,
+    pub rst_rcvd: &'a str,
 }
 
 /// What `App` captured when the operator asked to log.

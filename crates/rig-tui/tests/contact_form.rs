@@ -64,11 +64,12 @@ impl Activity for RoleActivity {
     }
     fn on_key(&mut self, key: KeyEvent, ctx: &ActivityCtx) -> Option<ActivityOutput> {
         if let KeyCode::F(n) = key.code {
-            *self.seen.borrow_mut() = ctx.form.map(|f| Seen {
-                their_call: f.their_call.to_string(),
-                their_ref: f.their_ref.to_string(),
-                rst_sent: f.rst_sent.to_string(),
-                rst_rcvd: f.rst_rcvd.to_string(),
+            let live = ctx.live;
+            *self.seen.borrow_mut() = live.their_call.map(|call| Seen {
+                their_call: call.to_string(),
+                their_ref: live.their_ref.unwrap_or_default().to_string(),
+                rst_sent: live.my_rst.unwrap_or_default().to_string(),
+                rst_rcvd: live.their_rst.unwrap_or_default().to_string(),
             });
             return Some(ActivityOutput {
                 commands: vec![Command::Send(format!("F{n}"))],

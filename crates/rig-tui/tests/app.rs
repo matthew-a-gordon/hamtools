@@ -7,6 +7,7 @@ use common::*;
 use ratatui::Frame;
 use ratatui::crossterm::event::{KeyCode, KeyEvent};
 use ratatui::layout::Rect;
+use rig_tui::softkeys::Exchange;
 use rig_tui::{
     App, Command, Focus, Overlay, OverlayAction, RECONNECT_EVERY, RigEvent, STATE_POLL_EVERY,
 };
@@ -26,7 +27,7 @@ mod cw_input {
         app.on_key(key(KeyCode::Backspace));
         type_str(&mut app, "de");
 
-        assert!(has(&screen(&app, 40, 14), "> CQ DE"));
+        assert!(has(&screen(&app, 80, 24), "> CQ DE"));
     }
 
     #[test]
@@ -37,7 +38,7 @@ mod cw_input {
         let commands = app.on_key(key(KeyCode::Enter));
 
         assert_eq!(commands, vec![Command::Send("CQ CQ".to_string())]);
-        let rows = screen(&app, 40, 14);
+        let rows = screen(&app, 80, 24);
         assert!(has(&rows, "CQ CQ"), "{rows:#?}");
         assert!(has(&rows, ">"), "{rows:#?}");
         assert!(!has(&rows, "> CQ"), "input should be cleared: {rows:#?}");
@@ -56,7 +57,7 @@ mod cw_input {
             App::with_callsign(Some("KD0RHV".to_string())),
             "CW",
         ));
-        type_str(&mut app, "cq cq de {call} {call} k");
+        type_str(&mut app, "cq cq de {mycall} {mycall} k");
 
         let commands = app.on_key(key(KeyCode::Enter));
 
@@ -64,21 +65,21 @@ mod cw_input {
             commands,
             vec![Command::Send("CQ CQ DE KD0RHV KD0RHV K".to_string())]
         );
-        assert!(has(&screen(&app, 40, 14), "CQ CQ DE KD0RHV KD0RHV K"));
+        assert!(has(&screen(&app, 80, 24), "CQ CQ DE KD0RHV KD0RHV K"));
     }
 
     #[test]
     fn call_placeholder_without_a_callsign_blocks_the_send_and_keeps_the_input() {
         let mut app = cw_app();
-        type_str(&mut app, "de {call}");
+        type_str(&mut app, "de {mycall}");
 
         let commands = app.on_key(key(KeyCode::Enter));
 
         assert_eq!(commands, vec![]);
-        let rows = screen(&app, 60, 14);
-        assert!(has(&rows, "> DE {CALL}"), "{rows:#?}");
+        let rows = screen(&app, 80, 24);
+        assert!(has(&rows, "> DE {MYCALL}"), "{rows:#?}");
         assert!(
-            app.status().is_some_and(|s| s.contains("callsign")),
+            app.status().is_some_and(|s| s.contains("MYCALL")),
             "{:?}",
             app.status()
         );
@@ -92,7 +93,7 @@ mod cw_input {
         rx(&mut app, "TB005DE W9;");
         rx(&mut app, "TB003XYZ;");
 
-        assert!(has(&screen(&app, 40, 14), "CQ CQ DE W9XYZ"));
+        assert!(has(&screen(&app, 80, 24), "CQ CQ DE W9XYZ"));
     }
 
     #[test]
@@ -104,7 +105,7 @@ mod cw_input {
 
         rx(&mut app, "TB003R R;");
 
-        let rows = screen(&app, 40, 15);
+        let rows = screen(&app, 80, 24);
         let at = |needle: &str| rows.iter().position(|r| r.contains(needle)).unwrap();
         assert!(
             at("CQ") < at("DE ME") && at("DE ME") < at("R R"),
@@ -136,7 +137,7 @@ mod cw_input {
             "{:?}",
             app.status()
         );
-        assert!(has(&screen(&app, 40, 14), "> CQ"), "input is kept");
+        assert!(has(&screen(&app, 80, 24), "> CQ"), "input is kept");
     }
 }
 
@@ -146,7 +147,7 @@ mod soft_keys {
     fn app() -> App {
         focus_input(connected_app_in(
             App::with_callsign(Some("KD0RHV".to_string())).with_soft_keys(BTreeMap::from([
-                (1, "CQ CQ CQ DE {CALL} {CALL} K".to_string()),
+                (1, "CQ CQ CQ DE {MYCALL} {MYCALL} K".to_string()),
                 (2, "73 TU".to_string()),
             ])),
             "CW",
@@ -187,28 +188,148 @@ mod soft_keys {
 
         app.on_key(f(2));
 
-        assert!(has(&screen(&app, 80, 14), "> DE W9"));
+        assert!(has(&screen(&app, 80, 24), "> DE W9"));
     }
 
     #[test]
-    fn an_unset_function_key_says_so_and_sends_nothing() {
+    fn a_key_the_user_left_unset_falls_to_the_built_in_default() {
         let mut app = app();
 
-        assert_eq!(app.on_key(f(3)), vec![]);
-
-        assert_eq!(app.status(), Some("F3 is not set"));
+        // F4 is the built-in `{MYCALL}`.
+        assert_eq!(app.on_key(f(4)), vec![Command::Send("KD0RHV".to_string())]);
     }
 
     #[test]
     fn a_message_using_the_callsign_is_blocked_when_none_is_configured() {
         let mut app = focus_input(connected_app_in(
-            App::new().with_soft_keys(BTreeMap::from([(1, "DE {CALL}".to_string())])),
+            App::new().with_soft_keys(BTreeMap::from([(1, "DE {MYCALL}".to_string())])),
             "CW",
         ));
 
         assert_eq!(app.on_key(f(1)), vec![]);
 
-        assert!(app.status().is_some_and(|s| s.contains("callsign")));
+        assert!(app.status().is_some_and(|s| s.contains("MYCALL not set")));
+    }
+
+    #[test]
+    fn any_missing_variable_refuses_the_whole_send_naming_it() {
+        let mut app = app();
+
+        // F3 is the built-in `{THEIRCALL} TU 73 ...`, and no THEIRCALL is known yet.
+        assert_eq!(app.on_key(f(3)), vec![]);
+        assert!(
+            app.status()
+                .is_some_and(|s| s.contains("THEIRCALL not set")),
+            "{:?}",
+            app.status()
+        );
+
+        app.set_exchange(Exchange {
+            their_call: Some("w1aw".to_string()),
+            ..Exchange::default()
+        });
+        assert_eq!(
+            app.on_key(f(3)),
+            vec![Command::Send("W1AW TU 73 DE KD0RHV EE".to_string())]
+        );
+    }
+
+    #[test]
+    fn variables_are_read_at_press_time_not_stored() {
+        let mut app = app();
+        app.set_exchange(Exchange {
+            their_call: Some("W1AW".to_string()),
+            ..Exchange::default()
+        });
+        app.on_key(f(3));
+        app.set_exchange(Exchange {
+            their_call: Some("N0CALL".to_string()),
+            ..Exchange::default()
+        });
+
+        assert_eq!(
+            app.on_key(f(3)),
+            vec![Command::Send("N0CALL TU 73 DE KD0RHV EE".to_string())]
+        );
+    }
+
+    #[test]
+    fn an_invalid_stored_message_loads_and_refuses_to_send() {
+        let mut app = focus_input(connected_app_in(
+            App::with_callsign(Some("KD0RHV".to_string()))
+                .with_soft_keys(BTreeMap::from([(1, "DE {CALL}".to_string())])),
+            "CW",
+        ));
+
+        assert_eq!(app.on_key(f(1)), vec![]);
+
+        assert!(
+            app.status().is_some_and(|s| s.contains("use {MYCALL}")),
+            "{:?}",
+            app.status()
+        );
+    }
+
+    #[test]
+    fn a_missing_plan_set_degrades_and_is_flagged_without_blocking() {
+        let mut app = app();
+
+        app.set_plan_soft_keys(Some("nosuch".to_string()), BTreeMap::new());
+
+        assert!(app.status().is_some_and(|s| s.contains("nosuch")));
+        assert_eq!(app.resolved_soft_keys().keys[&2].text, "73 TU");
+        assert_eq!(app.on_key(f(2)), vec![Command::Send("73 TU".to_string())]);
+    }
+
+    #[test]
+    fn a_plan_override_beats_the_users_set_for_that_key_only() {
+        let mut app = app();
+        app.set_plan_soft_keys(None, BTreeMap::from([(2, "QRZ".to_string())]));
+
+        assert_eq!(app.on_key(f(2)), vec![Command::Send("QRZ".to_string())]);
+        assert_eq!(
+            app.on_key(f(1)),
+            vec![Command::Send("CQ CQ CQ DE KD0RHV KD0RHV K".to_string())]
+        );
+    }
+
+    #[test]
+    fn a_named_user_set_replaces_general_for_the_activity() {
+        let mut app = app().with_softkey_sets(BTreeMap::from([(
+            "pota".to_string(),
+            BTreeMap::from([(1, "CQ POTA DE {MYCALL}".to_string())]),
+        )]));
+        app.set_activity_soft_keys(Some("pota".to_string()));
+
+        assert_eq!(
+            app.on_key(f(1)),
+            vec![Command::Send("CQ POTA DE KD0RHV".to_string())]
+        );
+    }
+
+    #[test]
+    fn templates_never_send_on_their_own() {
+        // Loading, layering, selecting plans and sets, changing the exchange, ticking and
+        // rendering produce no rig command that keys the transmitter; only a key press does.
+        let mut app = app().with_softkey_sets(BTreeMap::from([(
+            "pota".to_string(),
+            BTreeMap::from([(1, "CQ".to_string())]),
+        )]));
+        app.set_activity_soft_keys(Some("pota".to_string()));
+        app.set_plan_soft_keys(Some("pota".to_string()), BTreeMap::from([(2, "X".into())]));
+        app.set_exchange(Exchange {
+            their_call: Some("W1AW".to_string()),
+            ..Exchange::default()
+        });
+        let _ = app.resolved_soft_keys();
+        let _ = screen(&app, 80, 24);
+        let mut commands = app.tick(std::time::Instant::now());
+        commands.extend(app.tick(std::time::Instant::now()));
+
+        assert!(
+            commands.iter().all(|c| !matches!(c, Command::Send(_))),
+            "{commands:?}"
+        );
     }
 
     #[test]
@@ -246,7 +367,7 @@ mod panel_visibility {
         ] {
             let app = connected_app_in(App::new(), mode);
 
-            let rows = screen(&app, 40, 14);
+            let rows = screen(&app, 80, 24);
 
             assert_eq!(has(&rows, "Send (Enter)"), shown, "{mode}: {rows:#?}");
         }
@@ -259,10 +380,10 @@ mod panel_visibility {
         type_str(&mut app, "de me");
 
         app.on_rig(mode_event("USB"));
-        assert!(!has(&screen(&app, 40, 14), "CQ"));
+        assert!(!has(&screen(&app, 80, 24), "CQ"));
         app.on_rig(mode_event("CWR"));
 
-        let rows = screen(&app, 40, 14);
+        let rows = screen(&app, 80, 24);
         assert!(has(&rows, "CQ"), "{rows:#?}");
         assert!(has(&rows, "> DE ME"), "{rows:#?}");
     }
@@ -317,7 +438,7 @@ mod keys {
 
         let mut app = focus_input(app);
         assert_eq!(app.on_key(key(KeyCode::Char('q'))), vec![]);
-        assert!(has(&screen(&app, 40, 14), "> Q"));
+        assert!(has(&screen(&app, 80, 24), "> Q"));
     }
 
     #[test]
@@ -395,10 +516,10 @@ mod keys {
         // `q`, F-keys and text reach neither the quit command nor the input line.
         assert_eq!(app.on_key(key(KeyCode::Char('q'))), vec![]);
         assert_eq!(app.on_key(key(KeyCode::F(1))), vec![]);
-        assert!(has(&screen(&app, 40, 14), "TEST MODAL"));
+        assert!(has(&screen(&app, 80, 24), "TEST MODAL"));
         app.on_key(key(KeyCode::Esc));
         assert!(!app.has_overlay());
-        assert!(!has(&screen(&app, 40, 14), "> Q"));
+        assert!(!has(&screen(&app, 80, 24), "> Q"));
     }
 
     #[test]
@@ -487,13 +608,13 @@ mod connection {
     #[test]
     fn the_strip_says_disconnected_and_then_shows_what_the_rig_reported() {
         let mut app = App::new();
-        assert!(has(&screen(&app, 60, 14), "disconnected"));
+        assert!(has(&screen(&app, 80, 24), "disconnected"));
 
         app.on_rig(RigEvent::Connected);
         app.on_rig(RigEvent::Freq(14_074_000));
         app.on_rig(mode_event("CW"));
 
-        let rows = screen(&app, 60, 14);
+        let rows = screen(&app, 80, 24);
         assert!(has(&rows, "14.074.000"), "{rows:#?}");
         assert!(has(&rows, "CW 500"), "{rows:#?}");
         assert!(!has(&rows, "disconnected"), "{rows:#?}");

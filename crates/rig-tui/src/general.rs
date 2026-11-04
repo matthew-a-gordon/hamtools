@@ -4,13 +4,15 @@ use std::time::Instant;
 
 use ratatui::Frame;
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
-use ratatui::layout::Rect;
+use ratatui::layout::{Constraint, Layout, Rect};
+use ratatui::widgets::{Block, Borders, Paragraph};
 
 use crate::activity::{Activity, ActivityCtx, ActivityOutput};
 use crate::cw::CwPanel;
 use crate::logging::default_log_mode;
 use crate::panel::{LogDefaults, LogMode, ModePanel, PanelCommand, PanelCtx};
 use crate::rig::{Command, RigMode};
+use crate::style::dim;
 
 pub struct General {
     panels: Vec<Box<dyn ModePanel>>,
@@ -34,7 +36,7 @@ impl General {
     fn panel_ctx<'a>(&self, ctx: &ActivityCtx<'a>, focused: bool) -> PanelCtx<'a> {
         PanelCtx {
             connected: ctx.connected,
-            callsign: ctx.callsign,
+            live: ctx.live,
             soft_keys: ctx.soft_keys,
             focused,
         }
@@ -145,12 +147,56 @@ impl Activity for General {
     }
 
     fn render(&self, frame: &mut Frame, area: Rect, ctx: &ActivityCtx) {
+        // Today's contacts: a column on the right from 128 columns, else stacked below from
+        // 40 rows. The screen is otherwise unchanged.
+        let (main, contacts) = if ctx.panes.columns >= 2 {
+            let [main, side] =
+                Layout::horizontal([Constraint::Min(60), Constraint::Length(CONTACTS_WIDTH)])
+                    .areas(area);
+            (main, Some(side))
+        } else if ctx.panes.stacked_contacts {
+            let [main, below] =
+                Layout::vertical([Constraint::Min(10), Constraint::Length(CONTACTS_HEIGHT)])
+                    .areas(area);
+            (main, Some(below))
+        } else {
+            (area, None)
+        };
         match self.active_panel(ctx) {
             Some(index) => {
                 let pctx = self.panel_ctx(ctx, self.text_focus(ctx));
-                self.panels[index].render(frame, area, &pctx);
+                self.panels[index].render(frame, main, &pctx);
             }
-            None => crate::ui::render_no_panel(ctx, frame, area),
+            None => crate::ui::render_no_panel(ctx, frame, main, contacts.is_none()),
+        }
+        if let Some(pane) = contacts {
+            render_todays_contacts(ctx, frame, pane);
         }
     }
+}
+
+const CONTACTS_WIDTH: u16 = 44;
+const CONTACTS_HEIGHT: u16 = 8;
+
+/// This run's Contacts, newest first, as many as fit.
+fn render_todays_contacts(ctx: &ActivityCtx, frame: &mut Frame, area: Rect) {
+    let rows = usize::from(area.height.saturating_sub(2));
+    let text = if ctx.recent.is_empty() {
+        "none yet".to_string()
+    } else {
+        ctx.recent
+            .iter()
+            .take(rows)
+            .cloned()
+            .collect::<Vec<_>>()
+            .join("\n")
+    };
+    frame.render_widget(
+        Paragraph::new(text).style(dim()).block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title("Today's contacts"),
+        ),
+        area,
+    );
 }

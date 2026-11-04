@@ -17,9 +17,11 @@ use crate::activity::{Activity, ActivityCtx};
 use crate::config_dialog::{ConfigDialog, Outcome};
 use crate::general::General;
 use crate::geocode::GeocodeResult;
+use crate::layout::{self, Fit, Panes};
 use crate::logging::{Logging, Snapshot};
 use crate::panel::{LogDefaults, LogMode};
 use crate::rig::{Command, Feature, RigEvent, RigMode};
+use crate::softkeys::{Exchange, Layers, NamedSet, Resolved, resolve};
 
 /// How long to wait between attempts to reach `rigctld`. A starting value, untested on hardware.
 pub const RECONNECT_EVERY: Duration = Duration::from_secs(3);
@@ -107,10 +109,13 @@ macro_rules! ctx {
         ctx!($self, &[])
     };
     ($self:ident, $recent:expr) => {
+        ctx!($self, $recent, crate::layout::Panes::MINIMAL)
+    };
+    ($self:ident, $recent:expr, $panes:expr) => {
         ActivityCtx {
             connected: $self.connected,
-            callsign: $self.callsign.as_deref(),
-            soft_keys: &$self.soft_keys,
+            live: $self.exchange.live($self.callsign.as_deref()),
+            soft_keys: &$self.resolved.keys,
             rig_mode: $self.mode.as_ref().map(|r| &r.value.0),
             fresh_mode: $self
                 .mode
@@ -118,7 +123,7 @@ macro_rules! ctx {
                 .filter(|r| $self.now.saturating_duration_since(r.at) <= STALE_AFTER)
                 .map(|r| &r.value.0),
             recent: $recent,
-            form: $self.logging.view(),
+            panes: $panes,
         }
     };
 }
@@ -147,7 +152,18 @@ pub struct App {
     poll_failed: bool,
     callsign: Option<String>,
     logging: Logging,
+    /// The General Soft key set (`[macros]`).
     soft_keys: BTreeMap<u8, String>,
+    softkey_sets: BTreeMap<String, BTreeMap<u8, String>>,
+    /// The user set for the current Activity; `None` is General.
+    activity_soft_keys: Option<String>,
+    plan_soft_keys: Option<String>,
+    plan_soft_overrides: BTreeMap<u8, String>,
+    exchange: Exchange,
+    /// The exchange as it was before the Contact form began publishing into it.
+    exchange_saved: Option<Exchange>,
+    /// The layered Soft keys, recomputed whenever a layer changes.
+    resolved: Resolved,
     locator: Option<String>,
     log_path: Option<PathBuf>,
     default_log_path: Option<PathBuf>,
@@ -157,6 +173,8 @@ pub struct App {
     last_connect: Option<Instant>,
     last_poll: Option<Instant>,
     last_smeter: Option<Instant>,
+    /// The terminal size, once the loop has reported it.
+    size: Option<(u16, u16)>,
 }
 
 impl Default for App {
@@ -192,6 +210,13 @@ impl App {
             callsign: None,
             logging: Logging::new(),
             soft_keys: BTreeMap::new(),
+            softkey_sets: BTreeMap::new(),
+            activity_soft_keys: None,
+            plan_soft_keys: None,
+            plan_soft_overrides: BTreeMap::new(),
+            exchange: Exchange::default(),
+            exchange_saved: None,
+            resolved: resolve(&Layers::default()),
             locator: None,
             log_path: None,
             default_log_path: None,
@@ -201,10 +226,11 @@ impl App {
             last_connect: None,
             last_poll: None,
             last_smeter: None,
+            size: None,
         }
     }
 
-    /// An app that expands `{CALL}` in sent text to `callsign`.
+    /// An app whose `{MYCALL}` is `callsign`.
     pub fn with_callsign(callsign: Option<String>) -> Self {
         Self {
             callsign,
@@ -212,10 +238,77 @@ impl App {
         }
     }
 
-    /// Bind F1..F6 to canned messages (text is uppercase; `{CALL}` expands to the callsign).
+    /// Bind F1..F6 to canned messages: the General Soft key set (text is uppercase and may hold
+    /// variables such as `{MYCALL}`).
     pub fn with_soft_keys(mut self, soft_keys: BTreeMap<u8, String>) -> Self {
         self.soft_keys = soft_keys;
+        self.refresh_soft_keys();
         self
+    }
+
+    /// The named user sets from `[softkeys.<name>]`.
+    pub fn with_softkey_sets(mut self, sets: BTreeMap<String, BTreeMap<u8, String>>) -> Self {
+        self.softkey_sets = sets;
+        self.refresh_soft_keys();
+        self
+    }
+
+    /// Use the user set `name` for the Activity (`None`: General, the `[macros]` set). A name
+    /// with no such set falls back to the lower layers and is flagged in the status line.
+    pub fn set_activity_soft_keys(&mut self, name: Option<String>) {
+        self.activity_soft_keys = name;
+        self.flag_missing_soft_key_sets();
+    }
+
+    /// Use a plan's Soft keys: its named set and its single-key overrides. A missing set falls
+    /// back to the lower layers and is flagged in the status line; it never blocks.
+    pub fn set_plan_soft_keys(&mut self, set: Option<String>, overrides: BTreeMap<u8, String>) {
+        self.plan_soft_keys = set;
+        self.plan_soft_overrides = overrides;
+        self.flag_missing_soft_key_sets();
+    }
+
+    /// The values `{THEIRCALL}`, `{MYREF}` and the rest expand from (`{MYCALL}` is the callsign).
+    pub fn set_exchange(&mut self, exchange: Exchange) {
+        self.exchange = exchange;
+    }
+
+    /// The Soft keys after layering, as the bar shows them and a key press sends them.
+    pub fn resolved_soft_keys(&self) -> &Resolved {
+        &self.resolved
+    }
+
+    fn compute_soft_keys(&self) -> Resolved {
+        let lookup = |name: &String| NamedSet {
+            name: name.clone(),
+            keys: self.softkey_sets.get(name).cloned(),
+        };
+        resolve(&Layers {
+            plan_override: self.plan_soft_overrides.clone(),
+            plan_set: self.plan_soft_keys.as_ref().map(lookup),
+            user_set: Some(match &self.activity_soft_keys {
+                Some(name) => lookup(name),
+                None => NamedSet {
+                    name: "General".to_string(),
+                    keys: Some(self.soft_keys.clone()),
+                },
+            }),
+        })
+    }
+
+    fn refresh_soft_keys(&mut self) {
+        self.resolved = self.compute_soft_keys();
+    }
+
+    fn flag_missing_soft_key_sets(&mut self) {
+        self.refresh_soft_keys();
+        let missing = self.resolved.missing_sets.clone();
+        if !missing.is_empty() {
+            self.status = Some(format!(
+                "Soft key set {} not found: using the layers below",
+                missing.join(", ")
+            ));
+        }
     }
 
     /// Where the Log lives when the config sets no `[logbook] path`. `None`: logging is off.
@@ -297,6 +390,7 @@ impl App {
             log_path: self.log_path.clone(),
             rig_addr: Some(self.rig_addr.clone()),
             macros: self.soft_keys.clone(),
+            softkey_sets: self.softkey_sets.clone(),
         }
     }
 
@@ -306,6 +400,8 @@ impl App {
         self.locator = settings.locator.map(|g| g.as_str().to_string());
         self.log_path = settings.log_path;
         self.soft_keys = settings.macros;
+        self.softkey_sets = settings.softkey_sets;
+        self.refresh_soft_keys();
         match settings.rig_addr {
             Some(addr) if addr != self.rig_addr => {
                 self.rig_addr = addr.clone();
@@ -475,8 +571,31 @@ impl App {
             Ok(snapshot) => {
                 self.entry = None;
                 self.logging.open_form(snapshot);
+                self.sync_form_exchange();
             }
             Err(why) => self.status = Some(why),
+        }
+    }
+
+    /// Publish the open form's call, reference and reports as the Soft key variables
+    /// `{THEIRCALL}`, `{THEIRREF}`, `{MYRST}` and `{THEIRRST}`, and put the exchange back as it
+    /// was when the form closes.
+    fn sync_form_exchange(&mut self) {
+        match self.logging.view() {
+            Some(view) => {
+                if self.exchange_saved.is_none() {
+                    self.exchange_saved = Some(self.exchange.clone());
+                }
+                self.exchange.their_call = Some(view.their_call.to_string());
+                self.exchange.their_ref = Some(view.their_ref.to_string());
+                self.exchange.my_rst = Some(view.rst_sent.to_string());
+                self.exchange.their_rst = Some(view.rst_rcvd.to_string());
+            }
+            None => {
+                if let Some(before) = self.exchange_saved.take() {
+                    self.exchange = before;
+                }
+            }
         }
     }
 
@@ -559,9 +678,24 @@ impl App {
         self.mode.as_ref().map(|r| &r.value.0)
     }
 
+    /// Tell the app the terminal size, so keys are ignored while the window is too small.
+    pub fn set_size(&mut self, width: u16, height: u16) {
+        self.size = Some((width, height));
+    }
+
+    /// Whether the window is below the floor, so only the notice is shown.
+    pub fn too_small(&self) -> bool {
+        self.size
+            .is_some_and(|(w, h)| matches!(layout::fit(w, h), Fit::TooSmall { .. }))
+    }
+
     pub fn on_key(&mut self, key: KeyEvent) -> Vec<Command> {
         if key.code == KeyCode::Char('c') && key.modifiers.contains(KeyModifiers::CONTROL) {
             return vec![Command::Quit];
+        }
+        if self.too_small() {
+            // Nothing is on screen to act on; only the quit Chord works.
+            return Vec::new();
         }
         if let Some(dialog) = &mut self.config {
             return match dialog.on_key(key) {
@@ -614,6 +748,7 @@ impl App {
                     }
                 }
             }
+            self.sync_form_exchange();
             return Vec::new();
         }
         if key.code == KeyCode::Char('l') && key.modifiers.contains(KeyModifiers::CONTROL) {
@@ -913,10 +1048,10 @@ impl App {
         self.activities[self.foreground].on_tick(now, &ctx)
     }
 
-    pub(crate) fn render_body(&self, frame: &mut Frame, area: Rect) {
+    pub(crate) fn render_body(&self, frame: &mut Frame, area: Rect, panes: Panes) {
         // Room inside the border, less the heading line.
         let recent = self.recent_contacts(usize::from(area.height.saturating_sub(3)));
-        let ctx = ctx!(self, &recent);
+        let ctx = ctx!(self, &recent, panes);
         self.activities[self.foreground].render(frame, area, &ctx);
     }
 
