@@ -150,7 +150,7 @@ fn render_strip(app: &App, frame: &mut Frame, area: Rect) {
 
 /// Shown in the body when the rig's mode has no panel.
 pub(crate) fn render_no_panel(ctx: &ActivityCtx, frame: &mut Frame, area: Rect) {
-    let mut text = match ctx.rig_mode {
+    let mut text = match ctx.fresh_mode {
         Some(mode) => format!("No panel for {mode}"),
         None => "No mode reported yet".to_string(),
     };

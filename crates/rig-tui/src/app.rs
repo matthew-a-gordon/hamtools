@@ -112,6 +112,7 @@ macro_rules! ctx {
             callsign: $self.callsign.as_deref(),
             soft_keys: &$self.soft_keys,
             rig_mode: $self.mode.as_ref().map(|r| &r.value.0),
+            fresh_mode: $self.rig_mode(),
             recent: $recent,
         }
     };

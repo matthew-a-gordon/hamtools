@@ -23,6 +23,8 @@ pub struct ActivityCtx<'a> {
     pub soft_keys: &'a BTreeMap<u8, String>,
     /// The last mode the rig reported, however old.
     pub rig_mode: Option<&'a RigMode>,
+    /// The mode only if the rig reported it within the last two seconds.
+    pub fresh_mode: Option<&'a RigMode>,
     /// Recent Contacts, newest first (filled for rendering only).
     pub recent: &'a [String],
 }
