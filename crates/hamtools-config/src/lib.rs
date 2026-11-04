@@ -537,45 +537,129 @@ fn read_addr(root: &Table, table_name: &str) -> Result<Option<String>, ConfigErr
     }
 }
 
-fn read_settings(root: &Table) -> Result<Settings, ConfigError> {
+/// Read every known key, collecting an error per bad key instead of stopping at the first. A
+/// bad key stays unset in the returned [`Settings`].
+fn read_settings_lenient(root: &Table) -> (Settings, Vec<ConfigError>) {
     let mut s = Settings::default();
-    if let Some(item) = root.get("callsign") {
-        s.callsign =
-            Some(Callsign::new(string(item, "callsign")?).map_err(|e| invalid("callsign", e))?);
-    }
-    if let Some(item) = sub_table(root, "station")?.and_then(|t| t.get("locator")) {
-        s.locator = Some(
-            Grid::new(string(item, "station.locator")?)
-                .map_err(|e| invalid("station.locator", e))?,
-        );
-    }
-    if let Some(item) = sub_table(root, "logbook")?.and_then(|t| t.get("path")) {
-        let path = string(item, "logbook.path")?.trim();
-        if path.is_empty() {
-            return Err(invalid("logbook.path", "must not be empty"));
+    let mut errs = Vec::new();
+    let mut keep = |r: Result<(), ConfigError>| {
+        if let Err(e) = r {
+            errs.push(e);
         }
-        s.log_path = Some(PathBuf::from(path));
-    }
-    s.rig_addr = match read_addr(root, "rig")? {
-        Some(addr) => Some(addr),
-        None => read_addr(root, "kx3")?,
     };
-    if let Some(macros) = sub_table(root, "macros")? {
-        for (name, item) in macros {
-            let key = format!("macros.{name}");
-            let n = name
-                .strip_prefix('F')
-                .and_then(|n| n.parse::<u8>().ok())
-                .filter(|n| (1..=6).contains(n) && name == format!("F{n}"))
-                .ok_or_else(|| invalid(&key, "only F1 to F6 are supported"))?;
-            let text = string(item, &key)?.trim().to_uppercase();
-            if text.is_empty() {
-                return Err(invalid(&key, "has no text"));
-            }
-            s.macros.insert(n, text);
+    keep((|| {
+        if let Some(item) = root.get("callsign") {
+            s.callsign =
+                Some(Callsign::new(string(item, "callsign")?).map_err(|e| invalid("callsign", e))?);
         }
+        Ok(())
+    })());
+    keep((|| {
+        if let Some(item) = sub_table(root, "station")?.and_then(|t| t.get("locator")) {
+            s.locator = Some(
+                Grid::new(string(item, "station.locator")?)
+                    .map_err(|e| invalid("station.locator", e))?,
+            );
+        }
+        Ok(())
+    })());
+    keep((|| {
+        if let Some(item) = sub_table(root, "logbook")?.and_then(|t| t.get("path")) {
+            let path = string(item, "logbook.path")?.trim();
+            if path.is_empty() {
+                return Err(invalid("logbook.path", "must not be empty"));
+            }
+            s.log_path = Some(PathBuf::from(path));
+        }
+        Ok(())
+    })());
+    keep((|| {
+        s.rig_addr = match read_addr(root, "rig")? {
+            Some(addr) => Some(addr),
+            None => read_addr(root, "kx3")?,
+        };
+        Ok(())
+    })());
+    keep((|| {
+        if let Some(macros) = sub_table(root, "macros")? {
+            for (name, item) in macros {
+                let key = format!("macros.{name}");
+                let n = name
+                    .strip_prefix('F')
+                    .and_then(|n| n.parse::<u8>().ok())
+                    .filter(|n| (1..=6).contains(n) && name == format!("F{n}"))
+                    .ok_or_else(|| invalid(&key, "only F1 to F6 are supported"))?;
+                let text = string(item, &key)?.trim().to_uppercase();
+                if text.is_empty() {
+                    return Err(invalid(&key, "has no text"));
+                }
+                s.macros.insert(n, text);
+            }
+        }
+        Ok(())
+    })());
+    (s, errs)
+}
+
+fn read_settings(root: &Table) -> Result<Settings, ConfigError> {
+    let (settings, errs) = read_settings_lenient(root);
+    errs.into_iter().next().map_or(Ok(settings), Err)
+}
+
+/// Read `path` keeping whatever is valid: the settings from every key that parsed, plus one
+/// error per key that did not. For a tool that consumes only some keys and must not lose them
+/// to a mistake in another tool's section.
+///
+/// A missing file is all defaults. A file that is not valid TOML is salvaged by table: the text
+/// is cut at each table header, the pieces that parse alone are read, and the syntax error is
+/// reported first, so a broken `[kx3]` does not cost `[station]`. An unreadable file is `Err`.
+pub fn load_lenient(path: &Path) -> Result<(Settings, Vec<ConfigError>), ConfigError> {
+    let Some((text, _)) = read_text(path)? else {
+        return Ok((Settings::default(), Vec::new()));
+    };
+    let e = match Document::parse(&text) {
+        Ok(doc) => return Ok(read_settings_lenient(&doc)),
+        Err(e) => e,
+    };
+    let syntax = parse_error(&text, e);
+    let mut good = String::new();
+    let mut dropped = Vec::new();
+    let mut piece = String::new();
+    let mut take = |piece: &mut String| {
+        match Document::parse(piece.as_str()) {
+            Ok(_) => good.push_str(piece),
+            Err(e) => {
+                let first = piece.lines().next().unwrap_or("").trim();
+                let key = first
+                    .strip_prefix('[')
+                    .map_or("", |h| h.trim_matches(|c| c == '[' || c == ']' || c == ' '));
+                dropped.push(ConfigError::Invalid {
+                    key: key.to_string(),
+                    message: format!("not valid TOML: {}", e.message()),
+                });
+            }
+        }
+        piece.clear();
+    };
+    for line in text.split_inclusive('\n') {
+        if line.trim_start().starts_with('[') {
+            take(&mut piece);
+        }
+        piece.push_str(line);
     }
-    Ok(s)
+    take(&mut piece);
+    let (settings, mut errs) = match Document::parse(&good) {
+        Ok(doc) => read_settings_lenient(&doc),
+        Err(_) => (Settings::default(), Vec::new()),
+    };
+    // `dropped` names the tables lost (empty key: the top level); the whole-file error stands in
+    // when the pieces each parse but the file does not (a repeated table).
+    if dropped.is_empty() {
+        errs.insert(0, syntax);
+    } else {
+        errs.splice(0..0, dropped);
+    }
+    Ok((settings, errs))
 }
 
 const KNOWN: [(&str, &[&str]); 5] = [

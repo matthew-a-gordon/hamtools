@@ -128,6 +128,52 @@ mod shared_config {
     }
 
     #[test]
+    fn errors_in_another_tools_sections_do_not_cost_logging_or_the_locator() {
+        let dir = std::env::temp_dir().join(format!("sat-tui-shared-other-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let write = |name: &str, text: &str| {
+            let path = dir.join(name);
+            std::fs::write(&path, text).unwrap();
+            path
+        };
+        let good = "callsign = \"w1aw\"\n[station]\nlocator = \"en71dq\"\n[logbook]\npath = \"/d/l.adi\"\n";
+
+        // A value error in [kx3] or [macros].
+        for (name, tail) in [
+            ("addr.toml", "[kx3]\naddr = \"nonsense\"\n"),
+            ("macro.toml", "[macros]\nF9 = \"X\"\n"),
+            ("syntax.toml", "[kx3]\naddr = = broken\n"),
+        ] {
+            let (shared, note) = load_shared(Some(&write(name, &format!("{good}{tail}"))));
+            assert_eq!(shared.callsign.unwrap().as_str(), "W1AW", "{name}");
+            assert_eq!(shared.locator.unwrap().as_str(), "EN71DQ", "{name}");
+            assert_eq!(shared.log_path, Some(PathBuf::from("/d/l.adi")), "{name}");
+            assert_eq!(note, None, "{name}");
+        }
+
+        // A syntax error in [kx3] listed before sat-tui's tables.
+        let (shared, note) = load_shared(Some(&write(
+            "first.toml",
+            &format!(
+                "callsign = \"w1aw\"\n[kx3]\naddr = = broken\n{}",
+                &good[good.find("[station]").unwrap()..]
+            ),
+        )));
+        assert_eq!(shared.locator.unwrap().as_str(), "EN71DQ");
+        assert_eq!(note, None);
+
+        // A bad key sat-tui consumes still surfaces, and the good ones survive.
+        let (shared, note) = load_shared(Some(&write(
+            "mine.toml",
+            "callsign = \"w1aw\"\n[station]\nlocator = \"zz\"\n[logbook]\npath = \"/d/l.adi\"\n",
+        )));
+        assert_eq!(shared.callsign.unwrap().as_str(), "W1AW");
+        assert_eq!(shared.log_path, Some(PathBuf::from("/d/l.adi")));
+        assert_eq!(shared.locator, None);
+        assert!(note.unwrap().contains("station.locator"));
+    }
+
+    #[test]
     fn it_lives_in_config_toml_beside_sat_tui_toml() {
         assert_eq!(
             shared_config_path(Some("/x"), Some("/h")),
