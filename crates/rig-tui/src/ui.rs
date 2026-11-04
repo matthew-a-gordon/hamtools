@@ -25,7 +25,7 @@ pub fn render(app: &App, frame: &mut Frame) {
         Constraint::Length(4),
         Constraint::Min(3),
         Constraint::Length(1),
-        Constraint::Length(1),
+        Constraint::Length(2),
     ])
     .areas(frame.area());
 
@@ -169,6 +169,7 @@ pub(crate) fn render_no_panel(app: &App, frame: &mut Frame, area: Rect) {
 }
 
 /// The keys that apply to the current focus.
+/// One or two rows (split by `\n`) so every key fits in 80 columns.
 fn hint(app: &App) -> &'static str {
     if app.log_form_open() {
         return "Tab/Shift-Tab field  Enter save  Esc cancel  Ctrl-C quit";
@@ -180,10 +181,10 @@ fn hint(app: &App) -> &'static str {
         return "digits kHz, or MHz with '.'  Enter set  Esc cancel  Ctrl-C quit";
     }
     match app.focus() {
-        Focus::Panel => "Enter send  F1-F6 soft keys  Tab/Esc strip  Ctrl-C quit",
+        Focus::Panel => "Enter send  F1-F6 soft keys  Tab/Esc strip\nCtrl-L log  Ctrl-C quit",
         Focus::Strip if app.panel_active() => {
-            "f freq  </> tune  ^/v step  m/M mode  v VFO  s/S split  Tab input  q quit"
+            "f freq  </> tune  ^/v step  m/M mode  v VFO  s/S split\nl log  L list  c config  Tab input  q quit"
         }
-        Focus::Strip => "f freq  </> tune  ^/v step  m/M mode  v VFO  s/S split  q quit",
+        Focus::Strip => "f freq  </> tune  ^/v step  m/M mode  v VFO  s/S split\nl log  L list  c config  q quit",
     }
 }

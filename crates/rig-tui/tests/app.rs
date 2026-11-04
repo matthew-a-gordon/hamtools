@@ -104,7 +104,7 @@ mod cw_input {
 
         rx(&mut app, "TB003R R;");
 
-        let rows = screen(&app, 40, 14);
+        let rows = screen(&app, 40, 15);
         let at = |needle: &str| rows.iter().position(|r| r.contains(needle)).unwrap();
         assert!(
             at("CQ") < at("DE ME") && at("DE ME") < at("R R"),

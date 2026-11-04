@@ -75,6 +75,20 @@ mod hint_line {
     }
 
     #[test]
+    fn it_names_the_log_list_and_config_keys_at_80_columns() {
+        let mut app = connected_app_in(App::new(), "CW");
+        let rows = screen(&app, 80, 14);
+        assert!(has(&rows, "l log"), "{rows:#?}");
+        assert!(has(&rows, "L list"), "{rows:#?}");
+        assert!(has(&rows, "c config"), "{rows:#?}");
+        assert!(has(&rows, "q quit"), "{rows:#?}");
+
+        app.on_key(key(KeyCode::Tab));
+        let rows = screen(&app, 80, 14);
+        assert!(has(&rows, "Ctrl-L log"), "{rows:#?}");
+    }
+
+    #[test]
     fn it_does_not_offer_the_input_line_where_there_is_none() {
         let app = connected_app_in(App::new(), "USB");
 
