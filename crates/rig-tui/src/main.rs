@@ -21,7 +21,7 @@ const TICK: Duration = Duration::from_millis(100);
 
 const USAGE: &str = "usage: rig-tui [--config PATH] [ADDR]
 
-ADDR is the rigctld to use; it overrides the config file (default 127.0.0.1:4532).
+ADDR is the rigctld of the Active rig; it overrides that profile's address (with no profiles: 127.0.0.1:4532).
 Config defaults to $XDG_CONFIG_HOME/hamtools/config.toml (see config.example.toml).
 The app starts without a rig and keeps retrying the connection.";
 
@@ -63,22 +63,21 @@ fn try_main() -> Result<(), Box<dyn Error>> {
             warning.name, warning.line
         );
     }
-    let addr = addr_arg.unwrap_or_else(|| config.rig_addr.clone());
 
     let rt = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()?;
-    let mut rig = Rig::new(addr.clone());
     let mut app = App::with_callsign(config.callsign.clone())
         .with_soft_keys(config.soft_keys)
         .with_softkey_sets(config.softkey_sets)
         .with_locator(config.locator)
+        .with_license_class(config.license_class)
         .with_log_path(config.log_path)
         .with_default_log_path(default_log_path(
             std::env::var("XDG_DATA_HOME").ok().as_deref(),
             std::env::var("HOME").ok().as_deref(),
         ))
-        .with_rig_addr(addr)
+        .with_rigs(&config.rigs, config.rig_default.as_deref())
         .with_config_path(config_arg.or(default_path));
     // Starting the client makes no request; fetching happens on saving a plan or an explicit
     // refresh (ADR 0003).
@@ -92,10 +91,15 @@ fn try_main() -> Result<(), Box<dyn Error>> {
         ));
         app = app.with_reference_data(Arc::new(ReferenceData::new(client, dir)));
     }
+    if let Some(addr) = addr_arg {
+        app = app.with_rig_addr(addr);
+    }
+    // One connection per configured rig; both stay up.
+    let mut rigs: Vec<Rig> = app.rig_addrs().into_iter().map(Rig::new).collect();
     let geocoder = Geocoder::new();
 
     let mut terminal = ratatui::init();
-    let result = run(&mut terminal, &rt, &mut rig, app, &geocoder);
+    let result = run(&mut terminal, &rt, &mut rigs, app, &geocoder);
     ratatui::restore();
     result
 }
@@ -104,7 +108,7 @@ fn try_main() -> Result<(), Box<dyn Error>> {
 /// the app asked to quit.
 fn dispatch(
     rt: &Runtime,
-    rig: &mut Rig,
+    rigs: &mut [Rig],
     app: &mut App,
     geocoder: &Geocoder,
     lookups: &Sender<GeocodeResult>,
@@ -123,8 +127,22 @@ fn dispatch(
             }
             _ => {}
         }
+        // Ordinary commands go to the Active rig; a light poll and an address change name
+        // their rig.
+        let target = match &command {
+            Command::LightPoll(rig) | Command::SetRigAddr { rig, .. } => *rig,
+            _ => app.active_rig(),
+        };
+        let background = matches!(command, Command::LightPoll(_));
+        let Some(rig) = rigs.get_mut(target) else {
+            continue;
+        };
         for event in rt.block_on(rig.execute(command)) {
-            app.on_rig(event);
+            if background {
+                app.on_rig_at(target, event);
+            } else {
+                app.on_rig(event);
+            }
         }
     }
     false
@@ -133,7 +151,7 @@ fn dispatch(
 fn run(
     terminal: &mut DefaultTerminal,
     rt: &Runtime,
-    rig: &mut Rig,
+    rigs: &mut [Rig],
     mut app: App,
     geocoder: &Geocoder,
 ) -> Result<(), Box<dyn Error>> {
@@ -151,7 +169,7 @@ fn run(
             && key.kind == KeyEventKind::Press
         {
             let commands = app.on_key(key);
-            if dispatch(rt, rig, &mut app, geocoder, &lookups, commands) {
+            if dispatch(rt, rigs, &mut app, geocoder, &lookups, commands) {
                 return Ok(());
             }
         }
@@ -161,7 +179,7 @@ fn run(
         }
 
         let commands = app.tick(Instant::now());
-        if dispatch(rt, rig, &mut app, geocoder, &lookups, commands) {
+        if dispatch(rt, rigs, &mut app, geocoder, &lookups, commands) {
             return Ok(());
         }
     }

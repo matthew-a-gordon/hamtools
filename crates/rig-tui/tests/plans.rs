@@ -177,7 +177,7 @@ fn has(rows: &[String], needle: &str) -> bool {
     rows.iter().any(|r| r.contains(needle))
 }
 
-fn row_with<'a>(rows: &'a [String], needle: &str) -> usize {
+fn row_with(rows: &[String], needle: &str) -> usize {
     rows.iter()
         .position(|r| r.contains(needle))
         .unwrap_or_else(|| panic!("no row with {needle:?} in {rows:#?}"))

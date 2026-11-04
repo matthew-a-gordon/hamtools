@@ -6,6 +6,7 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use common::*;
+use hamtools_config::{RigKind, RigProfile};
 use logbook::Grid;
 use ratatui::crossterm::event::KeyCode;
 use rig_tui::geocode::{Candidate, GeocodeError};
@@ -32,8 +33,21 @@ fn read(path: &Path) -> String {
     std::fs::read_to_string(path).unwrap()
 }
 
+fn kx3_profile(addr: &str) -> RigProfile {
+    RigProfile {
+        name: "kx3".into(),
+        addr: addr.into(),
+        kind: RigKind::Kx3,
+        cw: None,
+        split: None,
+        sat_mode: None,
+    }
+}
+
 fn app_for(path: &Path) -> App {
-    App::new().with_config_path(Some(path.to_path_buf()))
+    App::new()
+        .with_rigs(&[kx3_profile("127.0.0.1:4532")], None)
+        .with_config_path(Some(path.to_path_buf()))
 }
 
 fn open(app: &mut App) {
@@ -68,13 +82,15 @@ fn candidate(name: &str, locator: &str) -> Candidate {
     }
 }
 
-// Field order: 0 Callsign, 1 Locator, 2 Address, 3 Log path, 4 Rig address, 5..=10 F1..F6.
+// Field order: 0 Callsign, 1 Locator, 2 Address, 3 Log path, 4 Rig address, 5 Default rig,
+// 6..=11 F1..F6.
 const LOCATOR: usize = 1;
 const ADDRESS: usize = 2;
 const RIG: usize = 4;
-const F1: usize = 5;
+const DEFAULT_RIG: usize = 5;
+const F1: usize = 6;
 
-const SAMPLE: &str = "# my station\ncallsign = \"W1AW\"\n\n[rig]\naddr = \"127.0.0.1:4533\"\n\n[macros]\nF1 = \"CQ DE {MYCALL}\"\n";
+const SAMPLE: &str = "# my station\ncallsign = \"W1AW\"\n\n[rig.kx3]\naddr = \"127.0.0.1:4533\"\nkind = \"kx3\"\n\n[macros]\nF1 = \"CQ DE {MYCALL}\"\n";
 
 #[test]
 fn c_opens_the_dialog_while_disconnected_and_shows_the_file_fresh() {
@@ -210,13 +226,44 @@ fn save_patches_the_file_applies_live_and_closes() {
     assert_eq!(
         commands,
         vec![
-            Command::SetRigAddr("127.0.0.1:4533".into()),
+            Command::SetRigAddr {
+                rig: 0,
+                addr: "127.0.0.1:4533".into()
+            },
             Command::ClearGeocodeCache
         ]
     );
     assert_eq!(
         read(&path),
-        "# my station\ncallsign = \"W1AW\"\n\n[rig]\naddr = \"127.0.0.1:4533\"\n\n[macros]\nF1 = \"73 DE {MYCALL}\"\n\n[station]\nlocator = \"EN71DQ\"\n"
+        "# my station\ncallsign = \"W1AW\"\n\n[rig.kx3]\naddr = \"127.0.0.1:4533\"\nkind = \"kx3\"\n\n[macros]\nF1 = \"73 DE {MYCALL}\"\n\n[station]\nlocator = \"EN71DQ\"\n"
+    );
+}
+
+const TWO_RIGS: &str = "[rig.kx3]\naddr = \"127.0.0.1:4532\"\nkind = \"kx3\"\n\n[rig.ft847]\naddr = \"127.0.0.1:4533\"\nkind = \"ft847\"\n";
+
+#[test]
+fn the_default_rig_is_edited_by_profile_name_and_must_name_an_existing_profile() {
+    let path = file_with("defaultrig", TWO_RIGS);
+    let mut app = app_for(&path);
+    open(&mut app);
+    tabs(&mut app, DEFAULT_RIG);
+    type_in(&mut app, "nope");
+
+    app.on_key(ctrl('s'));
+
+    assert_eq!(read(&path), TWO_RIGS, "an unknown profile must not save");
+    assert!(shows(&app, "[rig.NAME]"));
+    for _ in 0..4 {
+        app.on_key(key(KeyCode::Backspace));
+    }
+    type_in(&mut app, "ft847");
+
+    app.on_key(ctrl('s'));
+
+    assert!(!app.has_overlay());
+    assert_eq!(
+        read(&path),
+        format!("[rig]\ndefault = \"ft847\"\n{TWO_RIGS}")
     );
 }
 
@@ -236,7 +283,10 @@ fn a_new_rig_address_drops_the_connection_so_the_retry_loop_reconnects() {
     assert_eq!(
         commands,
         vec![
-            Command::SetRigAddr("127.0.0.1:4532".into()),
+            Command::SetRigAddr {
+                rig: 0,
+                addr: "127.0.0.1:4532".into()
+            },
             Command::ClearGeocodeCache
         ]
     );

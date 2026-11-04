@@ -65,7 +65,7 @@ pub(crate) struct ConfigDialog {
     problem: Option<Problem>,
     /// What the app is using now; stands in for the file's settings when there is no usable file.
     fallback: Settings,
-    default_rig: String,
+    rig: ActiveRig,
     form: Form,
     initial: Vec<String>,
     mode: Mode,
@@ -76,6 +76,13 @@ pub(crate) struct ConfigDialog {
 
 fn key_plain(code: KeyCode) -> KeyEvent {
     KeyEvent::new(code, KeyModifiers::NONE)
+}
+
+/// The Active rig: its profile name, and its address when the file has no profile for it.
+#[derive(Debug, Clone)]
+struct ActiveRig {
+    name: String,
+    addr: String,
 }
 
 /// Number of Soft key slots (`F1` to `F6`).
@@ -91,18 +98,21 @@ enum Field {
     Address,
     LogPath,
     Rig,
+    /// `rig.default`: the name of the profile to start on.
+    DefaultRig,
     /// Soft key `F1` to `F6`, numbered from 1.
     Soft(u8),
 }
 
 impl Field {
     /// In display order; a field's position here is its index in the [`Form`].
-    const ALL: [Field; 11] = [
+    const ALL: [Field; 12] = [
         Field::Callsign,
         Field::Locator,
         Field::Address,
         Field::LogPath,
         Field::Rig,
+        Field::DefaultRig,
         Field::Soft(1),
         Field::Soft(2),
         Field::Soft(3),
@@ -129,6 +139,7 @@ impl Field {
             Field::Address => "Address".into(),
             Field::LogPath => "Log path".into(),
             Field::Rig => "Rig address".into(),
+            Field::DefaultRig => "Default rig".into(),
             Field::Soft(n) => format!("F{n}"),
         }
     }
@@ -154,7 +165,8 @@ impl Field {
             "callsign" => Some(Field::Callsign),
             "station.locator" => Some(Field::Locator),
             "logbook.path" => Some(Field::LogPath),
-            "rig.addr" => Some(Field::Rig),
+            "rig.default" => Some(Field::DefaultRig),
+            k if k.starts_with("rig.") && k.ends_with(".addr") => Some(Field::Rig),
             _ => {
                 let n: u8 = key.strip_prefix("macros.F")?.parse().ok()?;
                 (1..=SLOTS).contains(&n).then_some(Field::Soft(n))
@@ -163,7 +175,7 @@ impl Field {
     }
 
     /// The text this field shows for `settings`.
-    fn value_in(self, settings: &Settings, default_rig: &str) -> String {
+    fn value_in(self, settings: &Settings, rig: &ActiveRig) -> String {
         match self {
             Field::Callsign => settings
                 .callsign
@@ -179,15 +191,15 @@ impl Field {
                 .as_ref()
                 .map_or(String::new(), |p| p.to_string_lossy().into_owned()),
             Field::Rig => settings
-                .rig_addr
-                .clone()
-                .unwrap_or_else(|| default_rig.to_string()),
+                .rig(&rig.name)
+                .map_or_else(|| rig.addr.clone(), |p| p.addr.clone()),
+            Field::DefaultRig => settings.rig_default.clone().unwrap_or_default(),
             Field::Soft(n) => settings.macros.get(&n).cloned().unwrap_or_default(),
         }
     }
 
     /// Store the (already validated) form text into `settings`.
-    fn apply(self, text: &str, settings: &mut Settings) {
+    fn apply(self, text: &str, settings: &mut Settings, rig: &ActiveRig) {
         let text = text.trim();
         match self {
             Field::Callsign => settings.callsign = Callsign::new(text).ok(),
@@ -196,7 +208,16 @@ impl Field {
             Field::LogPath => {
                 settings.log_path = (!text.is_empty()).then(|| PathBuf::from(text));
             }
-            Field::Rig => settings.rig_addr = Some(text.to_string()),
+            Field::Rig => {
+                // Adding a profile is the TOML file's job; with none for this rig there is
+                // nothing to edit.
+                if let Some(profile) = settings.rigs.iter_mut().find(|p| p.name == rig.name) {
+                    profile.addr = text.to_string();
+                }
+            }
+            Field::DefaultRig => {
+                settings.rig_default = (!text.is_empty()).then(|| text.to_string())
+            }
             Field::Soft(n) => {
                 if text.is_empty() {
                     settings.macros.remove(&n);
@@ -233,10 +254,10 @@ impl Field {
     }
 }
 
-fn values_of(settings: &Settings, default_rig: &str) -> Vec<String> {
+fn values_of(settings: &Settings, rig: &ActiveRig) -> Vec<String> {
     Field::ALL
         .iter()
-        .map(|f| f.value_in(settings, default_rig))
+        .map(|f| f.value_in(settings, rig))
         .collect()
 }
 
@@ -268,8 +289,17 @@ fn rows_needed(lines: &[Line], width: u16) -> u16 {
 
 impl ConfigDialog {
     /// Open on a fresh read of the file at `path`. `current` is what the app is using now and
-    /// `default_rig` the address in use, shown when the file does not set one.
-    pub(crate) fn open(path: Option<&Path>, current: &Settings, default_rig: &str) -> Self {
+    /// `rig_name` and `rig_addr` the Active rig, whose address the Rig row edits.
+    pub(crate) fn open(
+        path: Option<&Path>,
+        current: &Settings,
+        rig_name: &str,
+        rig_addr: &str,
+    ) -> Self {
+        let rig = ActiveRig {
+            name: rig_name.to_string(),
+            addr: rig_addr.to_string(),
+        };
         let (file, problem, settings) = match path {
             None => (
                 None,
@@ -290,13 +320,13 @@ impl ConfigDialog {
                 Err(e) => (None, Some(Problem::Broken(e.to_string())), current.clone()),
             },
         };
-        let initial = values_of(&settings, default_rig);
+        let initial = values_of(&settings, &rig);
         Self {
             path: path.map(Path::to_path_buf),
             file,
             problem,
             fallback: current.clone(),
-            default_rig: default_rig.to_string(),
+            rig,
             form: form_of(&initial),
             initial,
             mode: Mode::Editing,
@@ -332,14 +362,23 @@ impl ConfigDialog {
         let mut s = self.base();
         for (i, field) in Field::ALL.iter().enumerate() {
             if self.changed(i) {
-                field.apply(self.form.value(i), &mut s);
+                field.apply(self.form.value(i), &mut s, &self.rig);
             }
         }
         s
     }
 
     fn validate_field(&mut self, index: usize) -> bool {
-        match Field::at(index).check(self.form.value(index)) {
+        let value = self.form.value(index).trim();
+        let checked = Field::at(index).check(value).and_then(|()| {
+            let known = self.base().rig(value).is_some();
+            if Field::at(index) == Field::DefaultRig && !value.is_empty() && !known {
+                Err("Default rig: must name a [rig.NAME] profile in the file".to_string())
+            } else {
+                Ok(())
+            }
+        });
+        match checked {
             Ok(()) => {
                 self.form.clear_error(index);
                 true
@@ -547,7 +586,7 @@ impl ConfigDialog {
                     .writable()
                     .err()
                     .map(|e| Problem::ReadOnly(e.to_string()));
-                self.initial = values_of(file.settings(), &self.default_rig);
+                self.initial = values_of(file.settings(), &self.rig);
                 self.form = form_of(&self.initial);
                 self.file = Some(file);
             }

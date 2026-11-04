@@ -1,0 +1,29 @@
+# ARRL voluntary band plan layer: terse facts only (segment edges and a short label), cited to
+# the ARRL band plan page. No ARRL wording or table layout is copied; ask ARRL permission before
+# embedding more. Conventions, not rules; locally coordinated plans take precedence.
+#
+# `mode` is the usual rig mode the `m` key applies: CW, USB, LSB, FM, RTTY, or `phone`
+# (LSB below 10 MHz, USB above). Rows without it have no usual mode. A row with lo_hz == hi_hz
+# is a calling frequency.
+
+meta = { as_of = "2026-11-04" }
+
+segment = [
+  { band = "160m", lo_hz = 1_800_000, hi_hz = 1_810_000, label = "digital", source = "arrl-band-plan" },
+  { band = "80m", lo_hz = 3_570_000, hi_hz = 3_600_000, label = "RTTY/data", mode = "RTTY", source = "arrl-band-plan" },
+  { band = "40m", lo_hz = 7_080_000, hi_hz = 7_125_000, label = "RTTY/data", mode = "RTTY", source = "arrl-band-plan" },
+  { band = "30m", lo_hz = 10_130_000, hi_hz = 10_140_000, label = "RTTY", mode = "RTTY", source = "arrl-band-plan" },
+  { band = "30m", lo_hz = 10_140_000, hi_hz = 10_150_000, label = "packet", source = "arrl-band-plan" },
+  { band = "20m", lo_hz = 14_070_000, hi_hz = 14_095_000, label = "RTTY", mode = "RTTY", source = "arrl-band-plan" },
+  { band = "20m", lo_hz = 14_100_500, hi_hz = 14_112_000, label = "packet", source = "arrl-band-plan" },
+  { band = "10m", lo_hz = 28_000_000, hi_hz = 28_070_000, label = "CW", mode = "CW", source = "arrl-band-plan" },
+  { band = "10m", lo_hz = 28_150_000, hi_hz = 28_190_000, label = "CW", mode = "CW", source = "arrl-band-plan" },
+  { band = "10m", lo_hz = 28_300_000, hi_hz = 29_300_000, label = "phone", mode = "phone", source = "arrl-band-plan" },
+  { band = "10m", lo_hz = 29_520_000, hi_hz = 29_700_000, label = "FM repeaters", mode = "FM", source = "arrl-band-plan" },
+  { band = "6m", lo_hz = 50_000_000, hi_hz = 50_100_000, label = "CW/beacons", mode = "CW", source = "arrl-band-plan" },
+  { band = "6m", lo_hz = 50_125_000, hi_hz = 50_125_000, label = "SSB calling", mode = "USB", source = "arrl-band-plan" },
+  { band = "2m", lo_hz = 144_200_000, hi_hz = 144_200_000, label = "SSB calling", mode = "USB", source = "arrl-band-plan" },
+  { band = "2m", lo_hz = 146_520_000, hi_hz = 146_520_000, label = "FM calling", mode = "FM", source = "arrl-band-plan" },
+  { band = "70cm", lo_hz = 432_100_000, hi_hz = 432_100_000, label = "calling", source = "arrl-band-plan" },
+  { band = "70cm", lo_hz = 446_000_000, hi_hz = 446_000_000, label = "simplex", mode = "FM", source = "arrl-band-plan" },
+]

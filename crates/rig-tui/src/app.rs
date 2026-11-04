@@ -8,7 +8,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime};
 
 use chrono::{DateTime, Datelike, Utc};
-use hamtools_config::{Callsign, Grid, Plan, PlanActivity, Settings};
+use hamtools_config::{Callsign, Grid, LicenseClass, Plan, PlanActivity, RigKind, RigProfile};
 use hamtools_tui::modal::Modal;
 use logbook::{Log, band_for_hz};
 use ratatui::Frame;
@@ -18,6 +18,7 @@ use ratatui::text::Line;
 use ratatui::widgets::Paragraph;
 
 use crate::activity::{Activity, ActivityCtx};
+use crate::bandplan::{BandAction, BandplanModal, View as BandView};
 use crate::config_dialog::{ConfigDialog, Outcome};
 use crate::general::General;
 use crate::geocode::GeocodeResult;
@@ -30,8 +31,11 @@ use crate::panel::{LogDefaults, LogMode, Role};
 use crate::plans::{self, PlanRow, Plans, PlansModal, PlansOutcome};
 use crate::refdata::ReferenceData;
 use crate::rig::{Command, Feature, RigEvent, RigMode};
+use crate::rigs::{RigSlot, Switcher};
 use crate::softkeys::{Exchange, Layers, NamedSet, Resolved, resolve};
 use crate::style::{dim, red};
+
+mod rig_switch;
 
 /// How long to wait between attempts to reach `rigctld`. A starting value, untested on hardware.
 pub const RECONNECT_EVERY: Duration = Duration::from_secs(3);
@@ -45,7 +49,7 @@ pub const STALE_AFTER: Duration = Duration::from_secs(2);
 
 /// Tuning steps in Hz, smallest first.
 pub(crate) const STEPS: [u64; 6] = [1, 10, 100, 1_000, 10_000, 100_000];
-const DEFAULT_STEP: usize = 3;
+pub(crate) const DEFAULT_STEP: usize = 3;
 
 /// The order `m` and `M` walk through.
 const MODE_CYCLE: [RigMode; 8] = [
@@ -86,9 +90,9 @@ pub enum OverlayAction {
 
 /// A value the rig reported and when the app heard it.
 #[derive(Debug, Clone)]
-struct Reading<T> {
-    value: T,
-    at: Instant,
+pub(crate) struct Reading<T> {
+    pub(crate) value: T,
+    pub(crate) at: Instant,
 }
 
 /// A frequency being typed on the strip.
@@ -142,7 +146,14 @@ pub struct App {
     /// Every hosted Activity keeps its in-memory state; exactly one is in the foreground.
     activities: Vec<Box<dyn Activity>>,
     foreground: usize,
-    rig_name: String,
+    /// The configured rigs; the readings below belong to `rigs[active]`.
+    rigs: Vec<RigSlot>,
+    active: usize,
+    /// `rig.default` as read from the config (a name), for the config dialog.
+    rig_default: Option<String>,
+    /// No profile was configured: `rigs` holds one stand-in named after its address.
+    implicit_rig: bool,
+    switcher: Option<Switcher>,
     overlay: Option<Box<dyn Overlay>>,
     /// The quit confirmation, with a line for each thing quitting would lose. It sits above
     /// every other overlay, which stay untouched underneath.
@@ -188,9 +199,11 @@ pub struct App {
     locator: Option<String>,
     log_path: Option<PathBuf>,
     default_log_path: Option<PathBuf>,
-    rig_addr: String,
     config_path: Option<PathBuf>,
     config: Option<ConfigDialog>,
+    /// The Ctrl-B band plan modal, when open.
+    bandplan: Option<BandplanModal>,
+    license_class: Option<LicenseClass>,
     last_connect: Option<Instant>,
     last_poll: Option<Instant>,
     last_smeter: Option<Instant>,
@@ -210,7 +223,21 @@ impl App {
         Self {
             activities: vec![Box::new(General::new())],
             foreground: 0,
-            rig_name: DEFAULT_RIG_ADDR.to_string(),
+            rigs: vec![RigSlot::from_profile(
+                &RigProfile {
+                    name: DEFAULT_RIG_ADDR.to_string(),
+                    addr: DEFAULT_RIG_ADDR.to_string(),
+                    kind: RigKind::Kx3,
+                    cw: None,
+                    split: None,
+                    sat_mode: None,
+                },
+                DEFAULT_STEP,
+            )],
+            active: 0,
+            rig_default: None,
+            implicit_rig: true,
+            switcher: None,
             overlay: None,
             quit_confirm: None,
             palette: None,
@@ -248,9 +275,10 @@ impl App {
             locator: None,
             log_path: None,
             default_log_path: None,
-            rig_addr: DEFAULT_RIG_ADDR.to_string(),
             config_path: None,
             config: None,
+            bandplan: None,
+            license_class: None,
             last_connect: None,
             last_poll: None,
             last_smeter: None,
@@ -382,14 +410,43 @@ impl App {
         self
     }
 
+    /// The operator's license class (`station.license_class`), for the band plan's privilege row.
+    pub fn with_license_class(mut self, class: Option<LicenseClass>) -> Self {
+        self.license_class = class;
+        self
+    }
+
     pub fn with_log_path(mut self, log_path: Option<PathBuf>) -> Self {
         self.log_path = log_path;
         self
     }
 
-    /// The `rigctld` address in use, shown in the config dialog when the file sets none.
+    /// The `rigctld` address of the Active rig (a command-line override, or the stand-in rig
+    /// when no profile is configured).
     pub fn with_rig_addr(mut self, addr: impl Into<String>) -> Self {
-        self.rig_addr = addr.into();
+        let slot = &mut self.rigs[self.active];
+        slot.addr = addr.into();
+        if self.implicit_rig {
+            slot.name = slot.addr.clone();
+        }
+        self
+    }
+
+    /// Use these rig profiles (in config order); start on `default` or else the first. An empty
+    /// list keeps the stand-in rig.
+    pub fn with_rigs(mut self, profiles: &[RigProfile], default: Option<&str>) -> Self {
+        if profiles.is_empty() {
+            return self;
+        }
+        self.rigs = profiles
+            .iter()
+            .map(|p| RigSlot::from_profile(p, DEFAULT_STEP))
+            .collect();
+        self.active = default
+            .and_then(|name| profiles.iter().position(|p| p.name == name))
+            .unwrap_or(0);
+        self.rig_default = default.map(str::to_string);
+        self.implicit_rig = false;
         self
     }
 
@@ -411,55 +468,20 @@ impl App {
 
     /// Bring the Activity at `index` to the foreground. Out of range is ignored.
     pub fn set_foreground(&mut self, index: usize) {
-        if index < self.activities.len() {
-            self.foreground = index;
-            self.entry = None;
+        if index >= self.activities.len() {
+            return;
         }
+        if let Some(why) = self.activity_unavailable(index) {
+            self.status = Some(why);
+            return;
+        }
+        self.foreground = index;
+        self.entry = None;
     }
 
     /// The foreground Activity's name, as the shared strip shows it.
     pub fn activity_name(&self) -> &'static str {
         self.activities[self.foreground].name()
-    }
-
-    pub(crate) fn rig_name(&self) -> &str {
-        &self.rig_name
-    }
-
-    pub fn rig_addr(&self) -> &str {
-        &self.rig_addr
-    }
-
-    /// What the app is using now, as config settings.
-    fn current_settings(&self) -> Settings {
-        Settings {
-            callsign: self.callsign.as_deref().and_then(|c| Callsign::new(c).ok()),
-            locator: self.locator.as_deref().and_then(|g| Grid::new(g).ok()),
-            log_path: self.log_path.clone(),
-            rig_addr: Some(self.rig_addr.clone()),
-            macros: self.soft_keys.clone(),
-            softkey_sets: self.softkey_sets.clone(),
-        }
-    }
-
-    /// Use saved settings now, with no restart. Returns what the rig side must do.
-    fn apply_settings(&mut self, settings: Settings) -> Vec<Command> {
-        self.callsign = settings.callsign.map(|c| c.as_str().to_string());
-        self.locator = settings.locator.map(|g| g.as_str().to_string());
-        self.log_path = settings.log_path;
-        self.soft_keys = settings.macros;
-        self.softkey_sets = settings.softkey_sets;
-        self.refresh_soft_keys();
-        match settings.rig_addr {
-            Some(addr) if addr != self.rig_addr => {
-                self.rig_addr = addr.clone();
-                self.rig_name = addr.clone();
-                self.connected = false;
-                self.last_connect = None;
-                vec![Command::SetRigAddr(addr)]
-            }
-            _ => Vec::new(),
-        }
     }
 
     /// The answer to a [`Command::Lookup`] (run by `main` on a short-lived thread).
@@ -580,11 +602,72 @@ impl App {
     pub fn has_overlay(&self) -> bool {
         self.overlay.is_some()
             || self.config.is_some()
+            || self.switcher_open()
+            || self.bandplan.is_some()
             || self.logging.modal_open()
             || self.quit_confirm.is_some()
             || self.palette.is_some()
             || self.plans_modal.is_some()
             || self.keybindings.is_some()
+    }
+
+    /// Why tuning from the band plan is refused right now (the foreground Activity is
+    /// controlling the dial, as Satellite does while tracking), if it is.
+    fn tuning_blocked(&self) -> Option<&'static str> {
+        self.activities[self.foreground].tuning_blocked()
+    }
+
+    /// Act on what a band plan key asked for. Tuning only: none of these keys the transmitter.
+    fn on_bandplan_action(&mut self, action: BandAction) -> Vec<Command> {
+        match action {
+            BandAction::Stay => return Vec::new(),
+            BandAction::Close => {
+                self.bandplan = None;
+                return Vec::new();
+            }
+            BandAction::NoMode => {
+                self.status = Some("no usual mode here".to_string());
+                return Vec::new();
+            }
+            _ => {}
+        }
+        if let Some(why) = self.tuning_blocked() {
+            self.status = Some(format!("not while {why}"));
+            return Vec::new();
+        }
+        if !self.ready() {
+            return Vec::new();
+        }
+        let hz = match action {
+            BandAction::SetRx(hz) => hz,
+            BandAction::SetTx(hz) => {
+                if !self.require(Feature::Split)
+                    || !self.require(Feature::SplitFreq)
+                    || !self.require_split_on()
+                {
+                    return Vec::new();
+                }
+                hz
+            }
+            BandAction::SetMode(mode) => {
+                self.status = None;
+                return vec![Command::SetMode { mode, passband: 0 }];
+            }
+            BandAction::Stay | BandAction::Close | BandAction::NoMode => return Vec::new(),
+        };
+        // Outside the license class is advice, never a gate.
+        self.status = self.license_class.and_then(|class| {
+            (!hamtools_config::bandplan::BandPlan::embedded().in_privilege(hz, class)).then(|| {
+                format!(
+                    "{} is outside {class} privileges (advisory only)",
+                    crate::ui::format_hz(hz)
+                )
+            })
+        });
+        match action {
+            BandAction::SetTx(_) => vec![Command::SetSplitFreq(hz)],
+            _ => vec![Command::SetFreq(hz)],
+        }
     }
 
     pub(crate) fn quit_confirm_open(&self) -> bool {
@@ -659,7 +742,7 @@ impl App {
             target: Target::Activity(i),
             name: a.name().to_string(),
             state: a.state_line(&ctx),
-            unavailable: a.unavailable(),
+            unavailable: a.unavailable().or_else(|| self.activity_unavailable(i)),
         }));
         rows.push(PaletteRow {
             target: Target::ManagePlans,
@@ -879,7 +962,8 @@ impl App {
         self.config = Some(ConfigDialog::open(
             self.config_path.as_deref(),
             &self.current_settings(),
-            &self.rig_addr,
+            self.rig_name(),
+            self.rig_addr(),
         ));
     }
 
@@ -889,9 +973,10 @@ impl App {
         match action {
             Action::GoTo => self.open_palette(),
             Action::Keybindings => self.open_keybindings(),
-            Action::Bandplan | Action::RigSwitcher => {
-                self.status = Some("not available yet".to_string());
+            Action::RigSwitcher => {
+                self.open_switcher();
             }
+            Action::Bandplan => self.bandplan = Some(BandplanModal::open(self.frequency())),
             Action::LogForm => self.open_log_form(),
             Action::SessionList => self.logging.open_list(),
             Action::Config => self.open_config(),
@@ -1086,6 +1171,10 @@ impl App {
                 }
             };
         }
+        if self.switcher_open() {
+            self.on_switcher_key(key);
+            return Vec::new();
+        }
         if let Some(palette) = &mut self.palette {
             match palette.on_key(key) {
                 PaletteOutcome::Keep => {}
@@ -1116,6 +1205,11 @@ impl App {
                 self.overlay = None;
             }
             return Vec::new();
+        }
+        if let Some(modal) = &mut self.bandplan {
+            let rx = self.freq.as_ref().map(|r| r.value);
+            let action = modal.on_key(key, rx);
+            return self.on_bandplan_action(action);
         }
         if self.logging.modal_open() {
             // The session list holds nothing to lose, so a Chord may open over it.
@@ -1418,9 +1512,10 @@ impl App {
                 self.last_connect = Some(now);
                 commands.insert(0, Command::Connect);
             }
+            commands.extend(self.tick_inactive(now));
             return commands;
         }
-        let mut commands = Vec::new();
+        let mut commands = self.tick_inactive(now);
         if self
             .last_poll
             .is_none_or(|at| now.duration_since(at) >= STATE_POLL_EVERY)
@@ -1458,6 +1553,19 @@ impl App {
         }
         if let Some(dialog) = &self.config {
             dialog.render(frame, area);
+        }
+        self.render_switcher(frame, area);
+        if let Some(modal) = &self.bandplan {
+            let view = BandView {
+                rx: self.frequency(),
+                tx: match self.split() {
+                    Some((true, _)) => self.transmit_frequency(),
+                    _ => None,
+                },
+                class: self.license_class,
+                today: self.clock().date_naive(),
+            };
+            modal.render(frame, area, &view);
         }
         if let Some(palette) = &self.palette {
             palette.render(frame, area);

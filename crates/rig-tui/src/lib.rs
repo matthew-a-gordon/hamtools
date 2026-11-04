@@ -5,6 +5,7 @@
 
 mod activity;
 mod app;
+mod bandplan;
 mod config;
 mod config_dialog;
 mod cw;
@@ -20,6 +21,7 @@ mod plans;
 pub mod refdata;
 pub mod reference;
 mod rig;
+mod rigs;
 pub mod softkeys;
 mod style;
 mod ui;
@@ -34,4 +36,5 @@ pub use cw::{Line, Source, TbError, TbReply, parse_tb};
 pub use general::General;
 pub use panel::{LogDefaults, LogMode, Role};
 pub use rig::{Command, Feature, Rig, RigEvent, RigMode};
+pub use rigs::{Capabilities, Capability, LIGHT_POLL_EVERY, Support, table as capability_table};
 pub use ui::render;

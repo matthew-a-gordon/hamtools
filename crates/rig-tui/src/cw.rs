@@ -91,6 +91,10 @@ const TB: &str = "TB;";
 pub struct CwPanel {
     lines: Vec<Line>,
     input: String,
+    /// Characters the rig said were still waiting to be keyed, at the last `TB;`.
+    tx_pending: u8,
+    /// Text was sent since the last `TB;` reply, so `tx_pending` may not show it yet.
+    sent_since_poll: bool,
 }
 
 impl CwPanel {
@@ -131,6 +135,7 @@ impl CwPanel {
             source: Source::Tx,
             text: text.clone(),
         });
+        self.sent_since_poll = true;
         vec![PanelCommand::Send(text)]
     }
 }
@@ -244,8 +249,14 @@ impl ModePanel for CwPanel {
             return Ok(());
         }
         let polled = parse_tb(&reply?).map_err(|e| e.to_string())?;
+        self.tx_pending = polled.tx_pending;
+        self.sent_since_poll = false;
         self.on_rx(&polled.text);
         Ok(())
+    }
+
+    fn sending(&self) -> bool {
+        self.sent_since_poll || self.tx_pending > 0
     }
 
     fn has_unsent_input(&self) -> bool {

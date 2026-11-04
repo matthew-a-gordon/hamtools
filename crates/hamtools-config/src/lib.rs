@@ -17,18 +17,28 @@
 //! callsign = "W1AW"
 //! [station]
 //! locator = "EN71DQ"      # 6 characters; latitude and longitude are never stored
+//! license_class = "general"  # technician, general, extra, advanced, novice; no default
 //! [logbook]
 //! path = "/home/me/log.adi"
-//! [rig]                   # `[kx3]` is read as an alias
+//! [rig]
+//! default = "kx3"         # optional; the first profile when absent
+//! [rig.kx3]               # one table per rig: a name, an address and a kind
 //! addr = "127.0.0.1:4532"
+//! kind = "kx3"            # "kx3", "ft847" or "generic"
+//! cw = true               # optional capability overrides: cw, split, sat_mode
 //! [macros]                # F1 to F6: the General Soft key set
 //! F1 = "CQ DE {MYCALL}"
 //! [softkeys.pota]         # a named set, same shape
 //! F1 = "CQ POTA DE {MYCALL}"
 //! ```
 //!
+//! The old single `[rig] addr` and the `[kx3]` table are not read: they are rejected with a
+//! message naming the replacement (no compatibility, see ADR 0004).
+//!
 //! Unknown keys are [`Warning`]s, never errors and never dropped; a wrong value for a known key
 //! is a [`ConfigError::Invalid`] naming the key.
+
+pub mod bandplan;
 
 use std::collections::BTreeMap;
 use std::fmt;
@@ -44,6 +54,49 @@ pub use logbook::{Callsign, Grid};
 pub use plans::{Plan, PlanActivity, PlansFile, RefSnapshot, valid_date};
 use toml_edit::{Document, DocumentMut, Item, Table, Value};
 
+/// The operator's US license class. Runtime config with no default: the app never guesses it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum LicenseClass {
+    Technician,
+    General,
+    Extra,
+    Advanced,
+    Novice,
+}
+
+impl LicenseClass {
+    pub const ALL: [LicenseClass; 5] = [
+        LicenseClass::Technician,
+        LicenseClass::General,
+        LicenseClass::Extra,
+        LicenseClass::Advanced,
+        LicenseClass::Novice,
+    ];
+
+    /// The lowercase name used in the config file.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            LicenseClass::Technician => "technician",
+            LicenseClass::General => "general",
+            LicenseClass::Extra => "extra",
+            LicenseClass::Advanced => "advanced",
+            LicenseClass::Novice => "novice",
+        }
+    }
+
+    /// Parse a class name, ignoring case and surrounding space.
+    pub fn parse(text: &str) -> Option<Self> {
+        let text = text.trim().to_ascii_lowercase();
+        Self::ALL.into_iter().find(|c| c.as_str() == text)
+    }
+}
+
+impl fmt::Display for LicenseClass {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
 /// The typed view of the file. `None` and an absent macro mean "not set".
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Settings {
@@ -51,14 +104,65 @@ pub struct Settings {
     /// The operator's 6-character Locator.
     pub locator: Option<Grid>,
     pub log_path: Option<PathBuf>,
-    /// `host:port` of the rigctld to talk to.
-    pub rig_addr: Option<String>,
+    /// `station.license_class`; no default.
+    pub license_class: Option<LicenseClass>,
+    /// The named rig profiles, in file order.
+    pub rigs: Vec<RigProfile>,
+    /// `rig.default`: the profile to start on. `None`: the first.
+    pub rig_default: Option<String>,
     /// Soft key text for F1..=F6, uppercase, may contain variables such as `{MYCALL}`. The
     /// General Soft key set.
     pub macros: BTreeMap<u8, String>,
     /// Named Soft key sets from `[softkeys.<name>]`, same shape as `macros`. Read only here; the
     /// config dialog does not write them.
     pub softkey_sets: BTreeMap<String, BTreeMap<u8, String>>,
+}
+
+/// The kind of radio a profile describes. It keys the capability table in the apps.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RigKind {
+    Kx3,
+    Ft847,
+    /// Any other rig behind a `rigctld`: nothing is assumed.
+    Generic,
+}
+
+impl RigKind {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            RigKind::Kx3 => "kx3",
+            RigKind::Ft847 => "ft847",
+            RigKind::Generic => "generic",
+        }
+    }
+
+    fn parse(text: &str) -> Option<RigKind> {
+        match text {
+            "kx3" => Some(RigKind::Kx3),
+            "ft847" => Some(RigKind::Ft847),
+            "generic" => Some(RigKind::Generic),
+            _ => None,
+        }
+    }
+}
+
+/// One `[rig.NAME]` table.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RigProfile {
+    pub name: String,
+    /// `host:port` of this rig's rigctld.
+    pub addr: String,
+    pub kind: RigKind,
+    /// Per-profile overrides of the kind's capability row. `None`: use the table.
+    pub cw: Option<bool>,
+    pub split: Option<bool>,
+    pub sat_mode: Option<bool>,
+}
+
+impl Settings {
+    pub fn rig(&self, name: &str) -> Option<&RigProfile> {
+        self.rigs.iter().find(|r| r.name == name)
+    }
 }
 
 /// A key the crate does not know. It is kept in the file and only reported.
@@ -235,7 +339,7 @@ impl ConfigFile {
     /// are untouched there, and returned as a [`SaveError::Conflict`] when they are not.
     pub fn save(&mut self, new: &Settings) -> Result<Saved, SaveError> {
         self.check_writable()?;
-        let edited: Vec<Field> = Field::ALL
+        let edited: Vec<Field> = Field::all(&self.settings, new)
             .into_iter()
             .filter(|f| f.get(&self.settings) != f.get(new))
             .collect();
@@ -391,77 +495,88 @@ fn write_atomic(path: &Path, text: &str) -> Result<(), SaveError> {
 
 // ---- fields -------------------------------------------------------------------------------
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 enum Field {
     Callsign,
     Locator,
+    LicenseClass,
     LogPath,
-    RigAddr,
+    RigDefault,
+    /// The address of the named profile.
+    RigAddr(String),
     Macro(u8),
 }
 
 impl Field {
-    const ALL: [Field; 10] = [
-        Field::Callsign,
-        Field::Locator,
-        Field::LogPath,
-        Field::RigAddr,
-        Field::Macro(1),
-        Field::Macro(2),
-        Field::Macro(3),
-        Field::Macro(4),
-        Field::Macro(5),
-        Field::Macro(6),
-    ];
+    /// Every field that can differ between `a` and `b`.
+    fn all(a: &Settings, b: &Settings) -> Vec<Field> {
+        let mut fields = vec![
+            Field::Callsign,
+            Field::Locator,
+            Field::LicenseClass,
+            Field::LogPath,
+            Field::RigDefault,
+        ];
+        let mut names: Vec<&str> = Vec::new();
+        for rig in a.rigs.iter().chain(&b.rigs) {
+            if !names.contains(&rig.name.as_str()) {
+                names.push(&rig.name);
+            }
+        }
+        fields.extend(names.into_iter().map(|n| Field::RigAddr(n.to_string())));
+        fields.extend((1..=6).map(Field::Macro));
+        fields
+    }
 
-    fn key(self) -> String {
+    fn key(&self) -> String {
         match self {
             Field::Callsign => "callsign".into(),
             Field::Locator => "station.locator".into(),
+            Field::LicenseClass => "station.license_class".into(),
             Field::LogPath => "logbook.path".into(),
-            Field::RigAddr => "rig.addr".into(),
+            Field::RigDefault => "rig.default".into(),
+            Field::RigAddr(name) => format!("rig.{name}.addr"),
             Field::Macro(n) => format!("macros.F{n}"),
         }
     }
 
     /// The field as text, for comparing and for reporting a conflict.
-    fn get(self, s: &Settings) -> Option<String> {
+    fn get(&self, s: &Settings) -> Option<String> {
         match self {
             Field::Callsign => s.callsign.as_ref().map(|c| c.as_str().to_string()),
             Field::Locator => s.locator.as_ref().map(|g| g.as_str().to_string()),
+            Field::LicenseClass => s.license_class.map(|c| c.as_str().to_string()),
             Field::LogPath => s
                 .log_path
                 .as_ref()
                 .map(|p| p.to_string_lossy().into_owned()),
-            Field::RigAddr => s.rig_addr.clone(),
-            Field::Macro(n) => s.macros.get(&n).cloned(),
+            Field::RigDefault => s.rig_default.clone(),
+            Field::RigAddr(name) => s.rig(name).map(|r| r.addr.clone()),
+            Field::Macro(n) => s.macros.get(n).cloned(),
         }
     }
 
-    fn set(self, doc: &mut DocumentMut, new: &Settings) {
+    fn set(&self, doc: &mut DocumentMut, new: &Settings) {
         let value = self.get(new);
         match self {
             Field::Callsign => put(doc.as_table_mut(), "callsign", value),
             Field::Locator => put(table(doc, "station"), "locator", value),
+            Field::LicenseClass => put(table(doc, "station"), "license_class", value),
             Field::LogPath => put(table(doc, "logbook"), "path", value),
-            Field::RigAddr => {
-                // Patch where the address lives: `[rig]` wins, then the `[kx3]` alias.
-                let has = |doc: &DocumentMut, t: &str| {
-                    doc.get(t)
-                        .and_then(Item::as_table)
-                        .is_some_and(|t| t.contains_key("addr"))
-                };
-                if value.is_none() {
-                    for t in ["rig", "kx3"] {
-                        if has(doc, t) {
-                            put(table(doc, t), "addr", None);
-                        }
-                    }
-                } else if !has(doc, "rig") && has(doc, "kx3") {
-                    put(table(doc, "kx3"), "addr", value);
-                } else {
-                    put(table(doc, "rig"), "addr", value);
+            Field::RigDefault => {
+                let rig = table(doc, "rig");
+                // Created by a `[rig.NAME]` header alone, the table is implicit and would not
+                // print a header for its own keys.
+                rig.set_implicit(false);
+                put(rig, "default", value);
+            }
+            Field::RigAddr(name) => {
+                let rig = table(doc, "rig");
+                if !rig.contains_key(name) {
+                    rig.insert(name, Item::Table(Table::new()));
                 }
+                let profile = rig[name.as_str()].as_table_mut().expect("validated");
+                put(profile, "addr", value);
             }
             Field::Macro(n) => put(table(doc, "macros"), &format!("F{n}"), value),
         }
@@ -533,16 +648,87 @@ fn host_port(addr: &str) -> bool {
         .is_some_and(|(host, port)| !host.is_empty() && port.parse::<u16>().is_ok())
 }
 
-fn read_addr(root: &Table, table_name: &str) -> Result<Option<String>, ConfigError> {
-    let Some(item) = sub_table(root, table_name)?.and_then(|t| t.get("addr")) else {
-        return Ok(None);
-    };
-    let key = format!("{table_name}.addr");
-    let addr = string(item, &key)?.trim();
+fn check_addr(addr: &str, key: &str) -> Result<String, ConfigError> {
+    let addr = addr.trim();
     if host_port(addr) {
-        Ok(Some(addr.to_string()))
+        Ok(addr.to_string())
     } else {
-        Err(invalid(&key, format!("expected host:port, got {addr:?}")))
+        Err(invalid(key, format!("expected host:port, got {addr:?}")))
+    }
+}
+
+const REMOVED: &str =
+    "was removed; describe each rig as [rig.NAME] with addr and kind (see config.example.toml)";
+
+fn read_profile(name: &str, item: &Item) -> Result<RigProfile, ConfigError> {
+    let key = format!("rig.{name}");
+    let table = item
+        .as_table()
+        .ok_or_else(|| invalid(&key, "expected a table"))?;
+    let field = |k: &str| table.get(k).map(|i| (i, format!("{key}.{k}")));
+    let (addr_item, addr_key) = field("addr").ok_or_else(|| invalid(&key, "missing addr"))?;
+    let addr = check_addr(string(addr_item, &addr_key)?, &addr_key)?;
+    let (kind_item, kind_key) = field("kind").ok_or_else(|| invalid(&key, "missing kind"))?;
+    let kind_text = string(kind_item, &kind_key)?;
+    let kind = RigKind::parse(kind_text).ok_or_else(|| {
+        invalid(
+            &kind_key,
+            format!("expected \"kx3\", \"ft847\" or \"generic\", got {kind_text:?}"),
+        )
+    })?;
+    let flag = |k: &str| -> Result<Option<bool>, ConfigError> {
+        field(k)
+            .map(|(i, key)| {
+                i.as_bool()
+                    .ok_or_else(|| invalid(&key, "expected true or false"))
+            })
+            .transpose()
+    };
+    Ok(RigProfile {
+        name: name.to_string(),
+        addr,
+        kind,
+        cw: flag("cw")?,
+        split: flag("split")?,
+        sat_mode: flag("sat_mode")?,
+    })
+}
+
+/// The `[rig]` table: profiles, and `default`. The old `addr` key and the `[kx3]` table are
+/// errors, not aliases.
+fn read_rigs(root: &Table, s: &mut Settings, errs: &mut Vec<ConfigError>) {
+    if root.contains_key("kx3") {
+        errs.push(invalid("kx3", REMOVED));
+    }
+    let rig = match sub_table(root, "rig") {
+        Ok(Some(rig)) => rig,
+        Ok(None) => return,
+        Err(e) => {
+            errs.push(e);
+            return;
+        }
+    };
+    for (name, item) in rig {
+        match name {
+            "default" => match string(item, "rig.default") {
+                Ok(text) => s.rig_default = Some(text.trim().to_string()),
+                Err(e) => errs.push(e),
+            },
+            "addr" => errs.push(invalid("rig.addr", REMOVED)),
+            _ => match read_profile(name, item) {
+                Ok(profile) => s.rigs.push(profile),
+                Err(e) => errs.push(e),
+            },
+        }
+    }
+    if let Some(default) = &s.rig_default
+        && s.rig(default).is_none()
+    {
+        errs.push(invalid(
+            "rig.default",
+            format!("{default:?} is not a [rig.NAME] profile"),
+        ));
+        s.rig_default = None;
     }
 }
 
@@ -573,6 +759,19 @@ fn read_settings_lenient(root: &Table) -> (Settings, Vec<ConfigError>) {
         Ok(())
     })());
     keep((|| {
+        if let Some(item) = sub_table(root, "station")?.and_then(|t| t.get("license_class")) {
+            s.license_class = Some(
+                LicenseClass::parse(string(item, "station.license_class")?).ok_or_else(|| {
+                    invalid(
+                        "station.license_class",
+                        "expected technician, general, extra, advanced or novice",
+                    )
+                })?,
+            );
+        }
+        Ok(())
+    })());
+    keep((|| {
         if let Some(item) = sub_table(root, "logbook")?.and_then(|t| t.get("path")) {
             let path = string(item, "logbook.path")?.trim();
             if path.is_empty() {
@@ -580,13 +779,6 @@ fn read_settings_lenient(root: &Table) -> (Settings, Vec<ConfigError>) {
             }
             s.log_path = Some(PathBuf::from(path));
         }
-        Ok(())
-    })());
-    keep((|| {
-        s.rig_addr = match read_addr(root, "rig")? {
-            Some(addr) => Some(addr),
-            None => read_addr(root, "kx3")?,
-        };
         Ok(())
     })());
     keep((|| {
@@ -608,6 +800,7 @@ fn read_settings_lenient(root: &Table) -> (Settings, Vec<ConfigError>) {
         }
         Ok(())
     })());
+    read_rigs(root, &mut s, &mut errs);
     (s, errs)
 }
 
@@ -691,14 +884,16 @@ pub fn load_lenient(path: &Path) -> Result<(Settings, Vec<ConfigError>), ConfigE
     Ok((settings, errs))
 }
 
-const KNOWN: [(&str, &[&str]); 6] = [
-    ("station", &["locator"]),
+const KNOWN: [(&str, &[&str]); 5] = [
+    ("station", &["locator", "license_class"]),
     ("logbook", &["path"]),
-    ("rig", &["addr"]),
-    ("kx3", &["addr"]),
+    ("rig", &["default"]),
     ("macros", &[]),
     ("softkeys", &[]),
 ];
+
+/// Keys a `[rig.NAME]` table may hold.
+const PROFILE_KEYS: [&str; 5] = ["addr", "kind", "cw", "split", "sat_mode"];
 
 fn line_at(text: &str, span: Option<std::ops::Range<usize>>) -> usize {
     span.map_or(0, |s| {
@@ -720,8 +915,24 @@ fn parse(text: &str) -> Result<(Settings, Vec<Warning>), ConfigError> {
                 let Some(table) = item.as_table() else {
                     continue;
                 };
-                for (key, _) in table {
+                for (key, sub) in table {
                     if name == "macros" || name == "softkeys" || keys.contains(&key) {
+                        continue;
+                    }
+                    if name == "rig"
+                        && let Some(profile) = sub.as_table()
+                    {
+                        for (k, _) in profile {
+                            if !PROFILE_KEYS.contains(&k) {
+                                warnings.push(Warning {
+                                    line: line_at(
+                                        text,
+                                        profile.get_key_value(k).and_then(|(k, _)| k.span()),
+                                    ),
+                                    name: format!("rig.{key}.{k}"),
+                                });
+                            }
+                        }
                         continue;
                     }
                     warnings.push(Warning {

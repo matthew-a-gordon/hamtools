@@ -15,6 +15,7 @@ use crate::keys::KeyEntry;
 use crate::layout::Panes;
 use crate::panel::{LogDefaults, LogMode, Role};
 use crate::rig::{Command, RigMode};
+use crate::rigs::Capability;
 use crate::softkeys::{Live, ResolvedKey};
 
 /// What an Activity is told about the app on every call.
@@ -50,6 +51,24 @@ pub trait Activity {
     /// get it.
     fn on_key(&mut self, key: KeyEvent, ctx: &ActivityCtx) -> Option<ActivityOutput>;
 
+    /// What the Active rig must be able to do for this Activity to run. A rig lacking one of
+    /// these cannot run the Activity: it is unavailable, and a switch to such a rig drops to
+    /// General.
+    fn requires(&self) -> &'static [Capability] {
+        &[]
+    }
+
+    /// Whether this Activity has a transmission in progress (a CW send not yet drained), which
+    /// blocks switching the Active rig.
+    fn sending(&self) -> bool {
+        false
+    }
+
+    /// The Active rig changes from rig `from` to rig `to` (indices into the profile list). An
+    /// Activity with per-rig state (a CW transcript, Soft key state) parks `from`'s and restores
+    /// `to`'s.
+    fn switch_rig(&mut self, _from: usize, _to: usize) {}
+
     /// Called on every tick, and only while this Activity is in the foreground.
     fn on_tick(&mut self, now: Instant, ctx: &ActivityCtx) -> Vec<Command>;
 
@@ -72,6 +91,12 @@ pub trait Activity {
     fn hint(&self, ctx: &ActivityCtx) -> &'static str;
 
     fn render(&self, frame: &mut Frame, area: Rect, ctx: &ActivityCtx);
+
+    /// Why tuning from outside this Activity (the band plan modal) must be refused right now:
+    /// `Some("Doppler tracking")` while Satellite is correcting the dial itself.
+    fn tuning_blocked(&self) -> Option<&'static str> {
+        None
+    }
 
     /// The Activity's own plain keys, checked against the reserved table when it is hosted.
     fn keys(&self) -> Vec<KeyEntry> {

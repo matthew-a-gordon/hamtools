@@ -152,14 +152,14 @@ mod chords {
     }
 
     #[test]
-    fn the_other_chords_never_type_into_the_input_or_command_the_rig() {
-        for c in ['b', 'r'] {
-            let mut app = cw_app();
-            quiet(&mut app, ctrl(c));
-            let typed = format!("> {}", c.to_ascii_uppercase());
-            assert!(!has(&screen(&app, 80, 24), &typed));
-            assert!(app.status().is_some(), "Ctrl-{c} said nothing");
-        }
+    fn ctrl_r_opens_the_rig_switcher_from_a_text_area_without_typing() {
+        let mut app = cw_app();
+        quiet(&mut app, ctrl('r'));
+        assert!(app.has_overlay());
+        assert!(has(&screen(&app, 80, 24), "Rigs"));
+        app.on_key(key(KeyCode::Esc));
+        assert!(has(&screen(&app, 80, 24), ">"));
+        assert!(!has(&screen(&app, 80, 24), "> R"));
     }
 
     #[test]
