@@ -99,3 +99,13 @@ _Avoid_: Spotter (a spotter posts spots, which this project does not do), mode, 
 **Rig**:
 A radio the app can control, reached through its own `rigctld` and described by a profile in the shared config (name, address, kind). The app knows two today, the KX3 and the FT-847.
 _Avoid_: Radio, transceiver (except when quoting hardware), device
+
+### Band plan
+
+**Band plan**:
+The reference layers the app shows over a band: the regulatory privilege segments, the voluntary mode segments, and the satellite sub-bands. It is guidance for the operator, never a legal authority, and carries an as-of date.
+_Avoid_: Band map, frequency chart
+
+**Privilege**:
+What the operator's license class permits at a given frequency. The app shows it as a soft warning and never uses it to block tuning or any other action.
+_Avoid_: Permission, allowed band, lockout
