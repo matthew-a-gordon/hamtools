@@ -14,20 +14,12 @@ use hamtools_tui::modal::Modal;
 use ratatui::Frame;
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::layout::{Constraint, Layout, Rect};
-use ratatui::style::{Color, Modifier, Style};
+use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Paragraph, Wrap};
 
 use crate::geocode::{Candidate, GeocodeResult};
-
-const CALLSIGN: usize = 0;
-const LOCATOR: usize = 1;
-const ADDRESS: usize = 2;
-const LOG_PATH: usize = 3;
-const RIG: usize = 4;
-const SOFT: usize = 5;
-const SLOTS: u8 = 6;
-const FIELDS: usize = SOFT + SLOTS as usize;
+use crate::style::{dim, red, yellow};
 
 const LABEL_WIDTH: usize = 13;
 const DISCLOSURE: [&str; 2] = [
@@ -85,108 +77,184 @@ fn key_plain(code: KeyCode) -> KeyEvent {
     KeyEvent::new(code, KeyModifiers::NONE)
 }
 
-fn values_of(settings: &Settings, default_rig: &str) -> Vec<String> {
-    let mut values = vec![String::new(); FIELDS];
-    values[CALLSIGN] = settings
-        .callsign
-        .as_ref()
-        .map_or(String::new(), |c| c.as_str().to_string());
-    values[LOCATOR] = settings
-        .locator
-        .as_ref()
-        .map_or(String::new(), |g| g.as_str().to_string());
-    values[LOG_PATH] = settings
-        .log_path
-        .as_ref()
-        .map_or(String::new(), |p| p.to_string_lossy().into_owned());
-    values[RIG] = settings
-        .rig_addr
-        .clone()
-        .unwrap_or_else(|| default_rig.to_string());
-    for n in 1..=SLOTS {
-        values[SOFT + usize::from(n) - 1] = settings.macros.get(&n).cloned().unwrap_or_default();
+/// Number of Soft key slots (`F1` to `F6`).
+const SLOTS: u8 = 6;
+
+/// One row of the form. Adding a field is a variant here and an entry in [`Field::ALL`]; the
+/// compiler then points at each `match` that needs an arm.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Field {
+    Callsign,
+    Locator,
+    /// Not a setting: the text sent to the address lookup.
+    Address,
+    LogPath,
+    Rig,
+    /// Soft key `F1` to `F6`, numbered from 1.
+    Soft(u8),
+}
+
+impl Field {
+    /// In display order; a field's position here is its index in the [`Form`].
+    const ALL: [Field; 11] = [
+        Field::Callsign,
+        Field::Locator,
+        Field::Address,
+        Field::LogPath,
+        Field::Rig,
+        Field::Soft(1),
+        Field::Soft(2),
+        Field::Soft(3),
+        Field::Soft(4),
+        Field::Soft(5),
+        Field::Soft(6),
+    ];
+
+    fn index(self) -> usize {
+        Self::ALL
+            .iter()
+            .position(|f| *f == self)
+            .expect("every field is in ALL")
     }
-    values
+
+    fn at(index: usize) -> Field {
+        Self::ALL[index]
+    }
+
+    fn label(self) -> String {
+        match self {
+            Field::Callsign => "Callsign".into(),
+            Field::Locator => "Locator".into(),
+            Field::Address => "Address".into(),
+            Field::LogPath => "Log path".into(),
+            Field::Rig => "Rig address".into(),
+            Field::Soft(n) => format!("F{n}"),
+        }
+    }
+
+    fn uppercase(self) -> bool {
+        matches!(self, Field::Callsign | Field::Locator | Field::Soft(_))
+    }
+
+    /// The section heading drawn above this field, if it starts one.
+    fn heading(self) -> Option<&'static str> {
+        match self {
+            Field::Callsign => Some("Station"),
+            Field::LogPath => Some("Logging"),
+            Field::Rig => Some("Rig"),
+            Field::Soft(1) => Some("Soft keys"),
+            _ => None,
+        }
+    }
+
+    /// The field that holds the config key named in a conflict.
+    fn from_key(key: &str) -> Option<Field> {
+        match key {
+            "callsign" => Some(Field::Callsign),
+            "station.locator" => Some(Field::Locator),
+            "logbook.path" => Some(Field::LogPath),
+            "rig.addr" => Some(Field::Rig),
+            _ => {
+                let n: u8 = key.strip_prefix("macros.F")?.parse().ok()?;
+                (1..=SLOTS).contains(&n).then_some(Field::Soft(n))
+            }
+        }
+    }
+
+    /// The text this field shows for `settings`.
+    fn value_in(self, settings: &Settings, default_rig: &str) -> String {
+        match self {
+            Field::Callsign => settings
+                .callsign
+                .as_ref()
+                .map_or(String::new(), |c| c.as_str().to_string()),
+            Field::Locator => settings
+                .locator
+                .as_ref()
+                .map_or(String::new(), |g| g.as_str().to_string()),
+            Field::Address => String::new(),
+            Field::LogPath => settings
+                .log_path
+                .as_ref()
+                .map_or(String::new(), |p| p.to_string_lossy().into_owned()),
+            Field::Rig => settings
+                .rig_addr
+                .clone()
+                .unwrap_or_else(|| default_rig.to_string()),
+            Field::Soft(n) => settings.macros.get(&n).cloned().unwrap_or_default(),
+        }
+    }
+
+    /// Store the (already validated) form text into `settings`.
+    fn apply(self, text: &str, settings: &mut Settings) {
+        let text = text.trim();
+        match self {
+            Field::Callsign => settings.callsign = Callsign::new(text).ok(),
+            Field::Locator => settings.locator = Grid::new(text).ok(),
+            Field::Address => {}
+            Field::LogPath => {
+                settings.log_path = (!text.is_empty()).then(|| PathBuf::from(text));
+            }
+            Field::Rig => settings.rig_addr = Some(text.to_string()),
+            Field::Soft(n) => {
+                if text.is_empty() {
+                    settings.macros.remove(&n);
+                } else {
+                    settings.macros.insert(n, text.to_string());
+                }
+            }
+        }
+    }
+
+    fn check(self, value: &str) -> Result<(), String> {
+        let value = value.trim();
+        match self {
+            Field::Callsign if !value.is_empty() => Callsign::new(value)
+                .map(|_| ())
+                .map_err(|_| "Callsign: 3 to 12 letters, digits or /".to_string()),
+            Field::Locator if !value.is_empty() => Grid::new(value)
+                .map(|_| ())
+                .map_err(|_| "Locator: 6 characters like EN71DQ".to_string()),
+            Field::Rig => {
+                let ok = value.rsplit_once(':').is_some_and(|(host, port)| {
+                    !host.is_empty()
+                        && !host.chars().any(char::is_whitespace)
+                        && port.parse::<u16>().is_ok_and(|p| p != 0)
+                });
+                if ok {
+                    Ok(())
+                } else {
+                    Err("Rig address: required, like 127.0.0.1:4532 (host:port)".to_string())
+                }
+            }
+            _ => Ok(()),
+        }
+    }
+}
+
+fn values_of(settings: &Settings, default_rig: &str) -> Vec<String> {
+    Field::ALL
+        .iter()
+        .map(|f| f.value_in(settings, default_rig))
+        .collect()
 }
 
 fn form_of(values: &[String]) -> Form {
-    let mut fields = vec![
-        TextField::new("Callsign").uppercase(),
-        TextField::new("Locator").uppercase(),
-        TextField::new("Address"),
-        TextField::new("Log path"),
-        TextField::new("Rig address"),
-    ];
-    fields.extend((1..=SLOTS).map(|n| TextField::new(format!("F{n}")).uppercase()));
     Form::new(
-        fields
-            .into_iter()
+        Field::ALL
+            .iter()
             .zip(values)
-            .map(|(field, value)| field.with_value(value.clone()))
+            .map(|(field, value)| {
+                let text = TextField::new(field.label());
+                let text = if field.uppercase() {
+                    text.uppercase()
+                } else {
+                    text
+                };
+                text.with_value(value.clone())
+            })
             .collect(),
     )
-}
-
-fn label_of(index: usize) -> String {
-    match index {
-        CALLSIGN => "Callsign".into(),
-        LOCATOR => "Locator".into(),
-        ADDRESS => "Address".into(),
-        LOG_PATH => "Log path".into(),
-        RIG => "Rig address".into(),
-        n => format!("F{}", n - SOFT + 1),
-    }
-}
-
-/// The form field that holds the config key named in a conflict.
-fn field_of_key(key: &str) -> Option<usize> {
-    match key {
-        "callsign" => Some(CALLSIGN),
-        "station.locator" => Some(LOCATOR),
-        "logbook.path" => Some(LOG_PATH),
-        "rig.addr" => Some(RIG),
-        _ => {
-            let n: usize = key.strip_prefix("macros.F")?.parse().ok()?;
-            (1..=usize::from(SLOTS)).contains(&n).then(|| SOFT + n - 1)
-        }
-    }
-}
-
-fn check(index: usize, value: &str) -> Result<(), String> {
-    let value = value.trim();
-    match index {
-        CALLSIGN if !value.is_empty() => Callsign::new(value)
-            .map(|_| ())
-            .map_err(|_| "Callsign: 3 to 12 letters, digits or /".to_string()),
-        LOCATOR if !value.is_empty() => Grid::new(value)
-            .map(|_| ())
-            .map_err(|_| "Locator: 6 characters like EN71DQ".to_string()),
-        RIG => {
-            let ok = value.rsplit_once(':').is_some_and(|(host, port)| {
-                !host.is_empty()
-                    && !host.chars().any(char::is_whitespace)
-                    && port.parse::<u16>().is_ok_and(|p| p != 0)
-            });
-            if ok {
-                Ok(())
-            } else {
-                Err("Rig address: required, like 127.0.0.1:4532 (host:port)".to_string())
-            }
-        }
-        _ => Ok(()),
-    }
-}
-
-fn dim() -> Style {
-    Style::default().fg(Color::DarkGray)
-}
-
-fn red() -> Style {
-    Style::default().fg(Color::Red)
-}
-
-fn yellow() -> Style {
-    Style::default().fg(Color::Yellow)
 }
 
 fn rows_needed(lines: &[Line], width: u16) -> u16 {
@@ -242,7 +310,8 @@ impl ConfigDialog {
     }
 
     fn dirty(&self) -> bool {
-        (0..FIELDS).any(|i| i != ADDRESS && self.form.value(i) != self.initial[i])
+        (0..Field::ALL.len())
+            .any(|i| Field::at(i) != Field::Address && self.form.value(i) != self.initial[i])
     }
 
     fn changed(&self, index: usize) -> bool {
@@ -260,36 +329,16 @@ impl ConfigDialog {
     /// anything changed on disk meanwhile) are left alone.
     fn build_settings(&self) -> Settings {
         let mut s = self.base();
-        let text = |i: usize| self.form.value(i).trim().to_string();
-        if self.changed(CALLSIGN) {
-            s.callsign = Callsign::new(&text(CALLSIGN)).ok();
-        }
-        if self.changed(LOCATOR) {
-            s.locator = Grid::new(&text(LOCATOR)).ok();
-        }
-        if self.changed(LOG_PATH) {
-            let path = text(LOG_PATH);
-            s.log_path = (!path.is_empty()).then(|| PathBuf::from(path));
-        }
-        if self.changed(RIG) {
-            s.rig_addr = Some(text(RIG));
-        }
-        for n in 1..=SLOTS {
-            let i = SOFT + usize::from(n) - 1;
+        for (i, field) in Field::ALL.iter().enumerate() {
             if self.changed(i) {
-                let value = text(i);
-                if value.is_empty() {
-                    s.macros.remove(&n);
-                } else {
-                    s.macros.insert(n, value);
-                }
+                field.apply(self.form.value(i), &mut s);
             }
         }
         s
     }
 
     fn validate_field(&mut self, index: usize) -> bool {
-        match check(index, self.form.value(index)) {
+        match Field::at(index).check(self.form.value(index)) {
             Ok(()) => {
                 self.form.clear_error(index);
                 true
@@ -304,7 +353,7 @@ impl ConfigDialog {
     /// Validate every field; focus goes to the first invalid one.
     fn validate_all(&mut self) -> bool {
         let mut first = None;
-        for i in 0..FIELDS {
+        for i in 0..Field::ALL.len() {
             if !self.validate_field(i) {
                 first.get_or_insert(i);
             }
@@ -331,8 +380,9 @@ impl ConfigDialog {
                     ListEvent::Moved => self.mode = Mode::Candidates { list, items },
                     ListEvent::Close => {}
                     ListEvent::Select(i) => {
-                        self.form.set_value(LOCATOR, items[i].locator.as_str());
-                        self.form.set_focus(LOCATOR);
+                        self.form
+                            .set_value(Field::Locator.index(), items[i].locator.as_str());
+                        self.form.set_focus(Field::Locator.index());
                     }
                 }
                 Outcome::Stay
@@ -365,7 +415,7 @@ impl ConfigDialog {
                     Outcome::Close
                 }
             }
-            KeyCode::Enter if self.form.focus() == ADDRESS => self.start_lookup(),
+            KeyCode::Enter if Field::at(self.form.focus()) == Field::Address => self.start_lookup(),
             KeyCode::Enter => {
                 self.move_focus(key_plain(KeyCode::Tab));
                 Outcome::Stay
@@ -390,7 +440,7 @@ impl ConfigDialog {
         if self.looking_up {
             return Outcome::Stay;
         }
-        let address = self.form.value(ADDRESS).trim().to_string();
+        let address = self.form.value(Field::Address.index()).trim().to_string();
         if address.is_empty() {
             self.note = Some("Type an address first.".to_string());
             return Outcome::Stay;
@@ -520,7 +570,7 @@ impl ConfigDialog {
             }
         };
         let conflict = &conflicts[next];
-        if keep_file && let Some(index) = field_of_key(&conflict.key) {
+        if keep_file && let Some(index) = Field::from_key(&conflict.key).map(Field::index) {
             self.form
                 .set_value(index, conflict.file.clone().unwrap_or_default());
         }
@@ -610,7 +660,7 @@ impl ConfigDialog {
     }
 
     fn render_form(&self, frame: &mut Frame, area: Rect) {
-        let callsign = self.form.value(CALLSIGN).trim();
+        let callsign = self.form.value(Field::Callsign.index()).trim();
         let mut lines: Vec<Line> = Vec::new();
         let mut focus_top = 0;
         let mut focus_end = 0;
@@ -621,16 +671,12 @@ impl ConfigDialog {
                 Style::default().add_modifier(Modifier::BOLD),
             )
         };
-        for index in 0..FIELDS {
-            match index {
-                CALLSIGN => lines.push(heading("Station")),
-                LOG_PATH => lines.push(heading("Logging")),
-                RIG => lines.push(heading("Rig")),
-                SOFT => lines.push(heading("Soft keys")),
-                _ => {}
+        for (index, field) in Field::ALL.iter().copied().enumerate() {
+            if let Some(text) = field.heading() {
+                lines.push(heading(text));
             }
             let focused = index == self.form.focus();
-            let label = format!("  {:<LABEL_WIDTH$}", label_of(index));
+            let label = format!("  {:<LABEL_WIDTH$}", field.label());
             let value = self.form.value(index);
             let label_style = if focused {
                 Style::default().add_modifier(Modifier::BOLD | Modifier::REVERSED)
@@ -638,7 +684,7 @@ impl ConfigDialog {
                 Style::default()
             };
             let mut spans = vec![Span::styled(label.clone(), label_style), Span::raw(value)];
-            if index == LOG_PATH && value.is_empty() && !focused {
+            if field == Field::LogPath && value.is_empty() && !focused {
                 spans.push(Span::styled("(blank: default)", dim()));
             }
             if focused {
@@ -649,7 +695,7 @@ impl ConfigDialog {
             if let Some(error) = self.form.error(index) {
                 lines.push(Line::styled(format!("    {error}"), red()));
             }
-            if focused && index >= SOFT && !value.trim().is_empty() {
+            if focused && matches!(field, Field::Soft(_)) && !value.trim().is_empty() {
                 let shown = if callsign.is_empty() {
                     value.to_string()
                 } else {
@@ -657,7 +703,7 @@ impl ConfigDialog {
                 };
                 lines.push(Line::styled(format!("    sends: {shown}"), dim()));
             }
-            if index == ADDRESS {
+            if field == Field::Address {
                 for text in DISCLOSURE {
                     lines.push(Line::styled(format!("    {text}"), dim()));
                 }

@@ -9,12 +9,13 @@ use std::fmt;
 use ratatui::Frame;
 use ratatui::crossterm::event::{KeyCode, KeyEvent};
 use ratatui::layout::{Constraint, Layout, Rect};
-use ratatui::style::{Color, Modifier, Style};
+use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line as TextLine, Span};
 use ratatui::widgets::{Block, Borders, Paragraph};
 
 use crate::panel::{LogMode, ModePanel, PanelCommand, PanelCtx};
 use crate::rig::RigMode;
+use crate::style::{focus_border, yellow};
 
 /// Decoded form of a KX3 `TB;` reply.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -187,15 +188,12 @@ impl ModePanel for CwPanel {
         let inner = transcript_block.inner(transcript_area);
         let mut rows: Vec<TextLine> = Vec::new();
         for line in &self.lines {
-            let color = match line.source {
-                Source::Rx => Color::Reset,
-                Source::Tx => Color::Yellow,
+            let style = match line.source {
+                Source::Rx => Style::default(),
+                Source::Tx => yellow(),
             };
             for row in wrap(&line.text, inner.width as usize) {
-                rows.push(TextLine::from(Span::styled(
-                    row,
-                    Style::default().fg(color),
-                )));
+                rows.push(TextLine::from(Span::styled(row, style)));
             }
         }
         let hidden = rows.len().saturating_sub(inner.height as usize);
@@ -204,11 +202,7 @@ impl ModePanel for CwPanel {
             transcript_area,
         );
 
-        let border = if ctx.focused {
-            Style::default().fg(Color::Cyan)
-        } else {
-            Style::default()
-        };
+        let border = focus_border(ctx.focused);
         let input = Paragraph::new(format!("> {}", self.input)).block(
             Block::default()
                 .borders(Borders::ALL)

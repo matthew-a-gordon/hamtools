@@ -23,7 +23,8 @@ Verified on the user's KX3 (2026-10-26, hamlib 4.7.2, rigctld model 2045):
 Still unverified:
 - With split on and TX VFO B, `i` (split TX frequency) returned VFO A's frequency, not VFO B's; the cause is unknown. With split off, `i` returns 0 and `x` returns an empty mode. **Still open, untested on hardware through `rig-tui`.** `rig-tui` reads `i` in one place (`Rig::read_tx_frequency`) and every consumer takes the transmit frequency from `App::transmit_frequency()` (split off: the receive frequency; split on: the value `i` reported, or none, never the receive frequency). To close it, with the KX3 connected: set split on with TX VFO B, give VFO B a different frequency from VFO A, and compare `i` with what the radio displays for B; if `i` is wrong, change only `read_tx_frequency` (candidates: `\get_vfo`/`\set_vfo` to read VFO B directly and restore, or the Elecraft `FB;` raw command).
 - The VFO, split, PTT and S-meter polling and the `v`, `s`, `S` keys in `rig-tui` run only against a scripted fake `rigctld`. The mode set uses passband 0, whose effect on the KX3 is unchecked.
-- The 2 Hz / 4 Hz polling cadences, and the above through `rigctld-client` (which has no `get_level`, VFO or split calls yet).
+- The 2 Hz / 4 Hz polling cadences, and the above through `rigctld-client` (the client has the calls; they have not been run against the KX3).
+- `rig-tui`'s log form, session list, config dialog, address lookup (Nominatim), strip polling cadences and VFO/split keys: untested on hardware, run only against a scripted fake `rigctld` (and, for the lookup, a local fake server).
 - Sending when the text exceeds the KX3's 24-char `KY` packet or its buffer (hamlib is expected to chunk it).
 - FT-847: serial is 4800..57600, 8N2 in hamlib, but the actual CAT baud is unknown (menu item 14).
 - How hamlib's ft847 backend exposes sat mode, split and the sub-VFO.

@@ -11,6 +11,7 @@ pub mod geocode;
 mod logging;
 mod panel;
 mod rig;
+mod style;
 mod ui;
 
 pub use app::{

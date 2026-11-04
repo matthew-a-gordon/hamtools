@@ -4,6 +4,16 @@
 # Your callsign. Typing {call} in rig-tui expands to it when you send.
 callsign = "N0CALL"
 
+# Where you are, as a 6-character Locator (never latitude/longitude). Town-level only; example:
+# Middlebury, IN. rig-tui and sat-tui use it to fill own_grid when logging.
+# [station]
+# locator = "EN71DQ"
+
+# The shared ADIF Log. Omit it to use $XDG_DATA_HOME/hamtools/log.adi
+# (~/.local/share/hamtools/log.adi).
+# [logbook]
+# path = "/home/you/.local/share/hamtools/log.adi"
+
 [rig]
 # The rigctld to talk to (see CLAUDE.md for the command). `[kx3]` is still read as an alias.
 addr = "127.0.0.1:4532"

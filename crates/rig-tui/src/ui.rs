@@ -4,11 +4,11 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Rect};
-use ratatui::style::{Color, Style};
 use ratatui::widgets::{Block, Borders, Paragraph};
 
 use crate::app::{App, Entry, Focus};
 use crate::rig::Feature;
+use crate::style::{dim, focus_border, red};
 
 /// Group a frequency in Hz as `14.074.000`.
 pub(crate) fn format_hz(hz: u64) -> String {
@@ -25,7 +25,7 @@ pub fn render(app: &App, frame: &mut Frame) {
         Constraint::Length(4),
         Constraint::Min(3),
         Constraint::Length(1),
-        Constraint::Length(1),
+        Constraint::Length(2),
     ])
     .areas(frame.area());
 
@@ -33,15 +33,9 @@ pub fn render(app: &App, frame: &mut Frame) {
     app.render_body(frame, body_area);
 
     if let Some(status) = app.status() {
-        frame.render_widget(
-            Paragraph::new(status).style(Style::default().fg(Color::Red)),
-            status_area,
-        );
+        frame.render_widget(Paragraph::new(status).style(red()), status_area);
     }
-    frame.render_widget(
-        Paragraph::new(hint(app)).style(Style::default().fg(Color::DarkGray)),
-        hint_area,
-    );
+    frame.render_widget(Paragraph::new(hint(app)).style(dim()), hint_area);
     app.render_overlay(frame, frame.area());
 }
 
@@ -136,11 +130,7 @@ fn row_two(app: &App) -> String {
 
 /// The two-row rig-state strip: what the rig last reported, never what was requested.
 fn render_strip(app: &App, frame: &mut Frame, area: Rect) {
-    let border = if app.focus() == Focus::Strip {
-        Style::default().fg(Color::Cyan)
-    } else {
-        Style::default()
-    };
+    let border = focus_border(app.focus() == Focus::Strip);
     let title = format!("rig-tui - {} logged", app.logged_count());
     let block = Block::default()
         .borders(Borders::ALL)
@@ -172,13 +162,14 @@ pub(crate) fn render_no_panel(app: &App, frame: &mut Frame, area: Rect) {
     }
     frame.render_widget(
         Paragraph::new(text)
-            .style(Style::default().fg(Color::DarkGray))
+            .style(dim())
             .block(Block::default().borders(Borders::ALL)),
         area,
     );
 }
 
 /// The keys that apply to the current focus.
+/// One or two rows (split by `\n`) so every key fits in 80 columns.
 fn hint(app: &App) -> &'static str {
     if app.log_form_open() {
         return "Tab/Shift-Tab field  Enter save  Esc cancel  Ctrl-C quit";
@@ -190,10 +181,12 @@ fn hint(app: &App) -> &'static str {
         return "digits kHz, or MHz with '.'  Enter set  Esc cancel  Ctrl-C quit";
     }
     match app.focus() {
-        Focus::Panel => "Enter send  F1-F6 soft keys  Tab/Esc strip  Ctrl-C quit",
+        Focus::Panel => "Enter send  F1-F6 soft keys  Tab/Esc strip\nCtrl-L log  Ctrl-C quit",
         Focus::Strip if app.panel_active() => {
-            "f freq  </> tune  ^/v step  m/M mode  v VFO  s/S split  Tab input  q quit"
+            "f freq  </> tune  ^/v step  m/M mode  v VFO  s/S split\nl log  L list  c config  Tab input  q quit"
         }
-        Focus::Strip => "f freq  </> tune  ^/v step  m/M mode  v VFO  s/S split  q quit",
+        Focus::Strip => {
+            "f freq  </> tune  ^/v step  m/M mode  v VFO  s/S split\nl log  L list  c config  q quit"
+        }
     }
 }

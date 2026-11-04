@@ -214,21 +214,36 @@ pub struct Shared {
 }
 
 /// Read the shared config without ever failing. A missing file (or `None`) is all defaults; an
-/// invalid or unreadable one is defaults plus a note for the status line saying why logging is
+/// unreadable one is defaults plus a note; one with bad keys keeps the good ones and notes only
+/// errors in the keys sat-tui uses (a mistake in another tool's section is not its business). The note says why logging is
 /// off.
 pub fn load_shared(path: Option<&Path>) -> (Shared, Option<String>) {
     let Some(path) = path else {
         return (Shared::default(), None);
     };
-    match hamtools_config::ConfigFile::load(path) {
-        Ok(file) => {
-            let s = file.settings();
+    match hamtools_config::load_lenient(path) {
+        Ok((s, errs)) => {
             let shared = Shared {
-                callsign: s.callsign.clone(),
-                locator: s.locator.clone(),
-                log_path: s.log_path.clone(),
+                callsign: s.callsign,
+                locator: s.locator,
+                log_path: s.log_path,
             };
-            (shared, None)
+            // Only errors in the keys sat-tui consumes (or in a part of the file that could not
+            // be told apart from them) are worth a note; `[rig]`, `[kx3]` and `[macros]` belong
+            // to other tools.
+            let mine = |e: &&hamtools_config::ConfigError| match e {
+                hamtools_config::ConfigError::Invalid { key, .. } => {
+                    key.is_empty()
+                        || key == "callsign"
+                        || key == "station"
+                        || key == "logbook"
+                        || key.starts_with("station.")
+                        || key.starts_with("logbook.")
+                }
+                _ => true,
+            };
+            let note = errs.iter().find(mine).map(|e| format!("logging off: {e}"));
+            (shared, note)
         }
         Err(e) => (Shared::default(), Some(format!("logging off: {e}"))),
     }

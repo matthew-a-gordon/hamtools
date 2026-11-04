@@ -7,6 +7,10 @@
 //!
 //! Blocking; `main` runs it on a short-lived thread (see [`Geocoder::lookup_in_background`]) and
 //! hands the result to `App`, the same shape as sat-tui's fetcher.
+//!
+//! Dependency justification: `ureq` is used for this one HTTPS GET to Nominatim and nothing else.
+//! It is blocking, so there is no async runtime or hyper/reqwest stack to carry for it. Only its
+//! `rustls` feature is enabled (https needs TLS); gzip is off because the JSON is small.
 
 use std::collections::HashMap;
 use std::fmt;

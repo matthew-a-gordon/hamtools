@@ -423,11 +423,9 @@ impl Rig {
             .join(" ");
         match self.call(async |c| c.send_morse(&one_line).await).await {
             Ok(()) => Vec::new(),
-            Err(Failure::Refused(e)) => vec![RigEvent::SendFailed(format!("send failed: {e}"))],
-            Err(Failure::Unsupported) => vec![RigEvent::SendFailed(
-                "send failed: not supported by this rig".to_string(),
-            )],
-            Err(Failure::Lost(e)) => vec![RigEvent::Disconnected(e)],
+            Err(failure) => {
+                failure.into_events(|why| RigEvent::SendFailed(format!("send failed: {why}")))
+            }
         }
     }
 
@@ -437,15 +435,10 @@ impl Rig {
                 request,
                 reply: Ok(reply),
             }],
-            Err(Failure::Refused(e)) => vec![RigEvent::PanelReply {
+            Err(failure) => failure.into_events(|why| RigEvent::PanelReply {
                 request,
-                reply: Err(e),
-            }],
-            Err(Failure::Unsupported) => vec![RigEvent::PanelReply {
-                request,
-                reply: Err("not supported by this rig".to_string()),
-            }],
-            Err(Failure::Lost(e)) => vec![RigEvent::Disconnected(e)],
+                reply: Err(why),
+            }),
         }
     }
 }
@@ -457,4 +450,16 @@ enum Failure {
     Unsupported,
     Refused(String),
     Lost(String),
+}
+
+impl Failure {
+    /// The events for a failed command: a lost connection is a disconnect; a refusal or an
+    /// unsupported command is `on_error` given the reason.
+    fn into_events(self, on_error: impl FnOnce(String) -> RigEvent) -> Vec<RigEvent> {
+        match self {
+            Failure::Lost(e) => vec![RigEvent::Disconnected(e)],
+            Failure::Unsupported => vec![on_error("not supported by this rig".to_string())],
+            Failure::Refused(e) => vec![on_error(e)],
+        }
+    }
 }
