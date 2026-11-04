@@ -78,6 +78,17 @@ pub trait Activity {
         Vec::new()
     }
 
+    /// One line of live state for the go-to palette (a pass countdown, the mode).
+    fn state_line(&self, _ctx: &ActivityCtx) -> String {
+        String::new()
+    }
+
+    /// Why the Active rig cannot run this Activity, if it cannot. The palette shows the reason
+    /// and will not enter it.
+    fn unavailable(&self) -> Option<String> {
+        None
+    }
+
     /// One line for each thing quitting now would lose (unsent CW input, active Doppler
     /// tracking). Empty when nothing would be lost.
     fn quit_warnings(&self) -> Vec<String> {

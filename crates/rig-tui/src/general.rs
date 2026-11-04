@@ -136,6 +136,14 @@ impl Activity for General {
         }
     }
 
+    fn state_line(&self, ctx: &ActivityCtx) -> String {
+        match (ctx.connected, ctx.rig_mode) {
+            (false, _) => "rig not connected".to_string(),
+            (true, Some(mode)) => format!("mode {mode}"),
+            (true, None) => "waiting for the rig".to_string(),
+        }
+    }
+
     fn quit_warnings(&self) -> Vec<String> {
         if self.panels.iter().any(|p| p.has_unsent_input()) {
             vec!["Unsent CW input will be lost.".to_string()]
