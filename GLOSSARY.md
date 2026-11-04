@@ -65,3 +65,19 @@ _Avoid_: QSO (except in ADIF field names), call, log entry
 **Log**:
 The single append-only file holding every Contact, whatever the activity. Not a diagnostic log.
 _Avoid_: logbook (that is the crate's name), database
+
+### Station
+
+**Locator**:
+The 6-character Maidenhead square that says where the operator's station is. It is coarse by design (about 4.6 km by 3.5 km), so it never pins a home. Stored in the shared config; latitude and longitude are never stored.
+_Avoid_: Grid, grid square (except in ADIF field names and existing flag names)
+
+### Rig app
+
+**Mode panel**:
+The part of the rig app's screen that exists only while the rig is in a mode it serves, such as the CW transcript and input line in CW. Only one shows at a time; with no panel for the current mode, the space shows the session's recent Contacts.
+_Avoid_: Plugin, tab, mode screen
+
+**Soft key**:
+One of the six labelled F-key slots under the CW panel, each bound to a canned message that is sent as CW when pressed. Where the message is stored (the config file today, the radio's own message buffers later) is not part of the term.
+_Avoid_: Macro button, hotkey
