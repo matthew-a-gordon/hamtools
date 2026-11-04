@@ -14,11 +14,12 @@ use hamtools_tui::modal::Modal;
 use ratatui::Frame;
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::layout::{Constraint, Layout, Rect};
-use ratatui::style::{Color, Modifier, Style};
+use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Paragraph, Wrap};
 
 use crate::geocode::{Candidate, GeocodeResult};
+use crate::style::{dim, red, yellow};
 
 const CALLSIGN: usize = 0;
 const LOCATOR: usize = 1;
@@ -175,18 +176,6 @@ fn check(index: usize, value: &str) -> Result<(), String> {
         }
         _ => Ok(()),
     }
-}
-
-fn dim() -> Style {
-    Style::default().fg(Color::DarkGray)
-}
-
-fn red() -> Style {
-    Style::default().fg(Color::Red)
-}
-
-fn yellow() -> Style {
-    Style::default().fg(Color::Yellow)
 }
 
 fn rows_needed(lines: &[Line], width: u16) -> u16 {

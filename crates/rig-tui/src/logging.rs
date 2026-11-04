@@ -9,12 +9,12 @@ use logbook::{Contact, ContactInput, Grid, Log, Mode, Sideband};
 use ratatui::Frame;
 use ratatui::crossterm::event::KeyEvent;
 use ratatui::layout::{Constraint, Layout, Rect};
-use ratatui::style::{Color, Style};
 use ratatui::text::Line;
 use ratatui::widgets::Paragraph;
 
 use crate::panel::{LogDefaults, LogMode};
 use crate::rig::RigMode;
+use crate::style::{dim, red};
 use crate::ui::format_hz;
 
 // Field positions in the form.
@@ -317,18 +317,12 @@ impl Logging {
             let when = form.started.format("%H:%M:%SZ");
             frame.render_widget(
                 Paragraph::new(format!("{}  {}  {when}", format_hz(form.hz), form.rig_mode))
-                    .style(Style::default().fg(Color::DarkGray)),
+                    .style(dim()),
                 head,
             );
             form.form.render(frame, fields);
             if let Some(message) = &form.error {
-                frame.render_widget(
-                    Paragraph::new(Line::styled(
-                        message.clone(),
-                        Style::default().fg(Color::Red),
-                    )),
-                    error,
-                );
+                frame.render_widget(Paragraph::new(Line::styled(message.clone(), red())), error);
             }
         } else if let Some(list) = &self.list {
             let rows = self.session.len().clamp(1, 14) as u16;
