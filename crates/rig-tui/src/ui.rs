@@ -91,7 +91,9 @@ fn hint(app: &App) -> &'static str {
     }
     match app.focus() {
         Focus::Panel => "Enter send  F1-F6 soft keys  Tab/Esc strip  Ctrl-C quit",
-        Focus::Strip if app.panel_active() => "Tab input  F1-F6 soft keys  q quit  Ctrl-C quit",
-        Focus::Strip => "q quit  Ctrl-C quit",
+        Focus::Strip if app.panel_active() => {
+            "Tab input  F1-F6 soft keys  c config  q quit  Ctrl-C quit"
+        }
+        Focus::Strip => "c config  q quit  Ctrl-C quit",
     }
 }

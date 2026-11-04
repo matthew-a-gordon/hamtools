@@ -2,13 +2,17 @@
 //! (ticks carry the time), so every behaviour is testable without a rig or a terminal.
 
 use std::collections::BTreeMap;
+use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
+use hamtools_config::{Callsign, Grid, Settings};
 use ratatui::Frame;
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::layout::Rect;
 
+use crate::config_dialog::{ConfigDialog, Outcome};
 use crate::cw::CwPanel;
+use crate::geocode::GeocodeResult;
 use crate::panel::{LogDefaults, LogMode, ModePanel, PanelCommand, PanelCtx};
 use crate::rig::{Command, RigEvent, RigMode};
 
@@ -16,6 +20,8 @@ use crate::rig::{Command, RigEvent, RigMode};
 pub const RECONNECT_EVERY: Duration = Duration::from_secs(3);
 /// How often frequency and mode are read (about twice a second). Untested on hardware.
 pub const STATE_POLL_EVERY: Duration = Duration::from_millis(500);
+
+const DEFAULT_RIG_ADDR: &str = "127.0.0.1:4532";
 
 /// Which widget gets plain keys.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -53,6 +59,11 @@ pub struct App {
     poll_failed: bool,
     callsign: Option<String>,
     soft_keys: BTreeMap<u8, String>,
+    locator: Option<String>,
+    log_path: Option<PathBuf>,
+    rig_addr: String,
+    config_path: Option<PathBuf>,
+    config: Option<ConfigDialog>,
     last_connect: Option<Instant>,
     last_poll: Option<Instant>,
 }
@@ -78,6 +89,11 @@ impl App {
             poll_failed: false,
             callsign: None,
             soft_keys: BTreeMap::new(),
+            locator: None,
+            log_path: None,
+            rig_addr: DEFAULT_RIG_ADDR.to_string(),
+            config_path: None,
+            config: None,
             last_connect: None,
             last_poll: None,
         }
@@ -95,6 +111,77 @@ impl App {
     pub fn with_soft_keys(mut self, soft_keys: BTreeMap<u8, String>) -> Self {
         self.soft_keys = soft_keys;
         self
+    }
+
+    /// The config file the dialog edits (`None`: no location, so the dialog is read-only).
+    pub fn with_config_path(mut self, path: Option<PathBuf>) -> Self {
+        self.config_path = path;
+        self
+    }
+
+    /// The Locator in use (6 characters, uppercase), if any.
+    pub fn with_locator(mut self, locator: Option<String>) -> Self {
+        self.locator = locator;
+        self
+    }
+
+    pub fn with_log_path(mut self, log_path: Option<PathBuf>) -> Self {
+        self.log_path = log_path;
+        self
+    }
+
+    /// The `rigctld` address in use, shown in the config dialog when the file sets none.
+    pub fn with_rig_addr(mut self, addr: impl Into<String>) -> Self {
+        self.rig_addr = addr.into();
+        self
+    }
+
+    pub fn locator(&self) -> Option<&str> {
+        self.locator.as_deref()
+    }
+
+    /// The Log path in use; `None` means the default.
+    pub fn log_path(&self) -> Option<&Path> {
+        self.log_path.as_deref()
+    }
+
+    pub fn rig_addr(&self) -> &str {
+        &self.rig_addr
+    }
+
+    /// What the app is using now, as config settings.
+    fn current_settings(&self) -> Settings {
+        Settings {
+            callsign: self.callsign.as_deref().and_then(|c| Callsign::new(c).ok()),
+            locator: self.locator.as_deref().and_then(|g| Grid::new(g).ok()),
+            log_path: self.log_path.clone(),
+            rig_addr: Some(self.rig_addr.clone()),
+            macros: self.soft_keys.clone(),
+        }
+    }
+
+    /// Use saved settings now, with no restart. Returns what the rig side must do.
+    fn apply_settings(&mut self, settings: Settings) -> Vec<Command> {
+        self.callsign = settings.callsign.map(|c| c.as_str().to_string());
+        self.locator = settings.locator.map(|g| g.as_str().to_string());
+        self.log_path = settings.log_path;
+        self.soft_keys = settings.macros;
+        match settings.rig_addr {
+            Some(addr) if addr != self.rig_addr => {
+                self.rig_addr = addr.clone();
+                self.connected = false;
+                self.last_connect = None;
+                vec![Command::SetRigAddr(addr)]
+            }
+            _ => Vec::new(),
+        }
+    }
+
+    /// The answer to a [`Command::Lookup`] (run by `main` on a short-lived thread).
+    pub fn on_geocode(&mut self, result: GeocodeResult) {
+        if let Some(dialog) = &mut self.config {
+            dialog.on_geocode(result);
+        }
     }
 
     pub fn status(&self) -> Option<&str> {
@@ -131,7 +218,7 @@ impl App {
     }
 
     pub fn has_overlay(&self) -> bool {
-        self.overlay.is_some()
+        self.overlay.is_some() || self.config.is_some()
     }
 
     /// Open a modal; it gets every key until it closes.
@@ -172,6 +259,22 @@ impl App {
         if key.code == KeyCode::Char('c') && key.modifiers.contains(KeyModifiers::CONTROL) {
             return vec![Command::Quit];
         }
+        if let Some(dialog) = &mut self.config {
+            return match dialog.on_key(key) {
+                Outcome::Stay => Vec::new(),
+                Outcome::Lookup(address) => vec![Command::Lookup(address)],
+                Outcome::Close => {
+                    self.config = None;
+                    vec![Command::ClearGeocodeCache]
+                }
+                Outcome::Apply(settings) => {
+                    self.config = None;
+                    let mut commands = self.apply_settings(settings);
+                    commands.push(Command::ClearGeocodeCache);
+                    commands
+                }
+            };
+        }
         if let Some(overlay) = &mut self.overlay {
             if overlay.on_key(key) == OverlayAction::Close {
                 self.overlay = None;
@@ -196,6 +299,14 @@ impl App {
     fn on_strip_key(&mut self, key: KeyEvent, panel_takes_text: bool) -> Vec<Command> {
         match key.code {
             KeyCode::Char('q') => vec![Command::Quit],
+            KeyCode::Char('c') => {
+                self.config = Some(ConfigDialog::open(
+                    self.config_path.as_deref(),
+                    &self.current_settings(),
+                    &self.rig_addr,
+                ));
+                Vec::new()
+            }
             KeyCode::Tab if panel_takes_text => {
                 self.focus = Focus::Panel;
                 Vec::new()
@@ -313,6 +424,9 @@ impl App {
     pub(crate) fn render_overlay(&self, frame: &mut Frame, area: Rect) {
         if let Some(overlay) = &self.overlay {
             overlay.render(frame, area);
+        }
+        if let Some(dialog) = &self.config {
+            dialog.render(frame, area);
         }
     }
 }

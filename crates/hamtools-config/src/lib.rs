@@ -283,6 +283,12 @@ impl ConfigFile {
         })
     }
 
+    /// Whether a save could replace the file: a symlink or non-writable target never can, so a
+    /// dialog can say so before the operator edits anything.
+    pub fn writable(&self) -> Result<(), SaveError> {
+        self.check_writable()
+    }
+
     fn check_writable(&self) -> Result<(), SaveError> {
         let read_only = |reason: &str| SaveError::ReadOnly {
             path: self.path.clone(),

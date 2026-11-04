@@ -70,6 +70,14 @@ pub enum Command {
     Send(String),
     /// A raw request a Mode panel asked for, e.g. `TB;`.
     Panel(String),
+    /// Talk to a different `rigctld` from now on: drop the connection and let the retry loop
+    /// reconnect.
+    SetRigAddr(String),
+    /// Look this address up (config dialog). Not a rig command: `main` runs it on a thread and
+    /// hands the answer back through `App::on_geocode`.
+    Lookup(String),
+    /// The config dialog closed: forget the lookup cache. Not a rig command either.
+    ClearGeocodeCache,
 }
 
 /// What the rig (or the attempt to reach it) reported.
@@ -117,7 +125,12 @@ impl Rig {
     /// the app then asks to `Connect` again.
     pub async fn execute(&mut self, command: Command) -> Vec<RigEvent> {
         match command {
-            Command::Quit => Vec::new(),
+            Command::Quit | Command::Lookup(_) | Command::ClearGeocodeCache => Vec::new(),
+            Command::SetRigAddr(addr) => {
+                self.addr = addr;
+                self.client = None;
+                Vec::new()
+            }
             Command::Connect => self.connect().await,
             _ if self.client.is_none() => Vec::new(),
             Command::PollState => self.poll_state().await,
