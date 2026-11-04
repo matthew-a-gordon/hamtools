@@ -153,12 +153,25 @@ mod chords {
 
     #[test]
     fn the_other_chords_never_type_into_the_input_or_command_the_rig() {
-        for c in ['g', 'k', 'b', 'r'] {
+        for c in ['b', 'r'] {
             let mut app = cw_app();
             quiet(&mut app, ctrl(c));
             let typed = format!("> {}", c.to_ascii_uppercase());
             assert!(!has(&screen(&app, 80, 24), &typed));
             assert!(app.status().is_some(), "Ctrl-{c} said nothing");
+        }
+    }
+
+    #[test]
+    fn ctrl_g_and_ctrl_k_open_their_overlays_from_a_text_area() {
+        for c in ['g', 'k'] {
+            let mut app = cw_app();
+            quiet(&mut app, ctrl(c));
+            assert!(app.has_overlay(), "Ctrl-{c} opened nothing");
+            app.on_key(key(KeyCode::Esc));
+            assert!(!app.has_overlay());
+            // The input line is untouched.
+            assert!(has(&screen(&app, 80, 24), ">"));
         }
     }
 
