@@ -7,6 +7,8 @@ use chrono::{DateTime, Duration, Utc};
 use orbit::{Observer, Pass, PropagationError, Satellite};
 use ratatui::crossterm::event::{KeyCode, KeyEvent};
 
+pub use crate::logging::{ContactForm, Field, LoggedContact, Logging};
+use crate::logging::FormEvent;
 use crate::satnogs::{Plan, Transmitter};
 use crate::tracker::{RigCommand, STEP_HZ, Tracker, doppler_range_rate};
 
@@ -77,6 +79,15 @@ pub struct App {
     nudge_hz: i64,
     /// Commands queued by keys, sent on the next tick.
     pending: Vec<RigCommand>,
+    /// `None` when there is no callsign: logging is off.
+    logging: Option<Logging>,
+    rig_live: bool,
+    /// The latest time the event loop has told us, for stamping Contacts.
+    clock: DateTime<Utc>,
+    form: Option<ContactForm>,
+    session: Vec<LoggedContact>,
+    /// `Some(n)` while the session list is open, scrolled `n` lines back from the newest.
+    session_scroll: Option<usize>,
 }
 
 impl App {
@@ -136,6 +147,12 @@ impl App {
             tracking: None,
             nudge_hz: 0,
             pending: Vec::new(),
+            logging: None,
+            rig_live: false,
+            clock: now,
+            form: None,
+            session: Vec::new(),
+            session_scroll: None,
         }
     }
 
@@ -177,7 +194,20 @@ impl App {
     }
 
     pub fn handle_key(&mut self, key: KeyEvent) -> Option<Command> {
+        if self.form.is_some() {
+            self.handle_form_key(key);
+            return None;
+        }
+        if self.session_scroll.is_some() {
+            match key.code {
+                KeyCode::Char('q') => return Some(Command::Quit),
+                _ => self.handle_session_key(key),
+            }
+            return None;
+        }
         match key.code {
+            KeyCode::Char('l') => self.open_form(),
+            KeyCode::Char('L') => self.session_scroll = Some(0),
             KeyCode::Char('q') | KeyCode::Esc => return Some(Command::Quit),
             KeyCode::Char('r') => return Some(Command::Refresh),
             KeyCode::Tab => {
@@ -320,6 +350,7 @@ impl App {
     /// Advance to `now`: queued commands first, then whatever tracking needs. The caller applies
     /// the returned commands to the rig.
     pub fn tick(&mut self, now: DateTime<Utc>) -> Result<Vec<RigCommand>, PropagationError> {
+        self.clock = now;
         let mut commands = std::mem::take(&mut self.pending);
         if let Some(tracking) = &mut self.tracking
             && let Some(plan) = tracking.transmitter.plan(self.nudge_hz)
@@ -388,6 +419,164 @@ impl App {
     /// The pass under the cursor.
     pub fn selected_pass(&self) -> Option<&Row> {
         self.rows.get(self.row)
+    }
+}
+
+const NO_LOGGING: &str = "logging is off: set callsign in the shared config (config.toml)";
+
+impl App {
+    /// `None` turns logging off (no callsign).
+    pub fn set_logging(&mut self, logging: Option<Logging>) {
+        self.logging = logging;
+    }
+
+    pub fn logging_enabled(&self) -> bool {
+        self.logging.is_some()
+    }
+
+    /// Whether the event loop currently has a working connection to the rig.
+    pub fn set_rig_live(&mut self, live: bool) {
+        self.rig_live = live;
+    }
+
+    /// The time the Contact stamps use: tell the app on every turn of the event loop.
+    pub fn set_clock(&mut self, now: DateTime<Utc>) {
+        self.clock = now;
+    }
+
+    pub fn form(&self) -> Option<&ContactForm> {
+        self.form.as_ref()
+    }
+
+    /// This session's Contacts, oldest first.
+    pub fn session(&self) -> &[LoggedContact] {
+        &self.session
+    }
+
+    /// Hand the session list over, so it can survive the app being rebuilt.
+    pub fn take_session(&mut self) -> Vec<LoggedContact> {
+        std::mem::take(&mut self.session)
+    }
+
+    pub fn restore_session(&mut self, session: Vec<LoggedContact>) {
+        self.session = session;
+    }
+
+    pub fn session_open(&self) -> bool {
+        self.session_scroll.is_some()
+    }
+
+    /// Lines the session list is scrolled back from the newest Contact.
+    pub fn session_scroll(&self) -> usize {
+        self.session_scroll.unwrap_or(0)
+    }
+
+    /// The receive frequency the tracker last sent to the radio.
+    pub fn radio_now_rx_hz(&self) -> Option<u64> {
+        self.tracking.as_ref()?.tracker.sent_rx_hz()
+    }
+
+    /// The operator's own locator for the Contact: the config override, else the observer's.
+    pub fn own_grid(&self) -> String {
+        self.logging
+            .as_ref()
+            .and_then(|l| l.grid_override.clone())
+            .unwrap_or_else(|| logbook::locator(self.observer.lat_deg, self.observer.lon_deg))
+    }
+
+    fn open_form(&mut self) {
+        let Some(logging) = &self.logging else {
+            self.status = Some(NO_LOGGING.to_string());
+            return;
+        };
+        let Some(tracking) = &self.tracking else {
+            self.status = Some("start tracking (t) before logging a Contact".to_string());
+            return;
+        };
+        if !self.rig_live {
+            self.status = Some("no rig connected: cannot log a Contact".to_string());
+            return;
+        }
+        let (Some(rx_hz), Some(tx_hz), Some(plan)) = (
+            tracking.tracker.sent_rx_hz(),
+            tracking.tracker.sent_tx_hz(),
+            tracking.transmitter.plan(self.nudge_hz),
+        ) else {
+            self.status = Some("no frequencies sent to the radio yet: wait a tick".to_string());
+            return;
+        };
+        let Some(tx_mode) = plan.tx_mode else {
+            self.status = Some("this transmitter has no uplink: nothing to log".to_string());
+            return;
+        };
+        if let Err(e) = logging.log.check() {
+            self.status = Some(format!("log: {e}"));
+            return;
+        }
+        self.form = Some(ContactForm::new(
+            tracking.satellite.clone(),
+            tracking.transmitter.description.clone(),
+            self.clock,
+            (rx_hz, plan.rx_mode),
+            (tx_hz, tx_mode),
+        ));
+    }
+
+    fn handle_form_key(&mut self, key: KeyEvent) {
+        let Some(form) = &mut self.form else {
+            return;
+        };
+        match form.handle_key(key) {
+            FormEvent::Edited => {}
+            FormEvent::Cancel => self.form = None,
+            FormEvent::Save => self.save_form(),
+        }
+    }
+
+    fn save_form(&mut self) {
+        let own_grid = self.own_grid();
+        let (Some(form), Some(logging)) = (&mut self.form, &self.logging) else {
+            return;
+        };
+        let sat_name = logging.sat_name(&form.satellite).to_string();
+        let contact = match form.contact(self.clock, own_grid, &sat_name) {
+            Ok(contact) => contact,
+            Err(message) => {
+                form.error = Some(message);
+                return;
+            }
+        };
+        if let Err(e) = logging.log.append(&contact) {
+            form.error = None;
+            self.status = Some(format!("not logged: {e}"));
+            return;
+        }
+        let entry = LoggedContact {
+            time_on: form.started,
+            call: form.call.trim().to_uppercase(),
+            grid: form.grid.trim().to_uppercase(),
+            rst_sent: form.rst_sent.trim().to_string(),
+            rst_rcvd: form.rst_rcvd.trim().to_string(),
+            satellite: sat_name,
+        };
+        self.status = Some(format!("logged {}", entry.call));
+        self.session.push(entry);
+        self.form = None;
+    }
+
+    fn handle_session_key(&mut self, key: KeyEvent) {
+        let Some(scroll) = self.session_scroll else {
+            return;
+        };
+        let oldest = self.session.len().saturating_sub(1);
+        match key.code {
+            KeyCode::Char('L') | KeyCode::Esc => self.session_scroll = None,
+            KeyCode::Up | KeyCode::Char('k') => self.session_scroll = Some((scroll + 1).min(oldest)),
+            KeyCode::Down | KeyCode::Char('j') => {
+                self.session_scroll = Some(scroll.saturating_sub(1));
+            }
+            _ => {}
+        }
     }
 }
 

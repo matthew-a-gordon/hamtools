@@ -116,6 +116,11 @@ impl Tracker {
         self.sent.rx_hz
     }
 
+    /// The transmit frequency last sent to the radio, if any.
+    pub fn sent_tx_hz(&self) -> Option<u64> {
+        self.sent.tx_hz
+    }
+
     /// Forget what was sent, so the next step sets the radio up from scratch. For use after the
     /// rig connection has been lost and restored.
     pub fn reset(&mut self) {
