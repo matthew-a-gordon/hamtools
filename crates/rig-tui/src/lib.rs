@@ -12,6 +12,7 @@ mod general;
 pub mod geocode;
 mod logging;
 mod panel;
+pub mod refdata;
 pub mod reference;
 mod rig;
 mod style;
