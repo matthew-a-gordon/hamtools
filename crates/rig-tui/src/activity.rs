@@ -12,22 +12,27 @@ use ratatui::crossterm::event::KeyEvent;
 use ratatui::layout::Rect;
 
 use crate::keys::KeyEntry;
+use crate::layout::Panes;
 use crate::panel::{LogDefaults, LogMode};
 use crate::rig::{Command, RigMode};
+use crate::softkeys::{Live, ResolvedKey};
 
 /// What an Activity is told about the app on every call.
 #[derive(Debug, Clone, Copy)]
 pub struct ActivityCtx<'a> {
     pub connected: bool,
-    pub callsign: Option<&'a str>,
-    /// Soft key message slots, F1..=F6. Text is uppercase and may contain `{CALL}`.
-    pub soft_keys: &'a BTreeMap<u8, String>,
+    /// The live values Soft key variables expand from, read at press time.
+    pub live: Live<'a>,
+    /// Soft keys F1..=F6 after layering, each with its layer and validity.
+    pub soft_keys: &'a BTreeMap<u8, ResolvedKey>,
     /// The last mode the rig reported, however old.
     pub rig_mode: Option<&'a RigMode>,
     /// The mode only if the rig reported it within the last two seconds.
     pub fresh_mode: Option<&'a RigMode>,
     /// Recent Contacts, newest first (filled for rendering only).
     pub recent: &'a [String],
+    /// The panes the window has room for (see [`crate::layout`]).
+    pub panes: Panes,
 }
 
 /// What an Activity returns: rig commands from the closed set, and an optional status line.

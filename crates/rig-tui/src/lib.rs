@@ -11,10 +11,13 @@ mod cw;
 mod general;
 pub mod geocode;
 pub mod keys;
+pub mod layout;
 mod logging;
 mod panel;
+pub mod refdata;
 pub mod reference;
 mod rig;
+pub mod softkeys;
 mod style;
 mod ui;
 

@@ -28,7 +28,7 @@ Early. Hardware results are recorded in `CLAUDE.md` ("Hardware status"); anythin
 
 - **Rig strip:** frequency, mode and passband, tuning step, connection state, VFO, split with the transmit frequency, RX/TX, S-meter and a UTC clock.
 - **Tuning:** direct frequency entry, stepping from 1 Hz to 100 kHz, mode cycling (LSB, USB, CW, CWR, AM, FM, RTTY, RTTYR), VFO A/B, split on/off and a split transmit frequency.
-- **CW panel** (in CW and CWR): a transcript of what the radio decodes, an input line to send, and six Soft keys (F1-F6) bound to canned messages. `{call}` expands to your callsign.
+- **CW panel** (in CW and CWR): a transcript of what the radio decodes, an input line to send, and six Soft keys (F1-F6) bound to canned messages. `{MYCALL}` expands to your callsign.
 - **Logging:** a Contact form prefilled from the radio (frequency, mode, band, start time, your Locator), a count of Contacts logged this session and a session list. Contacts go to one append-only ADIF Log. With split on, the form's frequency is the transmit frequency.
 - **Config dialog:** edit the callsign, Locator, Log path, rig address and Soft keys in place, with a safe field-level save that keeps your comments and unknown keys. An address lookup (OpenStreetMap Nominatim, one request when you ask) turns a town into a 6-character Locator. The address is never stored.
 - **Resilient:** starts with no rig, shows "disconnected" with the error, and reconnects on its own.
