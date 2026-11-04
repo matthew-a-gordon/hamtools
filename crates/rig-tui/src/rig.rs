@@ -122,6 +122,29 @@ pub enum Command {
     ClearGeocodeCache,
 }
 
+impl Command {
+    /// Whether this command can key the transmitter. Only the CW send can; the match is
+    /// exhaustive so a new command has to decide.
+    pub fn transmits(&self) -> bool {
+        match self {
+            Self::Send(_) => true,
+            Self::Quit
+            | Self::Connect
+            | Self::PollState
+            | Self::PollSMeter
+            | Self::SetFreq(_)
+            | Self::SetMode { .. }
+            | Self::SetVfo(_)
+            | Self::SetSplit { .. }
+            | Self::SetSplitFreq(_)
+            | Self::Panel(_)
+            | Self::SetRigAddr(_)
+            | Self::Lookup(_)
+            | Self::ClearGeocodeCache => false,
+        }
+    }
+}
+
 /// What the rig (or the attempt to reach it) reported.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RigEvent {
