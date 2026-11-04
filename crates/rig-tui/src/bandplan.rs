@@ -477,3 +477,70 @@ fn label_of(row: &Row) -> &str {
 fn mhz(hz: u64) -> String {
     format!("{}.{:03}", hz / 1_000_000, hz / 1_000 % 1_000)
 }
+
+#[cfg(test)]
+mod tests {
+    use ratatui::Terminal;
+    use ratatui::backend::TestBackend;
+
+    use super::*;
+
+    /// The modal on 20 m, General, drawn into a `width` x `height` area.
+    fn draw(width: u16, height: u16) -> Vec<String> {
+        let modal = BandplanModal::open(Some(14_074_000));
+        let view = View {
+            rx: Some(14_074_000),
+            tx: None,
+            class: Some(LicenseClass::General),
+            today: NaiveDate::from_ymd_opt(2026, 11, 5).unwrap(),
+        };
+        let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
+        terminal
+            .draw(|frame| modal.render(frame, frame.area(), &view))
+            .unwrap();
+        terminal
+            .backend()
+            .buffer()
+            .content()
+            .chunks(usize::from(width))
+            .map(|row| row.iter().map(|c| c.symbol()).collect())
+            .collect()
+    }
+
+    fn has(rows: &[String], needle: &str) -> bool {
+        rows.iter().any(|r| r.contains(needle))
+    }
+
+    #[test]
+    fn the_arrl_row_is_dropped_first_then_the_satellite_row() {
+        let mut only_arrl_gone = false;
+        for height in 6..=24 {
+            let rows = draw(80, height);
+            let (arrl, sat) = (has(&rows, "ARRL"), has(&rows, "Sat "));
+            assert!(!(arrl && !sat), "ARRL kept after Sat dropped at {height}");
+            only_arrl_gone |= sat && !arrl;
+        }
+        assert!(only_arrl_gone, "no height drops only the ARRL row");
+        let full = draw(80, 24);
+        assert!(has(&full, "ARRL") && has(&full, "Sat "));
+    }
+
+    #[test]
+    fn privilege_marker_and_cursor_survive_the_smallest_height() {
+        let rows = draw(80, 9);
+
+        assert!(has(&rows, "Priv"), "{rows:#?}");
+        assert!(has(&rows, "Rig"), "{rows:#?}");
+        assert!(has(&rows, "Cur"), "{rows:#?}");
+        assert!(!has(&rows, "ARRL") && !has(&rows, "Sat "), "{rows:#?}");
+    }
+
+    #[test]
+    fn a_narrow_screen_cuts_lines_instead_of_wrapping_them() {
+        let rows = draw(40, 24);
+
+        assert_eq!(rows.iter().filter(|r| r.contains("as_of")).count(), 1);
+        assert_eq!(rows.iter().filter(|r| r.contains("Left/Right")).count(), 1);
+        assert_eq!(rows.iter().filter(|r| r.contains("Priv")).count(), 1);
+    }
+}

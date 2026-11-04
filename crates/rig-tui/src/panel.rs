@@ -11,14 +11,16 @@ use ratatui::crossterm::event::KeyEvent;
 use ratatui::layout::Rect;
 
 use crate::rig::RigMode;
+use crate::softkeys::{Live, ResolvedKey};
 
 /// What a panel is told about the app on every call.
 #[derive(Debug, Clone, Copy)]
 pub struct PanelCtx<'a> {
     pub connected: bool,
-    pub callsign: Option<&'a str>,
-    /// Soft key message slots, F1..=F6. Text is uppercase and may contain `{CALL}`.
-    pub soft_keys: &'a BTreeMap<u8, String>,
+    /// The live values Soft key variables expand from, read at press time.
+    pub live: Live<'a>,
+    /// Soft keys F1..=F6 after layering, each with its layer and validity.
+    pub soft_keys: &'a BTreeMap<u8, ResolvedKey>,
     /// Whether the panel's own widget holds the keyboard focus.
     pub focused: bool,
 }
@@ -40,12 +42,42 @@ pub struct LogMode {
     pub default_rst: Option<String>,
 }
 
-/// What a panel adds to a Contact being logged.
+/// Who is logging, which decides the Contact form's fields and the reference extras it writes.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum Role {
+    #[default]
+    General,
+    Satellite,
+    SotaActivator,
+    SotaChaser,
+    PotaActivator,
+    PotaHunter,
+}
+
+impl Role {
+    /// Activators log in quick-entry style: Enter saves and the form reopens on Call.
+    pub fn is_activator(self) -> bool {
+        matches!(self, Role::SotaActivator | Role::PotaActivator)
+    }
+
+    /// The Role has a "Their ref" field (and no Grid or Name).
+    pub fn has_their_ref(self) -> bool {
+        !matches!(self, Role::General | Role::Satellite)
+    }
+}
+
+/// What a panel or Activity adds to a Contact being logged.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct LogDefaults {
     pub mode: Option<LogMode>,
     pub rst: Option<String>,
     pub extra_adif: Vec<(String, String)>,
+    pub role: Role,
+    /// My references from the active Activation plan, never typed per Contact. More than one is
+    /// a POTA n-fer; SOTA uses the first.
+    pub my_refs: Vec<String>,
+    /// Their reference to prefill (a Hunter's spot).
+    pub their_ref: Option<String>,
 }
 
 pub trait ModePanel {
@@ -65,6 +97,11 @@ pub trait ModePanel {
     fn on_reply(&mut self, request: &str, reply: Result<String, String>) -> Result<(), String>;
 
     fn logbook_mode(&self, mode: &RigMode) -> Option<LogMode>;
+
+    /// Typed input that has not been sent, which quitting would lose.
+    fn has_unsent_input(&self) -> bool {
+        false
+    }
 
     fn log_defaults(&self) -> LogDefaults {
         LogDefaults::default()

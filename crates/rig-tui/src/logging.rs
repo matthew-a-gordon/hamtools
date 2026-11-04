@@ -12,20 +12,34 @@ use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::text::Line;
 use ratatui::widgets::Paragraph;
 
-use crate::panel::{LogDefaults, LogMode};
+use crate::panel::{LogDefaults, LogMode, Role};
 use crate::rig::RigMode;
 use crate::style::{dim, red};
 use crate::ui::format_hz;
 
-// Field positions in the form.
-const CALL: usize = 0;
-const MODE: usize = 1;
-const SUBMODE: usize = 2;
-const GRID: usize = 3;
-const NAME: usize = 4;
-const RST_SENT: usize = 5;
-const RST_RCVD: usize = 6;
-const COMMENT: usize = 7;
+/// What a form field holds. The Role decides which are shown and in what order.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Kind {
+    Call,
+    Mode,
+    Submode,
+    Grid,
+    Name,
+    RstSent,
+    RstRcvd,
+    TheirRef,
+    Comment,
+}
+
+fn kinds_for(role: Role) -> Vec<Kind> {
+    use Kind::*;
+    if role.has_their_ref() {
+        // Quick-entry order: what a pileup needs first, the mode last.
+        vec![Call, RstSent, RstRcvd, TheirRef, Comment, Mode, Submode]
+    } else {
+        vec![Call, Mode, Submode, Grid, Name, RstSent, RstRcvd, Comment]
+    }
+}
 
 /// The mapping used when no Mode panel supplies one. `None` for a data mode or anything unclear:
 /// the form then asks for the ADIF mode to be typed.
@@ -46,6 +60,15 @@ pub(crate) fn default_log_mode(mode: &RigMode) -> Option<LogMode> {
     })
 }
 
+/// The form's in-progress values, which `App` publishes as Soft key variables.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct ContactView<'a> {
+    pub their_call: &'a str,
+    pub their_ref: &'a str,
+    pub rst_sent: &'a str,
+    pub rst_rcvd: &'a str,
+}
+
 /// What `App` captured when the operator asked to log.
 pub(crate) struct Snapshot {
     pub hz: u64,
@@ -59,12 +82,17 @@ pub(crate) struct Snapshot {
 /// The log form. Frequency, mode and start time are fixed at open; only the typed fields change.
 struct ContactForm {
     form: Form,
+    kinds: Vec<Kind>,
+    role: Role,
+    my_refs: Vec<String>,
     hz: u64,
     rig_mode: RigMode,
     started: DateTime<Utc>,
     extras: Vec<(String, String)>,
     /// A save problem not tied to a field (shown under the fields).
     error: Option<String>,
+    /// A key edited a field since the form opened.
+    dirty: bool,
 }
 
 impl ContactForm {
@@ -91,51 +119,109 @@ impl ContactForm {
         } else {
             "Mode"
         };
-        let form = Form::new(vec![
-            TextField::new("Call").uppercase(),
-            TextField::new(mode_label).uppercase().with_value(mode),
-            TextField::new("Submode").uppercase().with_value(submode),
-            TextField::new("Grid").uppercase(),
-            TextField::new("Name"),
-            TextField::new("RST sent").with_value(rst.clone()),
-            TextField::new("RST rcvd").with_value(rst),
-            TextField::new("Comment"),
-        ]);
+        let role = defaults.role;
+        let kinds = kinds_for(role);
+        let their_ref = defaults.their_ref.unwrap_or_default();
+        let fields = kinds
+            .iter()
+            .map(|kind| match kind {
+                Kind::Call => TextField::new("Call").uppercase(),
+                Kind::Mode => TextField::new(mode_label)
+                    .uppercase()
+                    .with_value(mode.clone()),
+                Kind::Submode => TextField::new("Submode")
+                    .uppercase()
+                    .with_value(submode.clone()),
+                Kind::Grid => TextField::new("Grid").uppercase(),
+                Kind::Name => TextField::new("Name"),
+                Kind::RstSent => TextField::new("RST sent").with_value(rst.clone()),
+                Kind::RstRcvd => TextField::new("RST rcvd").with_value(rst.clone()),
+                Kind::TheirRef => TextField::new("Their ref")
+                    .uppercase()
+                    .with_value(their_ref.clone()),
+                Kind::Comment => TextField::new("Comment"),
+            })
+            .collect();
         Self {
-            form,
+            form: Form::new(fields),
+            kinds,
+            role,
+            my_refs: defaults.my_refs,
             hz,
             rig_mode,
             started,
             extras: defaults.extra_adif,
             error: None,
+            dirty: false,
         }
+    }
+
+    fn value(&self, kind: Kind) -> &str {
+        match self.kinds.iter().position(|k| *k == kind) {
+            Some(i) => self.form.value(i),
+            None => "",
+        }
+    }
+
+    /// The reference extras as standard ADIF fields: POTA `MY_SIG`/`MY_SIG_INFO` and
+    /// `SIG`/`SIG_INFO`, SOTA `MY_SOTA_REF`/`SOTA_REF`. No Activity field.
+    fn reference_extras(&self) -> Vec<(String, String)> {
+        let theirs = self.value(Kind::TheirRef).trim().to_string();
+        let mut out = Vec::new();
+        match self.role {
+            Role::PotaActivator | Role::PotaHunter => {
+                if !self.my_refs.is_empty() {
+                    out.push(("MY_SIG".to_string(), "POTA".to_string()));
+                    out.push(("MY_SIG_INFO".to_string(), self.my_refs.join(",")));
+                }
+                if !theirs.is_empty() {
+                    out.push(("SIG".to_string(), "POTA".to_string()));
+                    out.push(("SIG_INFO".to_string(), theirs));
+                }
+            }
+            Role::SotaActivator | Role::SotaChaser => {
+                if let Some(mine) = self.my_refs.first() {
+                    out.push(("MY_SOTA_REF".to_string(), mine.clone()));
+                }
+                if !theirs.is_empty() {
+                    out.push(("SOTA_REF".to_string(), theirs));
+                }
+            }
+            Role::General | Role::Satellite => {}
+        }
+        out
     }
 
     /// Build the Contact ended at `end`. `Call is required` and `Mode is required` are checked
     /// here so the wording is the form's.
     fn contact(&self, end: DateTime<Utc>, own_grid: Option<&Grid>) -> Result<Contact, String> {
-        let value = |i| self.form.value(i).to_string();
-        if value(CALL).trim().is_empty() {
+        let value = |kind| self.value(kind).to_string();
+        if value(Kind::Call).trim().is_empty() {
             return Err("Call is required".to_string());
         }
-        let mode = value(MODE);
+        let mode = value(Kind::Mode);
         if mode.trim().is_empty() {
             return Err("Mode is required".to_string());
         }
         Contact::new(ContactInput {
-            call: value(CALL),
-            grid: Some(value(GRID)),
-            name: Some(value(NAME)),
-            comment: Some(value(COMMENT)),
-            rst_sent: Some(value(RST_SENT)),
-            rst_rcvd: Some(value(RST_RCVD)),
+            call: value(Kind::Call),
+            grid: Some(value(Kind::Grid)),
+            name: Some(value(Kind::Name)),
+            comment: Some(value(Kind::Comment)),
+            rst_sent: Some(value(Kind::RstSent)),
+            rst_rcvd: Some(value(Kind::RstRcvd)),
             start: self.started,
             end,
             freq_hz: self.hz,
-            mode: logbook_mode(&mode, &value(SUBMODE)),
+            mode: logbook_mode(&mode, &value(Kind::Submode)),
             own_grid: own_grid.cloned(),
             station_callsign: None,
-            extras: self.extras.clone(),
+            extras: self
+                .extras
+                .iter()
+                .cloned()
+                .chain(self.reference_extras())
+                .collect(),
         })
         .map_err(|e| e.to_string())
     }
@@ -203,6 +289,8 @@ pub(crate) struct Logging {
     form: Option<ContactForm>,
     list: Option<ListOverlay>,
     session: Vec<Logged>,
+    /// An activator Contact was just saved: `App` reopens the form on a fresh snapshot.
+    reopen: bool,
 }
 
 impl Logging {
@@ -223,7 +311,35 @@ impl Logging {
         self.form.is_some()
     }
 
+    /// The form has Contact text typed into it that closing would lose.
+    pub fn form_dirty(&self) -> bool {
+        self.form.as_ref().is_some_and(|f| f.dirty)
+    }
+
+    /// Only the session list is open (it holds nothing to lose).
+    pub fn list_only(&self) -> bool {
+        self.form.is_none() && self.list.is_some()
+    }
+
+    /// The form's in-progress values, for the Activity's Soft key variables.
+    pub fn view(&self) -> Option<ContactView<'_>> {
+        let form = self.form.as_ref()?;
+        Some(ContactView {
+            their_call: form.value(Kind::Call),
+            their_ref: form.value(Kind::TheirRef),
+            rst_sent: form.value(Kind::RstSent),
+            rst_rcvd: form.value(Kind::RstRcvd),
+        })
+    }
+
+    /// Whether the last save asks for the form to be opened again (Activator quick entry).
+    /// Reading it clears it.
+    pub fn take_reopen(&mut self) -> bool {
+        std::mem::take(&mut self.reopen)
+    }
+
     pub fn open_form(&mut self, snapshot: Snapshot) {
+        self.list = None;
         self.form = Some(ContactForm::new(snapshot));
     }
 
@@ -248,9 +364,16 @@ impl Logging {
             return None;
         }
         let form = self.form.as_mut()?;
+        let call_was_empty = form.value(Kind::Call).is_empty();
         match form.form.handle_key(key) {
             FormEvent::Edited => {
                 form.error = None;
+                form.dirty = true;
+                // An Activator's Contact starts with its first call character.
+                if form.role.is_activator() && call_was_empty && !form.value(Kind::Call).is_empty()
+                {
+                    form.started = now;
+                }
                 None
             }
             FormEvent::Cancel => {
@@ -286,6 +409,7 @@ impl Logging {
         let logged = Logged::new(&contact);
         let status = format!("logged {}", logged.call);
         self.session.push(logged);
+        self.reopen = form.role.is_activator();
         self.form = None;
         Some(status)
     }

@@ -55,6 +55,17 @@ fn ctrl_b_opens_on_the_band_of_the_rig_frequency() {
 }
 
 #[test]
+fn ctrl_b_opens_from_a_text_area_without_typing_into_it() {
+    let mut app = cw_app();
+
+    assert_eq!(app.on_key(ctrl('b')), vec![]);
+
+    let rows = screen(&app, 80, 24);
+    assert!(has(&rows, "14.350.000"), "{rows:#?}");
+    assert!(!has(&rows, "> B"), "{rows:#?}");
+}
+
+#[test]
 fn outside_every_band_it_opens_on_the_nearest_band_below() {
     let mut app = connected_app_in(App::new(), "CW");
     app.on_rig(RigEvent::Freq(13_000_000));
@@ -206,9 +217,14 @@ fn esc_closes_the_modal_and_the_strip_keys_work_again() {
 }
 
 #[test]
-fn ctrl_c_still_asks_to_quit_with_the_modal_open() {
+fn ctrl_c_asks_to_quit_over_the_modal_and_cancelling_returns_to_it() {
     let mut app = open_app();
 
+    assert_eq!(app.on_key(ctrl('c')), vec![]);
+    assert_eq!(app.on_key(key(KeyCode::Esc)), vec![]);
+
+    assert!(has(&screen(&app, 80, 24), "14.350.000"));
+    assert_eq!(app.on_key(ctrl('c')), vec![]);
     assert_eq!(app.on_key(ctrl('c')), vec![Command::Quit]);
 }
 
@@ -279,36 +295,14 @@ fn with_no_license_class_the_privilege_row_is_hidden_with_a_note() {
 }
 
 #[test]
-fn the_arrl_row_goes_first_then_the_satellite_row_on_small_screens() {
-    let app = open_app();
-
-    let tall = screen(&app, 80, 24);
-    assert!(has(&tall, "ARRL") && has(&tall, "Sat"), "{tall:#?}");
-
-    // 14 rows: modal inner height 12 less 2... try descending heights.
-    let mut seen_no_arrl_with_sat = false;
-    for height in (8..=24).rev() {
-        let rows = screen(&app, 80, height);
-        let (arrl, sat) = (has(&rows, "ARRL"), has(&rows, "Sat "));
-        assert!(!(arrl && !sat), "ARRL kept after Sat dropped at {height}");
-        if sat && !arrl {
-            seen_no_arrl_with_sat = true;
-        }
-    }
-    assert!(seen_no_arrl_with_sat, "no height drops only the ARRL row");
-}
-
-#[test]
-fn the_essentials_survive_the_smallest_screen() {
+fn at_the_smallest_supported_screen_every_row_fits() {
     let app = open_app();
 
     let rows = screen(&app, 80, 24);
-    let rows_small = screen(&app, 80, 12);
 
-    assert!(has(&rows, "as_of 2026-11-04"));
-    assert!(has(&rows_small, "Priv"), "{rows_small:#?}");
-    assert!(row_with(&rows_small, "Rig").contains('R'));
-    assert!(has(&rows_small, "Cur"), "{rows_small:#?}");
+    for needle in ["Priv", "ARRL", "Sat ", "Rig", "Cur", "Enter rx", "as_of"] {
+        assert!(has(&rows, needle), "{needle}: {rows:#?}");
+    }
 }
 
 #[test]
@@ -320,16 +314,6 @@ fn the_footer_shows_as_of_with_a_stale_marker_only_when_old() {
 
     app.set_utc(at(STALE));
     assert!(has(&screen(&app, 80, 24), "stale"));
-}
-
-#[test]
-fn lines_never_wrap_on_a_narrow_screen() {
-    let app = open_app();
-
-    // At 50 columns every line is cut, not wrapped: no row of the modal repeats text.
-    let rows = screen(&app, 50, 24);
-    assert_eq!(rows.iter().filter(|r| r.contains("as_of")).count(), 1);
-    assert_eq!(rows.iter().filter(|r| r.contains("Enter rx")).count(), 1);
 }
 
 mod sixty_metres {

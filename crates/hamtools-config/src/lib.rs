@@ -22,8 +22,10 @@
 //! path = "/home/me/log.adi"
 //! [rig]                   # `[kx3]` is read as an alias
 //! addr = "127.0.0.1:4532"
-//! [macros]                # F1 to F6
-//! F1 = "CQ DE {CALL}"
+//! [macros]                # F1 to F6: the General Soft key set
+//! F1 = "CQ DE {MYCALL}"
+//! [softkeys.pota]         # a named set, same shape
+//! F1 = "CQ POTA DE {MYCALL}"
 //! ```
 //!
 //! Unknown keys are [`Warning`]s, never errors and never dropped; a wrong value for a known key
@@ -96,8 +98,12 @@ pub struct Settings {
     pub license_class: Option<LicenseClass>,
     /// `host:port` of the rigctld to talk to.
     pub rig_addr: Option<String>,
-    /// Soft key text for F1..=F6, uppercase, may contain `{CALL}`.
+    /// Soft key text for F1..=F6, uppercase, may contain variables such as `{MYCALL}`. The
+    /// General Soft key set.
     pub macros: BTreeMap<u8, String>,
+    /// Named Soft key sets from `[softkeys.<name>]`, same shape as `macros`. Read only here; the
+    /// config dialog does not write them.
+    pub softkey_sets: BTreeMap<String, BTreeMap<u8, String>>,
 }
 
 /// A key the crate does not know. It is kept in the file and only reported.
@@ -648,23 +654,43 @@ fn read_settings_lenient(root: &Table) -> (Settings, Vec<ConfigError>) {
     })());
     keep((|| {
         if let Some(macros) = sub_table(root, "macros")? {
-            for (name, item) in macros {
-                let key = format!("macros.{name}");
-                let n = name
-                    .strip_prefix('F')
-                    .and_then(|n| n.parse::<u8>().ok())
-                    .filter(|n| (1..=6).contains(n) && name == format!("F{n}"))
-                    .ok_or_else(|| invalid(&key, "only F1 to F6 are supported"))?;
-                let text = string(item, &key)?.trim().to_uppercase();
-                if text.is_empty() {
-                    return Err(invalid(&key, "has no text"));
-                }
-                s.macros.insert(n, text);
+            s.macros = read_soft_keys(macros, "macros")?;
+        }
+        Ok(())
+    })());
+    keep((|| {
+        if let Some(sets) = sub_table(root, "softkeys")? {
+            for (name, item) in sets {
+                let key = format!("softkeys.{name}");
+                let table = item
+                    .as_table()
+                    .ok_or_else(|| invalid(&key, "expected a table of F1 to F6"))?;
+                s.softkey_sets
+                    .insert(name.to_string(), read_soft_keys(table, &key)?);
             }
         }
         Ok(())
     })());
     (s, errs)
+}
+
+/// F1..F6 messages from one table, uppercased. `prefix` names the table in errors.
+fn read_soft_keys(table: &Table, prefix: &str) -> Result<BTreeMap<u8, String>, ConfigError> {
+    let mut keys = BTreeMap::new();
+    for (name, item) in table {
+        let key = format!("{prefix}.{name}");
+        let n = name
+            .strip_prefix('F')
+            .and_then(|n| n.parse::<u8>().ok())
+            .filter(|n| (1..=6).contains(n) && name == format!("F{n}"))
+            .ok_or_else(|| invalid(&key, "only F1 to F6 are supported"))?;
+        let text = string(item, &key)?.trim().to_uppercase();
+        if text.is_empty() {
+            return Err(invalid(&key, "has no text"));
+        }
+        keys.insert(n, text);
+    }
+    Ok(keys)
 }
 
 fn read_settings(root: &Table) -> Result<Settings, ConfigError> {
@@ -728,12 +754,13 @@ pub fn load_lenient(path: &Path) -> Result<(Settings, Vec<ConfigError>), ConfigE
     Ok((settings, errs))
 }
 
-const KNOWN: [(&str, &[&str]); 5] = [
+const KNOWN: [(&str, &[&str]); 6] = [
     ("station", &["locator", "license_class"]),
     ("logbook", &["path"]),
     ("rig", &["addr"]),
     ("kx3", &["addr"]),
     ("macros", &[]),
+    ("softkeys", &[]),
 ];
 
 fn line_at(text: &str, span: Option<std::ops::Range<usize>>) -> usize {
@@ -757,7 +784,7 @@ fn parse(text: &str) -> Result<(Settings, Vec<Warning>), ConfigError> {
                     continue;
                 };
                 for (key, _) in table {
-                    if name == "macros" || keys.contains(&key) {
+                    if name == "macros" || name == "softkeys" || keys.contains(&key) {
                         continue;
                     }
                     warnings.push(Warning {

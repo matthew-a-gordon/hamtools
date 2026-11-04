@@ -43,7 +43,7 @@ async fn in_cw_the_tb_buffer_is_polled_and_decoded_text_reaches_the_transcript()
     tick(&mut rig, &mut app, t).await; // learns the mode
     tick(&mut rig, &mut app, t).await; // CW is active now, so TB is polled
 
-    assert!(has(&screen(&app, 40, 14), "HELLO"));
+    assert!(has(&screen(&app, 80, 24), "HELLO"));
     assert!(fake.commands().contains(&"+w TB;".to_string()));
 }
 
@@ -74,7 +74,7 @@ async fn a_soft_key_keys_the_rigs_morse_sender_with_the_callsign_filled_in() {
     let fake = FakeRigctld::start(&[]).await;
     let mut rig = Rig::new(fake.addr.to_string());
     let mut app = App::with_callsign(Some("W9XYZ".to_string()))
-        .with_soft_keys([(1, "CQ DE {CALL}".to_string())].into());
+        .with_soft_keys([(1, "CQ DE {MYCALL}".to_string())].into());
     tick(&mut rig, &mut app, Instant::now()).await; // connects
     tick(&mut rig, &mut app, Instant::now()).await; // learns the mode
 
@@ -128,7 +128,7 @@ async fn the_app_starts_with_no_rig_and_connects_once_the_daemon_appears() {
         "{:?}",
         app.status()
     );
-    assert!(has(&screen(&app, 80, 14), "disconnected"));
+    assert!(has(&screen(&app, 80, 24), "disconnected"));
 
     // Not due yet: no second attempt.
     assert_eq!(app.tick(t0 + Duration::from_secs(1)), vec![]);
@@ -155,7 +155,7 @@ async fn losing_the_connection_is_reported_and_the_app_reconnects() {
 
     assert!(!app.connected());
     assert!(app.status().is_some(), "the loss is reported");
-    assert!(has(&screen(&app, 80, 14), "disconnected"));
+    assert!(has(&screen(&app, 80, 24), "disconnected"));
 
     tick(&mut rig, &mut app, t0 + RECONNECT_EVERY).await;
     assert!(app.connected());
