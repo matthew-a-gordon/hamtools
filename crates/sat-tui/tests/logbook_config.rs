@@ -118,8 +118,10 @@ mod shared_config {
             path
         };
 
-        let (call, note) =
-            logging_callsign(Some(&write("ok.toml", "callsign = \"w1aw\"\n[kx3]\nx = = 1\n")));
+        let (call, note) = logging_callsign(Some(&write(
+            "ok.toml",
+            "callsign = \"w1aw\"\n[kx3]\nx = = 1\n",
+        )));
         assert_eq!(call.unwrap().as_str(), "W1AW");
         assert_eq!(note, None);
 
@@ -132,7 +134,10 @@ mod shared_config {
         assert!(call.is_none());
         assert!(note.is_some());
 
-        assert_eq!(logging_callsign(Some(&dir.join("missing.toml"))), (None, None));
+        assert_eq!(
+            logging_callsign(Some(&dir.join("missing.toml"))),
+            (None, None)
+        );
         assert_eq!(logging_callsign(None), (None, None));
     }
 

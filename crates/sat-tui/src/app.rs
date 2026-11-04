@@ -552,11 +552,11 @@ impl App {
             return;
         }
         let entry = LoggedContact {
-            time_on: form.started,
-            call: form.call.trim().to_uppercase(),
-            grid: form.grid.trim().to_uppercase(),
-            rst_sent: form.rst_sent.trim().to_string(),
-            rst_rcvd: form.rst_rcvd.trim().to_string(),
+            time_on: contact.start(),
+            call: contact.call().to_string(),
+            grid: contact.grid().unwrap_or_default().to_string(),
+            rst_sent: contact.rst_sent().unwrap_or_default().to_string(),
+            rst_rcvd: contact.rst_rcvd().unwrap_or_default().to_string(),
             satellite: sat_name,
         };
         self.status = Some(format!("logged {}", entry.call));

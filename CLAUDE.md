@@ -1,6 +1,6 @@
 # hamtools
 
-Cargo workspace: `rigctld-client`, `kx3-cw`, `sat-tui`. Keep dependencies minimal; justify heavy crates.
+Cargo workspace: `rigctld-client`, `kx3-cw`, `sat-tui`, `logbook`, `orbit`. Keep dependencies minimal; justify heavy crates.
 
 ## Commands
 - `nix develop` (or direnv) for the toolchain and `hamlib_4`

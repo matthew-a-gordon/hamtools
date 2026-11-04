@@ -4,7 +4,7 @@
 use std::collections::BTreeMap;
 
 use chrono::{DateTime, Utc};
-use logbook::{Contact, ContactError, ContactInput, Log, Mode, Sideband, satellite};
+use logbook::{Contact, ContactInput, Log, Mode, Sideband, satellite};
 use ratatui::crossterm::event::{KeyCode, KeyEvent};
 
 use crate::satnogs::RigMode;
@@ -139,7 +139,11 @@ impl ContactForm {
                 if matches!(self.field, Field::Call | Field::Grid) {
                     // Check before uppercasing: `\u{df}` uppercases to the ASCII "SS".
                     if !c.is_ascii() {
-                        let name = if self.field == Field::Call { "Call" } else { "Grid" };
+                        let name = if self.field == Field::Call {
+                            "Call"
+                        } else {
+                            "Grid"
+                        };
                         self.error = Some(format!("{name}: {c:?} is not ASCII"));
                         return FormEvent::Edited;
                     }
@@ -165,7 +169,8 @@ impl ContactForm {
         if self.call.trim().is_empty() {
             return Err("Call is required".to_string());
         }
-        let extras = satellite::extras(sat_name, self.tx_hz, self.rx_hz).map_err(describe)?;
+        let extras =
+            satellite::extras(sat_name, self.tx_hz, self.rx_hz).map_err(|e| e.to_string())?;
         Contact::new(ContactInput {
             call: self.call.clone(),
             grid: Some(self.grid.clone()),
@@ -174,19 +179,15 @@ impl ContactForm {
             rst_sent: Some(self.rst_sent.clone()),
             rst_rcvd: Some(self.rst_rcvd.clone()),
             start: self.started,
-            end: end.max(self.started),
+            end,
             freq_hz: self.tx_hz,
             mode: logbook_mode(self.tx_mode),
             own_grid: Some(own_grid),
             station_callsign: None,
             extras,
         })
-        .map_err(describe)
+        .map_err(|e| e.to_string())
     }
-}
-
-fn describe(e: ContactError) -> String {
-    e.to_string()
 }
 
 /// sat-tui's rig mode as `logbook`'s; `Other` is never needed here.

@@ -108,8 +108,6 @@ pub enum ContactError {
         band: &'static str,
     },
     InvalidGrid(LocatorError),
-    /// The end time is before the start time.
-    EndBeforeStart,
 }
 
 impl fmt::Display for ContactError {
@@ -135,7 +133,6 @@ impl fmt::Display for ContactError {
                 write!(f, "band {band} has no satellite mode letter")
             }
             ContactError::InvalidGrid(e) => e.fmt(f),
-            ContactError::EndBeforeStart => f.write_str("end time is before start time"),
         }
     }
 }
@@ -232,9 +229,6 @@ impl Contact {
             Some(g) => Some(validate_grid(g)?),
             None => None,
         };
-        if input.end < input.start {
-            return Err(ContactError::EndBeforeStart);
-        }
         let band = band_for_hz(input.freq_hz)
             .ok_or(ContactError::FrequencyOutsideBands(input.freq_hz))?
             .name;
@@ -420,12 +414,9 @@ mod tests {
     }
 
     #[test]
-    fn own_grid_and_time_order_are_validated() {
+    fn own_grid_is_validated() {
         let mut i = input();
         i.own_grid = Some("EN71".into());
         assert!(matches!(Contact::new(i), Err(ContactError::InvalidGrid(_))));
-        let mut i = input();
-        std::mem::swap(&mut i.start, &mut i.end);
-        assert_eq!(Contact::new(i), Err(ContactError::EndBeforeStart));
     }
 }
