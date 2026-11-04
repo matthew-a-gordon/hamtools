@@ -81,3 +81,17 @@ _Avoid_: Plugin, tab, mode screen
 **Soft key**:
 One of the six labelled F-key slots under the CW panel, each bound to a canned message that is sent as CW when pressed. Where the message is stored (the config file today, the radio's own message buffers later) is not part of the term.
 _Avoid_: Macro button, hotkey
+
+### Activities
+
+**Activity**:
+What the operator is setting out to do with the station, such as General operating, Satellite, SOTA or POTA. It chooses the screen layout, the Mode panels on offer, and the Contact fields and online lookups that apply. It is separate from the rig's radio mode, and a Rig may be unable to run some Activities.
+_Avoid_: Scenario, profile, workflow
+
+**Active rig**:
+The one Rig the app is currently controlling and showing in its strip. The operator can switch it from anywhere.
+_Avoid_: Current radio, selected rig
+
+**Role**:
+The part the operator plays within an Activity. SOTA and POTA each have two: **Activator** (at the summit or park, working whoever calls) and **Hunter** (working activators from elsewhere, found through spots). SOTA's screens label the second Role "chaser"; it is the same Role.
+_Avoid_: Spotter (a spotter posts spots, which this project does not do), mode, profile
