@@ -59,8 +59,16 @@ _Avoid_: Auto-tune, rig control
 ### Logging
 
 **Contact**:
-One two-way exchange with another station through a satellite, as recorded by the operator.
+One two-way exchange with another station, on the air or through a satellite, as recorded by the operator. A Contact worked from several references at once (an n-fer) is still one Contact.
 _Avoid_: QSO (except in ADIF field names), call, log entry
+
+**Reference**:
+The identifier of a summit (SOTA) or park (POTA) that a Contact is made from or with. "My reference" is where the operator is; "their reference" is where the other station is, and its presence is what makes a Contact summit-to-summit or park-to-park.
+_Avoid_: Ref (in prose), location
+
+**Activation tracker**:
+The running count toward an activation (4 distinct stations for SOTA, 10 Contacts for POTA) for the active Activation plan's reference and UTC day. It is derived from the Log each time and holds no state of its own.
+_Avoid_: Counter, score
 
 **Log**:
 The single append-only file holding every Contact, whatever the activity. Not a diagnostic log.
@@ -82,6 +90,10 @@ _Avoid_: Plugin, tab, mode screen
 One of the six labelled F-key slots under the CW panel, each bound to a canned message that is sent as CW when pressed. Where the message is stored (the config file today, the radio's own message buffers later) is not part of the term.
 _Avoid_: Macro button, hotkey
 
+**Soft key set**:
+A named group of up to six Soft key messages, for example a set for POTA activators. Messages may contain variables (such as my callsign or their reference) that are filled in when the key is pressed.
+_Avoid_: Macro set, keyer memory
+
 ### Activities
 
 **Activity**:
@@ -95,6 +107,10 @@ _Avoid_: Current radio, selected rig
 **Role**:
 The part the operator plays within an Activity. SOTA and POTA each have two: **Activator** (at the summit or park, working whoever calls) and **Hunter** (working activators from elsewhere, found through spots). SOTA's screens label the second Role "chaser"; it is the same Role.
 _Avoid_: Spotter (a spotter posts spots, which this project does not do), mode, profile
+
+**Chord**:
+A Ctrl-key combination that does an app-level thing (go to an Activity, open an overlay, quit) from anywhere, because text-entering areas such as the CW panel cannot capture it. Plain keys, by contrast, act only when no text-entering area has focus.
+_Avoid_: Shortcut, global hotkey
 
 **Rig**:
 A radio the app can control, reached through its own `rigctld` and described by a profile in the shared config (name, address, kind). The app knows two today, the KX3 and the FT-847.
