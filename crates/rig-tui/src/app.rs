@@ -13,11 +13,12 @@ use ratatui::Frame;
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::layout::Rect;
 
+use crate::activity::{Activity, ActivityCtx};
 use crate::config_dialog::{ConfigDialog, Outcome};
-use crate::cw::CwPanel;
+use crate::general::General;
 use crate::geocode::GeocodeResult;
-use crate::logging::{Logging, Snapshot, default_log_mode};
-use crate::panel::{LogDefaults, LogMode, ModePanel, PanelCommand, PanelCtx};
+use crate::logging::{Logging, Snapshot};
+use crate::panel::{LogDefaults, LogMode};
 use crate::rig::{Command, Feature, RigEvent, RigMode};
 
 /// How long to wait between attempts to reach `rigctld`. A starting value, untested on hardware.
@@ -99,10 +100,34 @@ impl Entry {
     }
 }
 
+/// The Activity context, built from disjoint fields so the Activity can be borrowed mutably
+/// alongside it.
+macro_rules! ctx {
+    ($self:ident) => {
+        ctx!($self, &[])
+    };
+    ($self:ident, $recent:expr) => {
+        ActivityCtx {
+            connected: $self.connected,
+            callsign: $self.callsign.as_deref(),
+            soft_keys: &$self.soft_keys,
+            rig_mode: $self.mode.as_ref().map(|r| &r.value.0),
+            fresh_mode: $self
+                .mode
+                .as_ref()
+                .filter(|r| $self.now.saturating_duration_since(r.at) <= STALE_AFTER)
+                .map(|r| &r.value.0),
+            recent: $recent,
+        }
+    };
+}
+
 pub struct App {
-    panels: Vec<Box<dyn ModePanel>>,
+    /// Every hosted Activity keeps its in-memory state; exactly one is in the foreground.
+    activities: Vec<Box<dyn Activity>>,
+    foreground: usize,
+    rig_name: String,
     overlay: Option<Box<dyn Overlay>>,
-    focus: Focus,
     connected: bool,
     now: Instant,
     utc: Option<SystemTime>,
@@ -143,9 +168,10 @@ impl App {
     /// An app with no rig yet: disconnected, strip focused, the CW panel registered.
     pub fn new() -> Self {
         Self {
-            panels: vec![Box::new(CwPanel::new())],
+            activities: vec![Box::new(General::new())],
+            foreground: 0,
+            rig_name: DEFAULT_RIG_ADDR.to_string(),
             overlay: None,
-            focus: Focus::Strip,
             connected: false,
             // Only the starting point for staleness; every tick replaces it.
             now: Instant::now(),
@@ -234,6 +260,30 @@ impl App {
         self.log_path.as_deref()
     }
 
+    /// Host another Activity (it stays in the background until [`App::set_foreground`]).
+    /// Returns its index.
+    pub fn host_activity(&mut self, activity: Box<dyn Activity>) -> usize {
+        self.activities.push(activity);
+        self.activities.len() - 1
+    }
+
+    /// Bring the Activity at `index` to the foreground. Out of range is ignored.
+    pub fn set_foreground(&mut self, index: usize) {
+        if index < self.activities.len() {
+            self.foreground = index;
+            self.entry = None;
+        }
+    }
+
+    /// The foreground Activity's name, as the shared strip shows it.
+    pub fn activity_name(&self) -> &'static str {
+        self.activities[self.foreground].name()
+    }
+
+    pub(crate) fn rig_name(&self) -> &str {
+        &self.rig_name
+    }
+
     pub fn rig_addr(&self) -> &str {
         &self.rig_addr
     }
@@ -258,6 +308,7 @@ impl App {
         match settings.rig_addr {
             Some(addr) if addr != self.rig_addr => {
                 self.rig_addr = addr.clone();
+                self.rig_name = addr.clone();
                 self.connected = false;
                 self.last_connect = None;
                 vec![Command::SetRigAddr(addr)]
@@ -447,15 +498,7 @@ impl App {
         self.current_log()?
             .check()
             .map_err(|e| format!("log: {e}"))?;
-        let (log_mode, defaults) = match self.active_panel().map(|i| &self.panels[i]) {
-            Some(panel) => (
-                panel
-                    .logbook_mode(&rig_mode)
-                    .or_else(|| default_log_mode(&rig_mode)),
-                panel.log_defaults(),
-            ),
-            None => (default_log_mode(&rig_mode), LogDefaults::default()),
-        };
+        let (log_mode, defaults) = self.activities[self.foreground].log_hints(&rig_mode);
         Ok(Snapshot {
             hz,
             rig_mode,
@@ -475,38 +518,44 @@ impl App {
         self.overlay = Some(overlay);
     }
 
-    /// The focus in effect: the panel's input line only while a panel that takes text is active.
+    /// The focus in effect: the Activity text area only while it has focus.
     pub fn focus(&self) -> Focus {
-        match self.active_panel() {
-            Some(i) if self.focus == Focus::Panel && self.panels[i].captures_text() => Focus::Panel,
-            _ => Focus::Strip,
+        if self.activities[self.foreground].text_focus(&ctx!(self)) {
+            Focus::Panel
+        } else {
+            Focus::Strip
         }
     }
 
-    /// The logbook mode the active panel maps the rig's mode to.
+    /// The logbook mode the foreground Activity maps the rig mode to.
     pub fn log_mode(&self) -> Option<LogMode> {
-        let panel = &self.panels[self.active_panel()?];
-        panel.logbook_mode(self.last_mode()?)
+        if !self.activities[self.foreground].has_panel(&ctx!(self)) {
+            return None;
+        }
+        self.activities[self.foreground]
+            .log_hints(self.last_mode()?)
+            .0
     }
 
-    /// Extra defaults the active panel contributes to a logged Contact.
+    /// Extra defaults the foreground Activity contributes to a logged Contact.
     pub fn log_defaults(&self) -> Option<LogDefaults> {
-        let panel = &self.panels[self.active_panel()?];
-        Some(panel.log_defaults())
+        if !self.activities[self.foreground].has_panel(&ctx!(self)) {
+            return None;
+        }
+        Some(
+            self.activities[self.foreground]
+                .log_hints(self.last_mode()?)
+                .1,
+        )
     }
 
-    pub(crate) fn panel_active(&self) -> bool {
-        self.active_panel().is_some()
+    pub(crate) fn activity_hint(&self) -> &'static str {
+        self.activities[self.foreground].hint(&ctx!(self))
     }
 
     /// The last mode the rig reported, however old: the panel stays put while the link is down.
     fn last_mode(&self) -> Option<&RigMode> {
         self.mode.as_ref().map(|r| &r.value.0)
-    }
-
-    fn active_panel(&self) -> Option<usize> {
-        let mode = self.last_mode()?;
-        self.panels.iter().position(|p| p.applies(mode))
     }
 
     pub fn on_key(&mut self, key: KeyEvent) -> Vec<Command> {
@@ -550,22 +599,17 @@ impl App {
         if self.entry.is_some() {
             return self.on_entry_key(key);
         }
-        let Some(index) = self.active_panel() else {
-            return self.on_strip_key(key, false);
-        };
-        let panel_key = matches!(key.code, KeyCode::F(1..=6)) || self.focus() == Focus::Panel;
-        if matches!(key.code, KeyCode::Esc | KeyCode::Tab) && self.focus() == Focus::Panel {
-            self.focus = Focus::Strip;
-            return Vec::new();
+        let ctx = ctx!(self);
+        if let Some(out) = self.activities[self.foreground].on_key(key, &ctx) {
+            if out.status.is_some() {
+                self.status = out.status;
+            }
+            return out.commands;
         }
-        if panel_key {
-            return self.on_panel_key(index, key);
-        }
-        let can_type = self.panels[index].captures_text();
-        self.on_strip_key(key, can_type)
+        self.on_strip_key(key)
     }
 
-    fn on_strip_key(&mut self, key: KeyEvent, panel_takes_text: bool) -> Vec<Command> {
+    fn on_strip_key(&mut self, key: KeyEvent) -> Vec<Command> {
         if key
             .modifiers
             .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT)
@@ -580,10 +624,6 @@ impl App {
                     &self.current_settings(),
                     &self.rig_addr,
                 ));
-                Vec::new()
-            }
-            KeyCode::Tab if panel_takes_text => {
-                self.focus = Focus::Panel;
                 Vec::new()
             }
             KeyCode::Char('f') => {
@@ -762,24 +802,6 @@ impl App {
         }]
     }
 
-    fn on_panel_key(&mut self, index: usize, key: KeyEvent) -> Vec<Command> {
-        let ctx = PanelCtx {
-            connected: self.connected,
-            callsign: self.callsign.as_deref(),
-            soft_keys: &self.soft_keys,
-            focused: self.focus == Focus::Panel,
-        };
-        let commands = self.panels[index].handle_key(key, &ctx);
-        let mut out = Vec::new();
-        for command in commands {
-            match command {
-                PanelCommand::Send(text) => out.push(Command::Send(text)),
-                PanelCommand::Status(text) => self.status = Some(text),
-            }
-        }
-        out
-    }
-
     pub fn on_rig(&mut self, event: RigEvent) {
         match event {
             RigEvent::Connected => {
@@ -798,9 +820,8 @@ impl App {
             RigEvent::Freq(hz) => self.freq = self.stamp(hz),
             RigEvent::Mode { mode, passband } => {
                 self.mode = self.stamp((mode, passband));
-                if self.active_panel().is_none() {
-                    self.focus = Focus::Strip;
-                }
+                let ctx = ctx!(self);
+                self.activities[self.foreground].on_mode(&ctx);
             }
             RigEvent::Vfo(vfo) => self.vfo = self.stamp(vfo),
             RigEvent::Split { enabled, tx_vfo } => self.split = self.stamp((enabled, tx_vfo)),
@@ -812,10 +833,7 @@ impl App {
             }
             RigEvent::SetFailed(why) | RigEvent::SendFailed(why) => self.status = Some(why),
             RigEvent::PanelReply { request, reply } => {
-                let Some(index) = self.active_panel() else {
-                    return;
-                };
-                match self.panels[index].on_reply(&request, reply) {
+                match self.activities[self.foreground].on_reply(&request, reply) {
                     Ok(()) => {
                         if self.poll_failed {
                             self.status = None;
@@ -839,11 +857,12 @@ impl App {
             let due = self
                 .last_connect
                 .is_none_or(|at| now.duration_since(at) >= RECONNECT_EVERY);
-            if !due {
-                return Vec::new();
+            let mut commands = self.tick_foreground(now);
+            if due {
+                self.last_connect = Some(now);
+                commands.insert(0, Command::Connect);
             }
-            self.last_connect = Some(now);
-            return vec![Command::Connect];
+            return commands;
         }
         let mut commands = Vec::new();
         if self
@@ -860,30 +879,21 @@ impl App {
             self.last_smeter = Some(now);
             commands.push(Command::PollSMeter);
         }
-        if let Some(index) = self.active_panel() {
-            commands.extend(
-                self.panels[index]
-                    .due_requests()
-                    .into_iter()
-                    .map(Command::Panel),
-            );
-        }
+        commands.extend(self.tick_foreground(now));
         commands
     }
 
+    /// Only the foreground Activity is ticked.
+    fn tick_foreground(&mut self, now: Instant) -> Vec<Command> {
+        let ctx = ctx!(self);
+        self.activities[self.foreground].on_tick(now, &ctx)
+    }
+
     pub(crate) fn render_body(&self, frame: &mut Frame, area: Rect) {
-        match self.active_panel() {
-            Some(index) => {
-                let ctx = PanelCtx {
-                    connected: self.connected,
-                    callsign: self.callsign.as_deref(),
-                    soft_keys: &self.soft_keys,
-                    focused: self.focus() == Focus::Panel,
-                };
-                self.panels[index].render(frame, area, &ctx);
-            }
-            None => crate::ui::render_no_panel(self, frame, area),
-        }
+        // Room inside the border, less the heading line.
+        let recent = self.recent_contacts(usize::from(area.height.saturating_sub(3)));
+        let ctx = ctx!(self, &recent);
+        self.activities[self.foreground].render(frame, area, &ctx);
     }
 
     pub(crate) fn render_overlay(&self, frame: &mut Frame, area: Rect) {
