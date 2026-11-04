@@ -16,6 +16,7 @@ pub mod layout;
 mod logging;
 mod palette;
 mod panel;
+mod plans;
 pub mod refdata;
 pub mod reference;
 mod rig;

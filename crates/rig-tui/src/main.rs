@@ -1,12 +1,17 @@
 use std::error::Error;
 use std::path::PathBuf;
 use std::process::ExitCode;
+use std::sync::Arc;
 use std::sync::mpsc::{self, Sender};
 use std::time::{Duration, Instant, SystemTime};
 
 use ratatui::DefaultTerminal;
 use ratatui::crossterm::event::{self, Event, KeyEventKind};
 use rig_tui::geocode::{GeocodeResult, Geocoder};
+use rig_tui::refdata::ReferenceData;
+use rig_tui::reference::{
+    Limits, ReferenceClient, SystemClock, UreqTransport, default_cache_dir, user_agent,
+};
 use rig_tui::{App, Command, Config, Rig, config_path, default_log_path, render};
 use tokio::runtime::Runtime;
 
@@ -64,7 +69,7 @@ fn try_main() -> Result<(), Box<dyn Error>> {
         .enable_all()
         .build()?;
     let mut rig = Rig::new(addr.clone());
-    let app = App::with_callsign(config.callsign)
+    let mut app = App::with_callsign(config.callsign.clone())
         .with_soft_keys(config.soft_keys)
         .with_softkey_sets(config.softkey_sets)
         .with_locator(config.locator)
@@ -75,6 +80,18 @@ fn try_main() -> Result<(), Box<dyn Error>> {
         ))
         .with_rig_addr(addr)
         .with_config_path(config_arg.or(default_path));
+    // Starting the client makes no request; fetching happens on saving a plan or an explicit
+    // refresh (ADR 0003).
+    if let Some(dir) = default_cache_dir() {
+        let client = Arc::new(ReferenceClient::start(
+            Arc::new(UreqTransport),
+            Arc::new(SystemClock::new()),
+            Limits::default(),
+            user_agent(config.callsign.as_deref()),
+            dir.clone(),
+        ));
+        app = app.with_reference_data(Arc::new(ReferenceData::new(client, dir)));
+    }
     let geocoder = Geocoder::new();
 
     let mut terminal = ratatui::init();

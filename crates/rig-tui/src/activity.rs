@@ -13,7 +13,7 @@ use ratatui::layout::Rect;
 
 use crate::keys::KeyEntry;
 use crate::layout::Panes;
-use crate::panel::{LogDefaults, LogMode};
+use crate::panel::{LogDefaults, LogMode, Role};
 use crate::rig::{Command, RigMode};
 use crate::softkeys::{Live, ResolvedKey};
 
@@ -88,6 +88,11 @@ pub trait Activity {
     fn unavailable(&self) -> Option<String> {
         None
     }
+
+    /// The active Activation plan changed. `role` is the Activator Role of the plan's Activity
+    /// (`Role::General` when no plan is active) and `my_refs` its references, first primary.
+    /// The Contact form's own references (`LogDefaults::my_refs`) come from here.
+    fn set_plan(&mut self, _role: Role, _my_refs: &[String]) {}
 
     /// One line for each thing quitting now would lose (unsent CW input, active Doppler
     /// tracking). Empty when nothing would be lost.

@@ -17,6 +17,10 @@ use crate::style::dim;
 pub(crate) enum Target {
     /// Bring the hosted Activity at this index to the foreground.
     Activity(usize),
+    /// Launch the Activation plan at this index of the stored list.
+    Plan(usize),
+    /// Open the plan manager (create, edit, duplicate, delete).
+    ManagePlans,
 }
 
 #[derive(Debug, Clone)]
