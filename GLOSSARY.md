@@ -109,3 +109,7 @@ _Avoid_: Band map, frequency chart
 **Privilege**:
 What the operator's license class permits at a given frequency. The app shows it as a soft warning and never uses it to block tuning or any other action.
 _Avoid_: Permission, allowed band, lockout
+
+**Activation plan**:
+A saved intention to activate one reference (or several, for an n-fer) on a given day as an Activator, with the bands, modes and Soft key set to use. It prefills the Contact form and loads its Soft keys when launched. It is never a record of what happened (that is the Log).
+_Avoid_: Schedule, trip, itinerary
