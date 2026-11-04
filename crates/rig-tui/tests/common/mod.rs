@@ -30,6 +30,21 @@ pub struct RigState {
     pub freq: u64,
     pub mode: String,
     pub passband: i64,
+    pub vfo: String,
+    pub split: bool,
+    pub tx_vfo: String,
+    /// What `i` reports. Scripted: whether a real KX3 reports the transmit VFO's frequency here
+    /// is the open question, untested on hardware.
+    pub tx_freq: u64,
+    /// dB relative to S9, as `l STRENGTH` reports it.
+    pub strength: i32,
+    pub ptt: bool,
+    /// Answer `\get_vfo` and `\set_vfo` with "function not available" (-11).
+    pub no_vfo: bool,
+    /// Answer `s`, `S`, `i` and `I` with "function not available" (-11).
+    pub no_split: bool,
+    /// Refuse `F` with a generic error (-1).
+    pub refuse_set_freq: bool,
 }
 
 impl Default for RigState {
@@ -38,6 +53,15 @@ impl Default for RigState {
             freq: 14_074_000,
             mode: "CW".to_string(),
             passband: 500,
+            vfo: "VFOA".to_string(),
+            split: false,
+            tx_vfo: "VFOA".to_string(),
+            tx_freq: 0,
+            strength: -54,
+            ptt: false,
+            no_vfo: false,
+            no_split: false,
+            refuse_set_freq: false,
         }
     }
 }
@@ -83,9 +107,48 @@ impl FakeRigctld {
                         format!("send_morse: {text}\nRPRT 0\n")
                     } else if line == "+f" {
                         format!("get_freq:\nFrequency: {}\nRPRT 0\n", state.freq)
+                    } else if line.starts_with("+F ") && state.refuse_set_freq {
+                        "RPRT -1\n".to_string()
                     } else if let Some(hz) = line.strip_prefix("+F ") {
                         state.freq = hz.parse().unwrap();
                         format!("set_freq: {hz}\nRPRT 0\n")
+                    } else if line.starts_with("+\\get_vfo") || line.starts_with("+\\set_vfo") {
+                        if state.no_vfo {
+                            "RPRT -11\n".to_string()
+                        } else if let Some(vfo) = line.strip_prefix("+\\set_vfo ") {
+                            state.vfo = vfo.to_string();
+                            format!("set_vfo: {vfo}\nRPRT 0\n")
+                        } else {
+                            format!("get_vfo:\nVFO: {}\nRPRT 0\n", state.vfo)
+                        }
+                    } else if matches!(line.as_str(), "+s" | "+i")
+                        || line.starts_with("+S ")
+                        || line.starts_with("+I ")
+                    {
+                        if state.no_split {
+                            "RPRT -11\n".to_string()
+                        } else if line == "+s" {
+                            format!(
+                                "get_split_vfo:\nSplit: {}\nTX VFO: {}\nRPRT 0\n",
+                                u8::from(state.split),
+                                state.tx_vfo
+                            )
+                        } else if line == "+i" {
+                            format!("get_split_freq:\nTX Frequency: {}\nRPRT 0\n", state.tx_freq)
+                        } else if let Some(args) = line.strip_prefix("+S ") {
+                            let (on, vfo) = args.split_once(' ').unwrap();
+                            state.split = on == "1";
+                            state.tx_vfo = vfo.to_string();
+                            format!("set_split_vfo: {args}\nRPRT 0\n")
+                        } else {
+                            let hz = line.strip_prefix("+I ").unwrap();
+                            state.tx_freq = hz.parse().unwrap();
+                            format!("set_split_freq: {hz}\nRPRT 0\n")
+                        }
+                    } else if line == "+t" {
+                        format!("get_ptt:\nPTT: {}\nRPRT 0\n", u8::from(state.ptt))
+                    } else if line == "+l STRENGTH" {
+                        format!("get_level: STRENGTH\n{}\nRPRT 0\n", state.strength)
                     } else if line == "+m" {
                         format!(
                             "get_mode:\nMode: {}\nPassband: {}\nRPRT 0\n",
