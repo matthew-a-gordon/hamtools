@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["crates/orbit", "crates/rigctld-client", "crates/kx3-cw", "crates/sat-tui"]
+members = ["crates/orbit", "crates/rigctld-client", "crates/kx3-cw", "crates/sat-tui", "crates/logbook"]
 
 [workspace.package]
 version = "0.1.0"
