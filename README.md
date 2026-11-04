@@ -41,3 +41,7 @@ sat-tui --grid EN71 --rig 127.0.0.1:4533
 The pass list shows each pass's start, end, length and peak elevation; passes shorter than `short_pass_secs` (default 180) are marked `!`. While tracking, the live panel counts down to the tracked pass's AOS and LOS.
 
 Keys: `j`/`k` or arrows move, `Tab` switches pass list and transmitter picker, `t` starts or stops tracking, `[` `]` nudge the passband position by 1 kHz and `{` `}` by 100 Hz, `s` switches the radio's SAT mode off, `m` shows transmitters the radio cannot demodulate, `r` refreshes data, `q` quits. It never keys the transmitter; you press PTT. See `sat-tui.example.toml`.
+
+### Logging Contacts (untested on hardware)
+
+While tracking with a connected rig, `l` opens a form prefilled with the satellite, modes, the frequencies last sent to the radio (uplink as `FREQ`, downlink as `FREQ_RX`) and the start time. Type the other station's call (required), then Enter saves it to the Log, an append-only ADI file; Esc cancels, Tab and Shift-Tab move between fields. `L` lists this session's Contacts. Set `callsign` in the shared `config.toml` to enable it; see `sat-tui.example.toml` for the `[logbook]` section and `--log PATH`. Nothing here can key the transmitter.

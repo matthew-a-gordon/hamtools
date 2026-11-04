@@ -7,8 +7,8 @@ use chrono::{DateTime, Duration, Utc};
 use orbit::{Observer, Pass, PropagationError, Satellite};
 use ratatui::crossterm::event::{KeyCode, KeyEvent};
 
-pub use crate::logging::{ContactForm, Field, LoggedContact, Logging};
 use crate::logging::FormEvent;
+pub use crate::logging::{ContactForm, Field, LoggedContact, Logging};
 use crate::satnogs::{Plan, Transmitter};
 use crate::tracker::{RigCommand, STEP_HZ, Tracker, doppler_range_rate};
 
@@ -571,7 +571,9 @@ impl App {
         let oldest = self.session.len().saturating_sub(1);
         match key.code {
             KeyCode::Char('L') | KeyCode::Esc => self.session_scroll = None,
-            KeyCode::Up | KeyCode::Char('k') => self.session_scroll = Some((scroll + 1).min(oldest)),
+            KeyCode::Up | KeyCode::Char('k') => {
+                self.session_scroll = Some((scroll + 1).min(oldest))
+            }
             KeyCode::Down | KeyCode::Char('j') => {
                 self.session_scroll = Some(scroll.saturating_sub(1));
             }

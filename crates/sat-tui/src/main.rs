@@ -6,13 +6,14 @@ use std::sync::mpsc::{self, Receiver, Sender};
 use std::time::{Duration, Instant};
 
 use chrono::Utc;
+use logbook::{Callsign, Log};
 use orbit::{Observer, parse_tles};
 use ratatui::DefaultTerminal;
 use ratatui::crossterm::event::{self, Event, KeyEventKind};
 use rigctld_client::Client;
-use sat_tui::app::{App, Command, Settings};
+use sat_tui::app::{App, Command, Logging, Settings};
 use sat_tui::cache::{Cache, Dataset, Decision, decide, tles_stale};
-use sat_tui::config::{Config, config_path};
+use sat_tui::config::{Config, config_path, load_shared_callsign, log_path, shared_config_path};
 use sat_tui::fetch::Fetcher;
 use sat_tui::observer::{Spec, resolve};
 use sat_tui::rig::apply;
@@ -22,9 +23,12 @@ use tokio::runtime::Runtime;
 
 const USAGE: &str =
     "usage: sat-tui [--config PATH] [--rig ADDR] [--grid GRID | --lat DEG --lon DEG] [--alt METRES]
+                [--log PATH]
 
 Needs no rig: without one it is a pass predictor. Position: command line, then the config file,
-then a town-level default. Config defaults to $XDG_CONFIG_HOME/hamtools/sat-tui.toml.";
+then a town-level default. Config defaults to $XDG_CONFIG_HOME/hamtools/sat-tui.toml.
+Contacts are logged (l) to --log, else [logbook] path, else $XDG_DATA_HOME/hamtools/log.adi;
+the callsign comes from the shared $XDG_CONFIG_HOME/hamtools/config.toml.";
 
 const TICK: Duration = Duration::from_secs(1);
 const RIG_TIMEOUT: Duration = Duration::from_secs(2);
@@ -45,6 +49,7 @@ fn main() -> ExitCode {
 struct Args {
     config: Option<PathBuf>,
     rig: Option<String>,
+    log: Option<PathBuf>,
     observer: Spec,
 }
 
@@ -52,6 +57,7 @@ fn parse_args() -> Result<Option<Args>, Box<dyn Error>> {
     let mut args = Args {
         config: None,
         rig: None,
+        log: None,
         observer: Spec::default(),
     };
     let mut it = std::env::args().skip(1);
@@ -64,6 +70,7 @@ fn parse_args() -> Result<Option<Args>, Box<dyn Error>> {
             }
             "--config" => args.config = Some(value("--config")?.into()),
             "--rig" => args.rig = Some(value("--rig")?),
+            "--log" => args.log = Some(value("--log")?.into()),
             "--grid" => args.observer.grid = Some(value("--grid")?),
             "--lat" => args.observer.lat_deg = Some(value("--lat")?.parse()?),
             "--lon" => args.observer.lon_deg = Some(value("--lon")?.parse()?),
@@ -86,7 +93,8 @@ fn cache_dir() -> Option<PathBuf> {
 }
 
 /// Build the app from whatever the cache holds (nothing is fine: the pass list is just empty).
-fn build_app(cache: &Cache, config: &Config, observer: Observer) -> App {
+fn build_app(ctx: &Context) -> App {
+    let (cache, config, observer) = (&ctx.cache, &ctx.config, ctx.observer);
     let sats = cache
         .load(Dataset::Tles)
         .ok()
@@ -99,7 +107,7 @@ fn build_app(cache: &Cache, config: &Config, observer: Observer) -> App {
         .flatten()
         .and_then(|c| parse_transmitters(&c.body).ok())
         .unwrap_or_default();
-    App::new(
+    let mut app = App::new(
         sats,
         transmitters,
         observer,
@@ -110,7 +118,14 @@ fn build_app(cache: &Cache, config: &Config, observer: Observer) -> App {
             short_pass_secs: config.short_pass_secs,
         },
         Utc::now(),
-    )
+    );
+    app.set_logging(ctx.logging.as_ref().map(|setup| {
+        let mut logging = Logging::new(Log::new(&setup.path, setup.callsign.clone()));
+        logging.grid_override = config.logbook.grid.clone();
+        logging.sat_names = config.logbook.satellites.clone();
+        logging
+    }));
+    app
 }
 
 /// Download `datasets` on a background thread, reporting each outcome on `tx`.
@@ -154,6 +169,13 @@ struct Context {
     config: Config,
     observer: Observer,
     rig_addr: String,
+    /// `None` disables logging (no callsign).
+    logging: Option<LoggingSetup>,
+}
+
+struct LoggingSetup {
+    path: PathBuf,
+    callsign: Callsign,
 }
 
 fn try_main() -> Result<(), Box<dyn Error>> {
@@ -169,12 +191,29 @@ fn try_main() -> Result<(), Box<dyn Error>> {
     let cache_dir =
         cache_dir().ok_or("cannot find a cache directory (set HOME or XDG_CACHE_HOME)")?;
     let rig_addr = args.rig.clone().unwrap_or_else(|| config.rig_addr.clone());
+    let callsign = load_shared_callsign(
+        shared_config_path(
+            std::env::var("XDG_CONFIG_HOME").ok().as_deref(),
+            std::env::var("HOME").ok().as_deref(),
+        )
+        .as_deref(),
+    )?;
+    let path = log_path(
+        args.log.as_deref(),
+        config.logbook.path.as_deref(),
+        std::env::var("XDG_DATA_HOME").ok().as_deref(),
+        std::env::var("HOME").ok().as_deref(),
+    );
+    let logging = callsign
+        .zip(path)
+        .map(|(callsign, path)| LoggingSetup { path, callsign });
     let ctx = Context {
         cache: Cache::new(cache_dir.clone()),
         cache_dir,
         config,
         observer,
         rig_addr,
+        logging,
     };
 
     let rt = tokio::runtime::Builder::new_current_thread()
@@ -187,7 +226,7 @@ fn try_main() -> Result<(), Box<dyn Error>> {
 }
 
 fn run(terminal: &mut DefaultTerminal, rt: &Runtime, ctx: &Context) -> Result<(), Box<dyn Error>> {
-    let mut app = build_app(&ctx.cache, &ctx.config, ctx.observer);
+    let mut app = build_app(ctx);
     let (tx, rx): (_, Receiver<_>) = mpsc::channel();
     let mut fetching = 0usize;
     let mut rebuild_pending = false;
@@ -232,6 +271,8 @@ fn run(terminal: &mut DefaultTerminal, rt: &Runtime, ctx: &Context) -> Result<()
             tles_stale: tle.fetched_at.is_some_and(|t| tles_stale(t, now)),
             rig: rig_status.clone(),
         };
+        app.set_clock(now);
+        app.set_rig_live(client.is_some());
         terminal.draw(|frame| render(&app, &footer, frame))?;
 
         if event::poll(Duration::from_millis(100))?
@@ -288,7 +329,9 @@ fn run(terminal: &mut DefaultTerminal, rt: &Runtime, ctx: &Context) -> Result<()
         }
         let due = last_rebuild.elapsed() > REBUILD_EVERY;
         if (rebuild_pending || due) && app.tracking().is_none() {
-            app = build_app(&ctx.cache, &ctx.config, ctx.observer);
+            let session = app.take_session();
+            app = build_app(ctx);
+            app.restore_session(session);
             rebuild_pending = false;
             last_rebuild = Instant::now();
         }

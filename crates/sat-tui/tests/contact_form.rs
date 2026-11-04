@@ -113,7 +113,11 @@ mod opening {
         press(&mut app, KeyCode::Char('l'));
 
         assert!(app.form().is_none());
-        assert!(app.status().unwrap().contains("tracking"), "{:?}", app.status());
+        assert!(
+            app.status().unwrap().contains("tracking"),
+            "{:?}",
+            app.status()
+        );
     }
 
     #[test]
@@ -281,7 +285,10 @@ mod editing {
 
         let form = app.form().expect("still open");
         let error = form.error.as_deref().unwrap();
-        assert!(error.contains("NAME") && error.contains('\u{e9}'), "{error}");
+        assert!(
+            error.contains("NAME") && error.contains('\u{e9}'),
+            "{error}"
+        );
         assert_eq!(form.name, "Jos\u{e9}");
         assert!(!path.exists());
     }
@@ -354,7 +361,10 @@ mod saving {
         press(&mut app, KeyCode::Enter);
 
         let adi = std::fs::read_to_string(&path).unwrap();
-        assert!(adi.contains(&adif_field("MY_GRIDSQUARE", "EN71DQ")), "{adi}");
+        assert!(
+            adi.contains(&adif_field("MY_GRIDSQUARE", "EN71DQ")),
+            "{adi}"
+        );
         assert!(adi.contains(&adif_field("SAT_NAME", "ISS")), "{adi}");
     }
 
@@ -379,7 +389,10 @@ mod saving {
 
         press(&mut app, KeyCode::Enter);
         let adi = std::fs::read_to_string(&path).unwrap();
-        assert!(adi.contains(&adif_field("FREQ_RX", &mhz(rx_hz(&sent)))), "{adi}");
+        assert!(
+            adi.contains(&adif_field("FREQ_RX", &mhz(rx_hz(&sent)))),
+            "{adi}"
+        );
         assert!(adi.contains(&adif_field("TIME_OFF", "131800")), "{adi}");
     }
 

@@ -20,3 +20,16 @@ grid = "EN71"
 # lat_deg = 41.67
 # lon_deg = -85.71
 alt_m = 250.0
+
+# Contact logging (untested on hardware). The callsign comes from `callsign` in the shared
+# ~/.config/hamtools/config.toml; without it logging stays off.
+[logbook]
+# Where the Log lives; --log PATH wins. Default: $XDG_DATA_HOME/hamtools/log.adi,
+# else ~/.local/share/hamtools/log.adi.
+# path = "/home/you/hamtools/log.adi"
+# Your own 6-character grid, used verbatim instead of the one derived from [observer].
+# grid = "EN71DQ"
+
+# SAT_NAME to write, per satellite name as shown in the UI.
+# [logbook.satellites]
+# "ISS (ZARYA)" = "ISS"
