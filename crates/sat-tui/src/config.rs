@@ -26,11 +26,10 @@ pub struct Config {
     pub logbook: LogbookConfig,
 }
 
-/// The `[logbook]` section. The callsign is not here: it comes from the shared config.
+/// The `[logbook]` section. The callsign and the Log path are not here: they come from the
+/// shared config.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct LogbookConfig {
-    /// Where the Log lives, if the file says (see [`log_path`]).
-    pub path: Option<PathBuf>,
     /// Own locator, used verbatim instead of the observer's.
     pub grid: Option<Grid>,
     /// Satellite name as shown in the UI, to the name written as `SAT_NAME`.
@@ -79,7 +78,6 @@ struct Raw {
 #[derive(Deserialize, Default)]
 #[serde(deny_unknown_fields)]
 struct RawLogbook {
-    path: Option<PathBuf>,
     grid: Option<String>,
     #[serde(default)]
     satellites: BTreeMap<String, String>,
@@ -160,7 +158,6 @@ impl Config {
                 alt_m: raw.observer.alt_m,
             },
             logbook: LogbookConfig {
-                path: raw.logbook.path,
                 grid,
                 satellites: raw.logbook.satellites,
             },
@@ -195,7 +192,8 @@ pub fn config_path(xdg_config_home: Option<&str>, home: Option<&str>) -> Option<
 }
 
 /// The config shared with the other tools: `$XDG_CONFIG_HOME/hamtools/config.toml`, falling back
-/// to `$HOME/.config/hamtools/config.toml`. sat-tui reads only `callsign` from it.
+/// to `$HOME/.config/hamtools/config.toml`. sat-tui reads only the callsign, Locator and Log
+/// path from it.
 pub fn shared_config_path(xdg_config_home: Option<&str>, home: Option<&str>) -> Option<PathBuf> {
     let base = match xdg_config_home.filter(|dir| !dir.is_empty()) {
         Some(dir) => PathBuf::from(dir),
@@ -204,55 +202,39 @@ pub fn shared_config_path(xdg_config_home: Option<&str>, home: Option<&str>) -> 
     Some(base.join("hamtools").join("config.toml"))
 }
 
-#[derive(Deserialize, Default)]
-struct RawShared {
-    callsign: Option<String>,
+/// What sat-tui takes from the shared config, read through `hamtools-config` (which owns the
+/// schema).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Shared {
+    pub callsign: Option<Callsign>,
+    /// The operator's Locator: the position source after the flags and `[observer]`.
+    pub locator: Option<Grid>,
+    /// `[logbook] path`: where the shared Log lives.
+    pub log_path: Option<PathBuf>,
 }
 
-/// The operator's callsign from the shared config's text. Everything else in it (the KX3 and
-/// macro sections) belongs to other tools and is ignored.
-pub fn shared_callsign(text: &str) -> Result<Option<Callsign>, ConfigError> {
-    let raw: RawShared = match toml::from_str(text) {
-        Ok(raw) => raw,
-        Err(first) => {
-            // `callsign` is a top-level key, so it lives above the first table header. A TOML
-            // error in another tool's section must not cost the operator logging.
-            let top: String = text
-                .split_inclusive('\n')
-                .take_while(|l| !l.trim_start().starts_with('['))
-                .collect();
-            toml::from_str(&top).map_err(|_| ConfigError(first.to_string()))?
-        }
-    };
-    raw.callsign
-        .map(|c| Callsign::new(&c).map_err(|e| ConfigError(e.to_string())))
-        .transpose()
-}
-
-/// Read the callsign from the shared config file; a missing file means no callsign.
-pub fn load_shared_callsign(path: Option<&Path>) -> Result<Option<Callsign>, ConfigError> {
+/// Read the shared config without ever failing. A missing file (or `None`) is all defaults; an
+/// invalid or unreadable one is defaults plus a note for the status line saying why logging is
+/// off.
+pub fn load_shared(path: Option<&Path>) -> (Shared, Option<String>) {
     let Some(path) = path else {
-        return Ok(None);
+        return (Shared::default(), None);
     };
-    match std::fs::read_to_string(path) {
-        Ok(text) => {
-            shared_callsign(&text).map_err(|e| ConfigError(format!("{}: {}", path.display(), e.0)))
+    match hamtools_config::ConfigFile::load(path) {
+        Ok(file) => {
+            let s = file.settings();
+            let shared = Shared {
+                callsign: s.callsign.clone(),
+                locator: s.locator.clone(),
+                log_path: s.log_path.clone(),
+            };
+            (shared, None)
         }
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
-        Err(e) => Err(ConfigError(format!("{}: {e}", path.display()))),
+        Err(e) => (Shared::default(), Some(format!("logging off: {e}"))),
     }
 }
 
-/// The callsign for logging, never an error: a missing file or callsign is `(None, None)`, and
-/// an invalid callsign or unreadable file is `(None, Some(why))` for the status line.
-pub fn logging_callsign(path: Option<&Path>) -> (Option<Callsign>, Option<String>) {
-    match load_shared_callsign(path) {
-        Ok(call) => (call, None),
-        Err(e) => (None, Some(format!("logging off: {}", e.0))),
-    }
-}
-
-/// Where the Log lives: `--log`, else `[logbook] path`, else `$XDG_DATA_HOME/hamtools/log.adi`,
+/// Where the Log lives: `--log`, else the shared config's `[logbook] path`, else `$XDG_DATA_HOME/hamtools/log.adi`,
 /// falling back to `$HOME/.local/share/hamtools/log.adi`.
 pub fn log_path(
     cli: Option<&Path>,
