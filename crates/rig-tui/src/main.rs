@@ -67,6 +67,7 @@ fn try_main() -> Result<(), Box<dyn Error>> {
     let app = App::with_callsign(config.callsign)
         .with_soft_keys(config.soft_keys)
         .with_locator(config.locator)
+        .with_license_class(config.license_class)
         .with_log_path(config.log_path)
         .with_default_log_path(default_log_path(
             std::env::var("XDG_DATA_HOME").ok().as_deref(),

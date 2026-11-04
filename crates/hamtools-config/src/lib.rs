@@ -17,6 +17,7 @@
 //! callsign = "W1AW"
 //! [station]
 //! locator = "EN71DQ"      # 6 characters; latitude and longitude are never stored
+//! license_class = "general"  # technician, general, extra, advanced, novice; no default
 //! [logbook]
 //! path = "/home/me/log.adi"
 //! [rig]                   # `[kx3]` is read as an alias
@@ -27,6 +28,8 @@
 //!
 //! Unknown keys are [`Warning`]s, never errors and never dropped; a wrong value for a known key
 //! is a [`ConfigError::Invalid`] naming the key.
+
+pub mod bandplan;
 
 use std::collections::BTreeMap;
 use std::fmt;
@@ -39,6 +42,49 @@ use std::time::SystemTime;
 pub use logbook::{Callsign, Grid};
 use toml_edit::{Document, DocumentMut, Item, Table, Value};
 
+/// The operator's US license class. Runtime config with no default: the app never guesses it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum LicenseClass {
+    Technician,
+    General,
+    Extra,
+    Advanced,
+    Novice,
+}
+
+impl LicenseClass {
+    pub const ALL: [LicenseClass; 5] = [
+        LicenseClass::Technician,
+        LicenseClass::General,
+        LicenseClass::Extra,
+        LicenseClass::Advanced,
+        LicenseClass::Novice,
+    ];
+
+    /// The lowercase name used in the config file.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            LicenseClass::Technician => "technician",
+            LicenseClass::General => "general",
+            LicenseClass::Extra => "extra",
+            LicenseClass::Advanced => "advanced",
+            LicenseClass::Novice => "novice",
+        }
+    }
+
+    /// Parse a class name, ignoring case and surrounding space.
+    pub fn parse(text: &str) -> Option<Self> {
+        let text = text.trim().to_ascii_lowercase();
+        Self::ALL.into_iter().find(|c| c.as_str() == text)
+    }
+}
+
+impl fmt::Display for LicenseClass {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
 /// The typed view of the file. `None` and an absent macro mean "not set".
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Settings {
@@ -46,6 +92,8 @@ pub struct Settings {
     /// The operator's 6-character Locator.
     pub locator: Option<Grid>,
     pub log_path: Option<PathBuf>,
+    /// `station.license_class`; no default.
+    pub license_class: Option<LicenseClass>,
     /// `host:port` of the rigctld to talk to.
     pub rig_addr: Option<String>,
     /// Soft key text for F1..=F6, uppercase, may contain `{CALL}`.
@@ -386,15 +434,17 @@ fn write_atomic(path: &Path, text: &str) -> Result<(), SaveError> {
 enum Field {
     Callsign,
     Locator,
+    LicenseClass,
     LogPath,
     RigAddr,
     Macro(u8),
 }
 
 impl Field {
-    const ALL: [Field; 10] = [
+    const ALL: [Field; 11] = [
         Field::Callsign,
         Field::Locator,
+        Field::LicenseClass,
         Field::LogPath,
         Field::RigAddr,
         Field::Macro(1),
@@ -409,6 +459,7 @@ impl Field {
         match self {
             Field::Callsign => "callsign".into(),
             Field::Locator => "station.locator".into(),
+            Field::LicenseClass => "station.license_class".into(),
             Field::LogPath => "logbook.path".into(),
             Field::RigAddr => "rig.addr".into(),
             Field::Macro(n) => format!("macros.F{n}"),
@@ -420,6 +471,7 @@ impl Field {
         match self {
             Field::Callsign => s.callsign.as_ref().map(|c| c.as_str().to_string()),
             Field::Locator => s.locator.as_ref().map(|g| g.as_str().to_string()),
+            Field::LicenseClass => s.license_class.map(|c| c.as_str().to_string()),
             Field::LogPath => s
                 .log_path
                 .as_ref()
@@ -434,6 +486,7 @@ impl Field {
         match self {
             Field::Callsign => put(doc.as_table_mut(), "callsign", value),
             Field::Locator => put(table(doc, "station"), "locator", value),
+            Field::LicenseClass => put(table(doc, "station"), "license_class", value),
             Field::LogPath => put(table(doc, "logbook"), "path", value),
             Field::RigAddr => {
                 // Patch where the address lives: `[rig]` wins, then the `[kx3]` alias.
@@ -564,6 +617,19 @@ fn read_settings_lenient(root: &Table) -> (Settings, Vec<ConfigError>) {
         Ok(())
     })());
     keep((|| {
+        if let Some(item) = sub_table(root, "station")?.and_then(|t| t.get("license_class")) {
+            s.license_class = Some(
+                LicenseClass::parse(string(item, "station.license_class")?).ok_or_else(|| {
+                    invalid(
+                        "station.license_class",
+                        "expected technician, general, extra, advanced or novice",
+                    )
+                })?,
+            );
+        }
+        Ok(())
+    })());
+    keep((|| {
         if let Some(item) = sub_table(root, "logbook")?.and_then(|t| t.get("path")) {
             let path = string(item, "logbook.path")?.trim();
             if path.is_empty() {
@@ -663,7 +729,7 @@ pub fn load_lenient(path: &Path) -> Result<(Settings, Vec<ConfigError>), ConfigE
 }
 
 const KNOWN: [(&str, &[&str]); 5] = [
-    ("station", &["locator"]),
+    ("station", &["locator", "license_class"]),
     ("logbook", &["path"]),
     ("rig", &["addr"]),
     ("kx3", &["addr"]),

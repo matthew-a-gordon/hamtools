@@ -66,4 +66,10 @@ pub trait Activity {
     fn hint(&self, ctx: &ActivityCtx) -> &'static str;
 
     fn render(&self, frame: &mut Frame, area: Rect, ctx: &ActivityCtx);
+
+    /// Why tuning from outside this Activity (the band plan modal) must be refused right now:
+    /// `Some("Doppler tracking")` while Satellite is correcting the dial itself.
+    fn tuning_blocked(&self) -> Option<&'static str> {
+        None
+    }
 }

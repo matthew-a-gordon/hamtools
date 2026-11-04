@@ -5,6 +5,7 @@
 
 mod activity;
 mod app;
+mod bandplan;
 mod config;
 mod config_dialog;
 mod cw;

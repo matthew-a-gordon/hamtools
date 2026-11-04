@@ -3,7 +3,7 @@
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
-use hamtools_config::{ConfigError, ConfigFile, Warning};
+use hamtools_config::{ConfigError, ConfigFile, LicenseClass, Warning};
 
 const DEFAULT_ADDR: &str = "127.0.0.1:4532";
 
@@ -15,6 +15,8 @@ pub struct Config {
     pub rig_addr: String,
     /// The operator's 6-character Locator, uppercase.
     pub locator: Option<String>,
+    /// `station.license_class`; no default.
+    pub license_class: Option<LicenseClass>,
     /// Where the Log lives; `None` means the default.
     pub log_path: Option<PathBuf>,
     /// Soft key messages, keyed 1..=6 for F1..F6. Text is uppercase and may contain `{CALL}`.
@@ -29,6 +31,7 @@ impl Default for Config {
             callsign: None,
             rig_addr: DEFAULT_ADDR.to_string(),
             locator: None,
+            license_class: None,
             log_path: None,
             soft_keys: BTreeMap::new(),
             warnings: Vec::new(),
@@ -73,6 +76,7 @@ impl Config {
                 .clone()
                 .unwrap_or_else(|| DEFAULT_ADDR.to_string()),
             locator: settings.locator.as_ref().map(|g| g.as_str().to_string()),
+            license_class: settings.license_class,
             log_path: settings.log_path.clone(),
             soft_keys: settings.macros.clone(),
             warnings: file.warnings().to_vec(),

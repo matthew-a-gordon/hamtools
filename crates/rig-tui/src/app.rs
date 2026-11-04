@@ -7,13 +7,14 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant, SystemTime};
 
 use chrono::{DateTime, Utc};
-use hamtools_config::{Callsign, Grid, Settings};
+use hamtools_config::{Callsign, Grid, LicenseClass, Settings};
 use logbook::{Log, band_for_hz};
 use ratatui::Frame;
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::layout::Rect;
 
 use crate::activity::{Activity, ActivityCtx};
+use crate::bandplan::{BandAction, BandplanModal, View as BandView};
 use crate::config_dialog::{ConfigDialog, Outcome};
 use crate::general::General;
 use crate::geocode::GeocodeResult;
@@ -153,6 +154,9 @@ pub struct App {
     rig_addr: String,
     config_path: Option<PathBuf>,
     config: Option<ConfigDialog>,
+    /// The Ctrl-B band plan modal, when open.
+    bandplan: Option<BandplanModal>,
+    license_class: Option<LicenseClass>,
     last_connect: Option<Instant>,
     last_poll: Option<Instant>,
     last_smeter: Option<Instant>,
@@ -197,6 +201,8 @@ impl App {
             rig_addr: DEFAULT_RIG_ADDR.to_string(),
             config_path: None,
             config: None,
+            bandplan: None,
+            license_class: None,
             last_connect: None,
             last_poll: None,
             last_smeter: None,
@@ -237,6 +243,12 @@ impl App {
     /// The Locator in use (6 characters, uppercase), if any.
     pub fn with_locator(mut self, locator: Option<String>) -> Self {
         self.locator = locator;
+        self
+    }
+
+    /// The operator's license class (`station.license_class`), for the band plan's privilege row.
+    pub fn with_license_class(mut self, class: Option<LicenseClass>) -> Self {
+        self.license_class = class;
         self
     }
 
@@ -294,6 +306,7 @@ impl App {
             callsign: self.callsign.as_deref().and_then(|c| Callsign::new(c).ok()),
             locator: self.locator.as_deref().and_then(|g| Grid::new(g).ok()),
             log_path: self.log_path.clone(),
+            license_class: self.license_class,
             rig_addr: Some(self.rig_addr.clone()),
             macros: self.soft_keys.clone(),
         }
@@ -304,6 +317,7 @@ impl App {
         self.callsign = settings.callsign.map(|c| c.as_str().to_string());
         self.locator = settings.locator.map(|g| g.as_str().to_string());
         self.log_path = settings.log_path;
+        self.license_class = settings.license_class;
         self.soft_keys = settings.macros;
         match settings.rig_addr {
             Some(addr) if addr != self.rig_addr => {
@@ -433,7 +447,69 @@ impl App {
     }
 
     pub fn has_overlay(&self) -> bool {
-        self.overlay.is_some() || self.config.is_some() || self.logging.modal_open()
+        self.overlay.is_some()
+            || self.config.is_some()
+            || self.bandplan.is_some()
+            || self.logging.modal_open()
+    }
+
+    /// Why tuning from the band plan is refused right now (the foreground Activity is
+    /// controlling the dial, as Satellite does while tracking), if it is.
+    fn tuning_blocked(&self) -> Option<&'static str> {
+        self.activities[self.foreground].tuning_blocked()
+    }
+
+    /// Act on what a band plan key asked for. Tuning only: none of these keys the transmitter.
+    fn on_bandplan_action(&mut self, action: BandAction) -> Vec<Command> {
+        match action {
+            BandAction::Stay => return Vec::new(),
+            BandAction::Close => {
+                self.bandplan = None;
+                return Vec::new();
+            }
+            BandAction::NoMode => {
+                self.status = Some("no usual mode here".to_string());
+                return Vec::new();
+            }
+            _ => {}
+        }
+        if let Some(why) = self.tuning_blocked() {
+            self.status = Some(format!("not while {why}"));
+            return Vec::new();
+        }
+        if !self.ready() {
+            return Vec::new();
+        }
+        let hz = match action {
+            BandAction::SetRx(hz) => hz,
+            BandAction::SetTx(hz) => {
+                if !self.require(Feature::Split)
+                    || !self.require(Feature::SplitFreq)
+                    || !self.require_split_on()
+                {
+                    return Vec::new();
+                }
+                hz
+            }
+            BandAction::SetMode(mode) => {
+                self.status = None;
+                return vec![Command::SetMode { mode, passband: 0 }];
+            }
+            BandAction::Stay | BandAction::Close | BandAction::NoMode => return Vec::new(),
+        };
+        // Outside the license class is advice, never a gate.
+        self.status = self.license_class.and_then(|class| {
+            (!hamtools_config::bandplan::BandPlan::embedded().in_privilege(hz, class)).then(|| {
+                format!(
+                    "{} is outside {class} privileges (advisory only)",
+                    crate::ui::format_hz(hz)
+                )
+            })
+        });
+        match action {
+            BandAction::SetTx(_) => vec![Command::SetSplitFreq(hz)],
+            _ => vec![Command::SetFreq(hz)],
+        }
     }
 
     pub(crate) fn log_form_open(&self) -> bool {
@@ -584,6 +660,11 @@ impl App {
             }
             return Vec::new();
         }
+        if let Some(modal) = &mut self.bandplan {
+            let rx = self.freq.as_ref().map(|r| r.value);
+            let action = modal.on_key(key, rx);
+            return self.on_bandplan_action(action);
+        }
         if self.logging.modal_open() {
             let now = self.clock();
             let (log, grid) = (self.current_log(), self.own_grid());
@@ -594,6 +675,11 @@ impl App {
         }
         if key.code == KeyCode::Char('l') && key.modifiers.contains(KeyModifiers::CONTROL) {
             self.open_log_form();
+            return Vec::new();
+        }
+        if key.code == KeyCode::Char('b') && key.modifiers.contains(KeyModifiers::CONTROL) {
+            self.entry = None;
+            self.bandplan = Some(BandplanModal::open(self.frequency()));
             return Vec::new();
         }
         if self.entry.is_some() {
@@ -902,6 +988,18 @@ impl App {
         }
         if let Some(dialog) = &self.config {
             dialog.render(frame, area);
+        }
+        if let Some(modal) = &self.bandplan {
+            let view = BandView {
+                rx: self.frequency(),
+                tx: match self.split() {
+                    Some((true, _)) => self.transmit_frequency(),
+                    _ => None,
+                },
+                class: self.license_class,
+                today: self.clock().date_naive(),
+            };
+            modal.render(frame, area, &view);
         }
         self.logging.render(frame, area, self.own_grid().is_some());
     }
