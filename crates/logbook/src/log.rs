@@ -138,6 +138,10 @@ impl Log {
     }
 }
 
+fn contains_eoh(buf: &[u8]) -> bool {
+    buf.windows(5).any(|w| w.eq_ignore_ascii_case(b"<EOH>"))
+}
+
 fn find_last_marker(buf: &[u8]) -> Option<usize> {
     // Index just past the last <EOR> or <EOH> (ASCII case-insensitive).
     (0..buf.len().saturating_sub(4)).rev().find_map(|i| {
@@ -151,10 +155,20 @@ fn inspect(file: &mut File, path: &Path) -> Result<Tail, AppendError> {
     if len == 0 {
         return Ok(Tail::Empty);
     }
+    // ADI is either headerless (starts with a field) or text ending in <EOH>. Anything else is
+    // not ours, whatever stray markers its tail holds.
+    let mut head = vec![0u8; len.min(TAIL_WINDOW) as usize];
+    file.seek(SeekFrom::Start(0))?;
+    file.read_exact(&mut head)?;
     let start = len.saturating_sub(TAIL_WINDOW);
     file.seek(SeekFrom::Start(start))?;
     let mut buf = Vec::with_capacity((len - start) as usize);
     file.read_to_end(&mut buf)?;
+    if head[0] != b'<' && !contains_eoh(&head) && !contains_eoh(&buf) {
+        return Err(AppendError::NotAdif {
+            path: path.to_path_buf(),
+        });
+    }
     match find_last_marker(&buf) {
         Some(end) => {
             let rest = &buf[end..];

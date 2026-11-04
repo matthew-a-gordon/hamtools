@@ -92,7 +92,9 @@ fn non_adif_file_is_refused_and_untouched() {
 #[test]
 fn large_file_without_a_marker_in_the_tail_is_refused() {
     let (log, path) = setup("nomarker");
-    fs::write(&path, vec![b'x'; 70 * 1024]).unwrap();
+    let mut bytes = b"<CALL:5>".to_vec();
+    bytes.extend(vec![b'x'; 70 * 1024]);
+    fs::write(&path, bytes).unwrap();
     assert!(matches!(
         log.check(),
         Err(AppendError::NoMarkerInTail { .. })
@@ -171,4 +173,68 @@ fn concurrent_appends_stay_intact() {
     calls.sort();
     calls.dedup();
     assert_eq!(calls.len(), 200);
+}
+
+#[test]
+fn non_adif_file_with_a_stray_marker_in_its_tail_is_refused() {
+    for stray in ["<EOR>", "<eor>\n", "<EOR>\n<EOR>"] {
+        let (log, path) = setup("stray");
+        let bytes = format!("just some notes\nnot a log {stray}");
+        fs::write(&path, &bytes).unwrap();
+        assert!(
+            matches!(
+                log.append(&contact("K1ABC")),
+                Err(AppendError::NotAdif { .. })
+            ),
+            "append accepted {stray:?}"
+        );
+        assert!(matches!(log.check(), Err(AppendError::NotAdif { .. })));
+        assert_eq!(fs::read(&path).unwrap(), bytes.as_bytes());
+    }
+}
+
+#[test]
+fn a_headerless_file_starting_with_a_field_is_still_accepted() {
+    let (log, path) = setup("headerless");
+    fs::write(&path, "<CALL:5>K1ABC<EOR>\n").unwrap();
+    log.append(&contact("K2DEF")).unwrap();
+    assert_eq!(read_adi(&fs::read_to_string(&path).unwrap()).len(), 2);
+}
+
+#[test]
+fn check_and_append_refuse_the_same_bad_files_identically() {
+    let good = {
+        let (log, path) = setup("same-good");
+        log.append(&contact("K1ABC")).unwrap();
+        fs::read(&path).unwrap()
+    };
+    let mut torn = good.clone();
+    torn.extend_from_slice(b"<CALL:5>K2D");
+    let mut big_lt = vec![b'<'];
+    big_lt.extend(vec![b'x'; 70 * 1024]);
+    let cases: Vec<(&str, Vec<u8>)> = vec![
+        ("torn", torn),
+        ("non-adi", b"just some notes\n".to_vec()),
+        ("non-adi-stray", b"notes not adif <EOR>".to_vec()),
+        ("big-no-marker", vec![b'x'; 70 * 1024]),
+        ("big-no-marker-lt", big_lt),
+        ("good", good),
+        ("empty", Vec::new()),
+    ];
+    for (name, bytes) in cases {
+        let (log, path) = setup(name);
+        fs::write(&path, &bytes).unwrap();
+        let checked = log.check().map_err(|e| e.to_string());
+        assert_eq!(fs::read(&path).unwrap(), bytes, "check wrote to {name}");
+        let appended = log.append(&contact("K3GHI")).map_err(|e| e.to_string());
+        assert_eq!(
+            checked.is_err(),
+            appended.is_err(),
+            "{name}: check {checked:?}, append {appended:?}"
+        );
+        if let (Err(c), Err(a)) = (checked, appended) {
+            assert_eq!(c, a, "{name}");
+            assert_eq!(fs::read(&path).unwrap(), bytes, "append wrote to {name}");
+        }
+    }
 }
