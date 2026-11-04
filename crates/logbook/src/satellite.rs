@@ -42,7 +42,8 @@ pub fn extras(
     if name.is_empty() {
         return Err(ContactError::Empty { field: "SAT_NAME" });
     }
-    let rx_band = band_for_hz(downlink_hz).ok_or(ContactError::FrequencyOutsideBands(downlink_hz))?;
+    let rx_band =
+        band_for_hz(downlink_hz).ok_or(ContactError::FrequencyOutsideBands(downlink_hz))?;
     Ok(vec![
         ("PROP_MODE".into(), "SAT".into()),
         ("SAT_NAME".into(), name.to_string()),

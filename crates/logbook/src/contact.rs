@@ -84,11 +84,19 @@ impl Mode {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ContactError {
     /// A required field was empty.
-    Empty { field: &'static str },
+    Empty {
+        field: &'static str,
+    },
     /// A text field held a non-ASCII character.
-    NonAscii { field: String, ch: char },
+    NonAscii {
+        field: String,
+        ch: char,
+    },
     /// A text field held a control character.
-    NonPrintable { field: String, ch: char },
+    NonPrintable {
+        field: String,
+        ch: char,
+    },
     /// An extra's name is not uppercase A-Z, 0-9 or `_`.
     BadExtraName(String),
     /// An extra reuses a name the core writes, or one used twice.
@@ -96,7 +104,9 @@ pub enum ContactError {
     /// The frequency is outside the band table.
     FrequencyOutsideBands(u64),
     /// An uplink or downlink band has no AMSAT mode letter.
-    NoSatModeLetter { band: &'static str },
+    NoSatModeLetter {
+        band: &'static str,
+    },
     InvalidGrid(LocatorError),
     /// The end time is before the start time.
     EndBeforeStart,
@@ -159,7 +169,9 @@ pub(crate) fn text<'a>(field: &str, value: &'a str) -> Result<&'a str, ContactEr
 
 fn optional(field: &str, value: Option<&str>) -> Result<Option<String>, ContactError> {
     match value {
-        Some(v) => Ok(Some(text(field, v)?).filter(|v| !v.is_empty()).map(String::from)),
+        Some(v) => Ok(Some(text(field, v)?)
+            .filter(|v| !v.is_empty())
+            .map(String::from)),
         None => Ok(None),
     }
 }
@@ -344,10 +356,7 @@ mod tests {
         assert_eq!(Contact::new(input()).unwrap().call(), "K9XYZ");
         let mut i = input();
         i.call = "  ".into();
-        assert_eq!(
-            Contact::new(i),
-            Err(ContactError::Empty { field: "CALL" })
-        );
+        assert_eq!(Contact::new(i), Err(ContactError::Empty { field: "CALL" }));
     }
 
     #[test]
@@ -414,10 +423,7 @@ mod tests {
     fn own_grid_and_time_order_are_validated() {
         let mut i = input();
         i.own_grid = Some("EN71".into());
-        assert!(matches!(
-            Contact::new(i),
-            Err(ContactError::InvalidGrid(_))
-        ));
+        assert!(matches!(Contact::new(i), Err(ContactError::InvalidGrid(_))));
         let mut i = input();
         std::mem::swap(&mut i.start, &mut i.end);
         assert_eq!(Contact::new(i), Err(ContactError::EndBeforeStart));

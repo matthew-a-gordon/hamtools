@@ -79,7 +79,9 @@ mod tests {
     #[test]
     fn grid_validation() {
         assert_eq!(validate_grid("en71dq").unwrap(), "EN71DQ");
-        for bad in ["EN71", "EN71DQ11", "SN71DQ", "EN7ADQ", "EN71DY", "EN71D", ""] {
+        for bad in [
+            "EN71", "EN71DQ11", "SN71DQ", "EN7ADQ", "EN71DY", "EN71D", "",
+        ] {
             assert!(validate_grid(bad).is_err(), "{bad}");
         }
     }

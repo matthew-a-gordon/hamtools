@@ -1,5 +1,8 @@
 //! The Log: one append-only ADI file, written safely.
 
+// File::lock is stable since Rust 1.89, above clippy.toml's msrv; the toolchain is newer.
+#![allow(clippy::incompatible_msrv)]
+
 use std::fmt;
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, Read, Seek, SeekFrom, Write};
@@ -16,11 +19,18 @@ const TAIL_WINDOW: u64 = 64 * 1024;
 pub enum AppendError {
     Io(io::Error),
     /// The file ends in a record that never reached its end-of-record marker.
-    PartialRecord { path: PathBuf, offset: u64 },
+    PartialRecord {
+        path: PathBuf,
+        offset: u64,
+    },
     /// A non-empty file that does not look like ADI.
-    NotAdif { path: PathBuf },
+    NotAdif {
+        path: PathBuf,
+    },
     /// More than the tail window follows the last marker, or there is none in it.
-    NoMarkerInTail { path: PathBuf },
+    NoMarkerInTail {
+        path: PathBuf,
+    },
 }
 
 impl fmt::Display for AppendError {
@@ -33,7 +43,11 @@ impl fmt::Display for AppendError {
                 path.display()
             ),
             AppendError::NotAdif { path } => {
-                write!(f, "{} is not an ADI file; refusing to append", path.display())
+                write!(
+                    f,
+                    "{} is not an ADI file; refusing to append",
+                    path.display()
+                )
             }
             AppendError::NoMarkerInTail { path } => write!(
                 f,
@@ -151,7 +165,7 @@ fn inspect(file: &mut File, path: &Path) -> Result<Tail, AppendError> {
             } else {
                 Err(AppendError::PartialRecord {
                     path: path.to_path_buf(),
-                    offset: start + end as u64,
+                    offset: start + (end + rest.len() - rest.trim_ascii_start().len()) as u64,
                 })
             }
         }
