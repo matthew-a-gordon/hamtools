@@ -31,6 +31,6 @@ pub use app::{
 pub use config::{Config, config_path, default_log_path};
 pub use cw::{Line, Source, TbError, TbReply, parse_tb};
 pub use general::General;
-pub use panel::{LogDefaults, LogMode};
+pub use panel::{LogDefaults, LogMode, Role};
 pub use rig::{Command, Feature, Rig, RigEvent, RigMode};
 pub use ui::render;

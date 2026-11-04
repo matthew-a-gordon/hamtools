@@ -112,7 +112,10 @@ mod too_small {
         assert!(!app.has_overlay());
         assert_eq!(app.status(), None);
 
-        assert_eq!(app.on_key(ctrl('c')), vec![Command::Quit]);
+        // The quit Chord works, and asks first (#57); y confirms.
+        assert!(app.on_key(ctrl('c')).is_empty());
+        assert!(app.has_overlay());
+        assert_eq!(app.on_key(key(KeyCode::Char('y'))), vec![Command::Quit]);
     }
 
     #[test]
