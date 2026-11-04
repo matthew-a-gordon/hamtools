@@ -1375,6 +1375,7 @@ name = "sat-tui"
 version = "0.1.0"
 dependencies = [
  "chrono",
+ "logbook",
  "orbit",
  "ratatui",
  "rigctld-client",

@@ -1,8 +1,10 @@
 //! User configuration (`~/.config/hamtools/sat-tui.toml`).
 
+use std::collections::BTreeMap;
 use std::fmt;
 use std::path::{Path, PathBuf};
 
+use logbook::{Callsign, validate_grid};
 use serde::Deserialize;
 
 use crate::observer::Spec;
@@ -21,6 +23,18 @@ pub struct Config {
     pub short_pass_secs: i64,
     /// Where the operator is, as far as the file says (see [`crate::observer::resolve`]).
     pub observer: Spec,
+    pub logbook: LogbookConfig,
+}
+
+/// The `[logbook]` section. The callsign is not here: it comes from the shared config.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct LogbookConfig {
+    /// Where the Log lives, if the file says (see [`log_path`]).
+    pub path: Option<PathBuf>,
+    /// Own 6-character locator, validated and uppercased, used verbatim instead of the observer's.
+    pub grid: Option<String>,
+    /// Satellite name as shown in the UI, to the name written as `SAT_NAME`.
+    pub satellites: BTreeMap<String, String>,
 }
 
 impl Default for Config {
@@ -32,6 +46,7 @@ impl Default for Config {
             min_elevation_deg: 10.0,
             short_pass_secs: 180,
             observer: Spec::default(),
+            logbook: LogbookConfig::default(),
         }
     }
 }
@@ -57,6 +72,17 @@ struct Raw {
     passes: RawPasses,
     #[serde(default)]
     observer: RawObserver,
+    #[serde(default)]
+    logbook: RawLogbook,
+}
+
+#[derive(Deserialize, Default)]
+#[serde(deny_unknown_fields)]
+struct RawLogbook {
+    path: Option<PathBuf>,
+    grid: Option<String>,
+    #[serde(default)]
+    satellites: BTreeMap<String, String>,
 }
 
 #[derive(Deserialize, Default)]
@@ -110,6 +136,17 @@ impl Config {
                 "passes.short_pass_secs {short_pass_secs} must be 1 to 3600"
             )));
         }
+        let grid = raw
+            .logbook
+            .grid
+            .map(|g| {
+                validate_grid(&g).map_err(|_| {
+                    ConfigError(format!(
+                        "logbook.grid {g:?} must be a 6-character locator such as EN71DQ"
+                    ))
+                })
+            })
+            .transpose()?;
         Ok(Self {
             watch: raw.watch.unwrap_or(defaults.watch),
             rig_addr: raw.rig.addr.unwrap_or(defaults.rig_addr),
@@ -121,6 +158,11 @@ impl Config {
                 lat_deg: raw.observer.lat_deg,
                 lon_deg: raw.observer.lon_deg,
                 alt_m: raw.observer.alt_m,
+            },
+            logbook: LogbookConfig {
+                path: raw.logbook.path,
+                grid,
+                satellites: raw.logbook.satellites,
             },
         })
     }
@@ -150,4 +192,60 @@ pub fn config_path(xdg_config_home: Option<&str>, home: Option<&str>) -> Option<
         None => Path::new(home?).join(".config"),
     };
     Some(base.join("hamtools").join("sat-tui.toml"))
+}
+
+/// The config shared with the other tools: `$XDG_CONFIG_HOME/hamtools/config.toml`, falling back
+/// to `$HOME/.config/hamtools/config.toml`. sat-tui reads only `callsign` from it.
+pub fn shared_config_path(xdg_config_home: Option<&str>, home: Option<&str>) -> Option<PathBuf> {
+    let base = match xdg_config_home.filter(|dir| !dir.is_empty()) {
+        Some(dir) => PathBuf::from(dir),
+        None => Path::new(home?).join(".config"),
+    };
+    Some(base.join("hamtools").join("config.toml"))
+}
+
+#[derive(Deserialize, Default)]
+struct RawShared {
+    callsign: Option<String>,
+}
+
+/// The operator's callsign from the shared config's text. Everything else in it (the KX3 and
+/// macro sections) belongs to other tools and is ignored.
+pub fn shared_callsign(text: &str) -> Result<Option<Callsign>, ConfigError> {
+    let raw: RawShared = toml::from_str(text).map_err(|e| ConfigError(e.to_string()))?;
+    raw.callsign
+        .map(|c| Callsign::new(&c).map_err(|e| ConfigError(e.to_string())))
+        .transpose()
+}
+
+/// Read the callsign from the shared config file; a missing file means no callsign.
+pub fn load_shared_callsign(path: Option<&Path>) -> Result<Option<Callsign>, ConfigError> {
+    let Some(path) = path else {
+        return Ok(None);
+    };
+    match std::fs::read_to_string(path) {
+        Ok(text) => {
+            shared_callsign(&text).map_err(|e| ConfigError(format!("{}: {}", path.display(), e.0)))
+        }
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(e) => Err(ConfigError(format!("{}: {e}", path.display()))),
+    }
+}
+
+/// Where the Log lives: `--log`, else `[logbook] path`, else `$XDG_DATA_HOME/hamtools/log.adi`,
+/// falling back to `$HOME/.local/share/hamtools/log.adi`.
+pub fn log_path(
+    cli: Option<&Path>,
+    config: Option<&Path>,
+    xdg_data_home: Option<&str>,
+    home: Option<&str>,
+) -> Option<PathBuf> {
+    if let Some(path) = cli.or(config) {
+        return Some(path.to_path_buf());
+    }
+    let base = match xdg_data_home.filter(|dir| !dir.is_empty()) {
+        Some(dir) => PathBuf::from(dir),
+        None => Path::new(home?).join(".local").join("share"),
+    };
+    Some(base.join("hamtools").join("log.adi"))
 }
