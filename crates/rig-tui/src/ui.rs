@@ -176,8 +176,8 @@ fn hint(app: &App) -> &'static str {
     match app.focus() {
         Focus::Panel => "Enter send  F1-F6 soft keys  Tab/Esc strip  Ctrl-C quit",
         Focus::Strip if app.panel_active() => {
-            "f freq  </> tune  ^/v step  m/M mode  v VFO  s/S split  c config  Tab input  q quit"
+            "f freq  </> tune  ^/v step  m/M mode  v VFO  s/S split  Tab input  q quit"
         }
-        Focus::Strip => "f freq  </> tune  ^/v step  m/M mode  v VFO  s/S split  c config  q quit",
+        Focus::Strip => "f freq  </> tune  ^/v step  m/M mode  v VFO  s/S split  q quit",
     }
 }
