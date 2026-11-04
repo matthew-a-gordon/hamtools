@@ -3,9 +3,10 @@ use std::path::PathBuf;
 use std::process::ExitCode;
 use std::time::{Duration, Instant, SystemTime};
 
+use logbook::{Callsign, Log};
 use ratatui::DefaultTerminal;
 use ratatui::crossterm::event::{self, Event, KeyEventKind};
-use rig_tui::{App, Command, Config, Rig, config_path, render};
+use rig_tui::{App, Command, Config, Rig, config_path, log_path, render};
 use tokio::runtime::Runtime;
 
 /// One loop pass. The KX3 clears its decode buffer on each `TB;` and holds only 40 characters,
@@ -62,7 +63,16 @@ fn try_main() -> Result<(), Box<dyn Error>> {
         .enable_all()
         .build()?;
     let mut rig = Rig::new(addr);
-    let app = App::with_callsign(config.callsign).with_soft_keys(config.soft_keys);
+    let log_path = log_path(
+        config.log_path.as_deref(),
+        std::env::var("XDG_DATA_HOME").ok().as_deref(),
+        std::env::var("HOME").ok().as_deref(),
+    );
+    let mut app = App::with_callsign(config.callsign.clone()).with_soft_keys(config.soft_keys);
+    if let (Some(path), Some(callsign)) = (log_path, &config.callsign) {
+        let operator = Callsign::new(callsign)?;
+        app = app.with_logging(Log::new(path, operator), config.locator.clone());
+    }
 
     let mut terminal = ratatui::init();
     let result = run(&mut terminal, &rt, &mut rig, app);

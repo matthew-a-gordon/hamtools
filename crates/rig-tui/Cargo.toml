@@ -12,7 +12,10 @@ workspace = true
 [dependencies]
 ratatui = "0.30.2"
 hamtools-config = { path = "../hamtools-config" }
+hamtools-tui = { path = "../hamtools-tui" }
+logbook = { path = "../logbook" }
 rigctld-client = { path = "../rigctld-client" }
+chrono = { version = "0.4", default-features = false, features = ["std"] }
 tokio = { version = "1", features = ["rt", "net", "time"] }
 
 [dev-dependencies]

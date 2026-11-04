@@ -5,11 +5,14 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::time::{Duration, Instant, SystemTime};
 
+use chrono::{DateTime, Utc};
+use logbook::{Grid, Log, band_for_hz};
 use ratatui::Frame;
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::layout::Rect;
 
 use crate::cw::CwPanel;
+use crate::logging::{Logging, Snapshot, default_log_mode};
 use crate::panel::{LogDefaults, LogMode, ModePanel, PanelCommand, PanelCtx};
 use crate::rig::{Command, Feature, RigEvent, RigMode};
 
@@ -111,6 +114,7 @@ pub struct App {
     /// The status came from a failing poll, so the next good poll clears it.
     poll_failed: bool,
     callsign: Option<String>,
+    logging: Option<Logging>,
     soft_keys: BTreeMap<u8, String>,
     last_connect: Option<Instant>,
     last_poll: Option<Instant>,
@@ -147,6 +151,7 @@ impl App {
             status: None,
             poll_failed: false,
             callsign: None,
+            logging: None,
             soft_keys: BTreeMap::new(),
             last_connect: None,
             last_poll: None,
@@ -166,6 +171,18 @@ impl App {
     pub fn with_soft_keys(mut self, soft_keys: BTreeMap<u8, String>) -> Self {
         self.soft_keys = soft_keys;
         self
+    }
+
+    /// Log Contacts to `log`, with `locator` as `MY_GRIDSQUARE` (omitted when `None`). Without
+    /// this, or without a callsign, `l` refuses and says why.
+    pub fn with_logging(mut self, log: Log, locator: Option<Grid>) -> Self {
+        self.logging = Some(Logging::new(log, locator));
+        self
+    }
+
+    /// How many Contacts were logged this run, when logging is set up.
+    pub fn logged_count(&self) -> Option<usize> {
+        self.logging.as_ref().map(Logging::count)
     }
 
     pub fn status(&self) -> Option<&str> {
@@ -277,7 +294,78 @@ impl App {
     }
 
     pub fn has_overlay(&self) -> bool {
-        self.overlay.is_some()
+        self.overlay.is_some() || self.logging_modal_open()
+    }
+
+    fn logging_modal_open(&self) -> bool {
+        self.logging.as_ref().is_some_and(Logging::modal_open)
+    }
+
+    pub(crate) fn log_form_open(&self) -> bool {
+        self.logging.as_ref().is_some_and(Logging::form_open)
+    }
+
+    /// Recent Contacts for the body when no panel applies, newest first.
+    pub(crate) fn recent_contacts(&self, n: usize) -> Vec<String> {
+        self.logging.as_ref().map_or_else(Vec::new, |l| l.recent(n))
+    }
+
+    /// The `l` gate. Opens the form with a snapshot of the rig, or says in the status line which
+    /// condition failed.
+    fn open_log_form(&mut self) {
+        match self.log_snapshot() {
+            Ok(snapshot) => {
+                self.entry = None;
+                if let Some(logging) = &mut self.logging {
+                    logging.open_form(snapshot);
+                }
+            }
+            Err(why) => self.status = Some(why),
+        }
+    }
+
+    fn log_snapshot(&self) -> Result<Snapshot, String> {
+        if !self.connected {
+            return Err("not connected: cannot log".to_string());
+        }
+        let (Some(_), Some(rig_mode)) = (self.frequency(), self.rig_mode().cloned()) else {
+            return Err("rig has not reported frequency and mode in the last 2 s".to_string());
+        };
+        // The transmit frequency under split. Its read-back on the KX3 is untested on hardware.
+        let Some(hz) = self.transmit_frequency() else {
+            return Err(
+                "transmit frequency not known: the rig has not reported split or its transmit frequency".to_string(),
+            );
+        };
+        if band_for_hz(hz).is_none() {
+            return Err(format!("{} Hz is outside the band table", hz));
+        }
+        let logging = match (&self.callsign, &self.logging) {
+            (Some(_), Some(logging)) => logging,
+            _ => return Err("no callsign: set `callsign` in the config file to log".to_string()),
+        };
+        logging.check_log()?;
+        let (log_mode, defaults) = match self.active_panel().map(|i| &self.panels[i]) {
+            Some(panel) => (
+                panel
+                    .logbook_mode(&rig_mode)
+                    .or_else(|| default_log_mode(&rig_mode)),
+                panel.log_defaults(),
+            ),
+            None => (default_log_mode(&rig_mode), LogDefaults::default()),
+        };
+        Ok(Snapshot {
+            hz,
+            rig_mode,
+            started: self.clock(),
+            log_mode,
+            defaults,
+        })
+    }
+
+    /// The UTC time that stamps Contacts: the same clock the strip shows.
+    fn clock(&self) -> DateTime<Utc> {
+        self.utc.unwrap_or_else(SystemTime::now).into()
     }
 
     /// Open a modal; it gets every key until it closes.
@@ -327,6 +415,17 @@ impl App {
             if overlay.on_key(key) == OverlayAction::Close {
                 self.overlay = None;
             }
+            return Vec::new();
+        }
+        if self.logging_modal_open() {
+            let now = self.clock();
+            if let Some(status) = self.logging.as_mut().and_then(|l| l.on_key(key, now)) {
+                self.status = Some(status);
+            }
+            return Vec::new();
+        }
+        if key.code == KeyCode::Char('l') && key.modifiers.contains(KeyModifiers::CONTROL) {
+            self.open_log_form();
             return Vec::new();
         }
         if self.entry.is_some() {
@@ -386,6 +485,16 @@ impl App {
             }
             KeyCode::Char('m') => self.cycle_mode(true),
             KeyCode::Char('M') => self.cycle_mode(false),
+            KeyCode::Char('l') => {
+                self.open_log_form();
+                Vec::new()
+            }
+            KeyCode::Char('L') => {
+                if let Some(logging) = &mut self.logging {
+                    logging.open_list();
+                }
+                Vec::new()
+            }
             KeyCode::Char('v') => self.toggle_vfo(),
             KeyCode::Char('s') => self.toggle_split(),
             _ => Vec::new(),
@@ -655,6 +764,9 @@ impl App {
     pub(crate) fn render_overlay(&self, frame: &mut Frame, area: Rect) {
         if let Some(overlay) = &self.overlay {
             overlay.render(frame, area);
+        }
+        if let Some(logging) = &self.logging {
+            logging.render(frame, area);
         }
     }
 }

@@ -11,7 +11,7 @@ use crate::app::{App, Entry, Focus};
 use crate::rig::Feature;
 
 /// Group a frequency in Hz as `14.074.000`.
-fn format_hz(hz: u64) -> String {
+pub(crate) fn format_hz(hz: u64) -> String {
     format!(
         "{}.{:03}.{:03}",
         hz / 1_000_000,
@@ -141,10 +141,14 @@ fn render_strip(app: &App, frame: &mut Frame, area: Rect) {
     } else {
         Style::default()
     };
+    let title = match app.logged_count() {
+        Some(n) => format!("rig-tui - {n} logged"),
+        None => "rig-tui".to_string(),
+    };
     let block = Block::default()
         .borders(Borders::ALL)
         .border_style(border)
-        .title("rig-tui");
+        .title(title);
     frame.render_widget(
         Paragraph::new(format!("{}\n{}", row_one(app), row_two(app))).block(block),
         area,
@@ -153,10 +157,22 @@ fn render_strip(app: &App, frame: &mut Frame, area: Rect) {
 
 /// Shown in the body when the rig's mode has no panel.
 pub(crate) fn render_no_panel(app: &App, frame: &mut Frame, area: Rect) {
-    let text = match app.rig_mode() {
+    let mut text = match app.rig_mode() {
         Some(mode) => format!("No panel for {mode}"),
         None => "No mode reported yet".to_string(),
     };
+    // Room inside the border, less the heading line.
+    let recent = app.recent_contacts(usize::from(area.height.saturating_sub(3)));
+    if !recent.is_empty() {
+        text.push_str("\nRecent contacts:");
+        for line in recent
+            .iter()
+            .take(usize::from(area.height.saturating_sub(4)))
+        {
+            text.push('\n');
+            text.push_str(line);
+        }
+    }
     frame.render_widget(
         Paragraph::new(text)
             .style(Style::default().fg(Color::DarkGray))
@@ -167,6 +183,9 @@ pub(crate) fn render_no_panel(app: &App, frame: &mut Frame, area: Rect) {
 
 /// The keys that apply to the current focus.
 fn hint(app: &App) -> &'static str {
+    if app.log_form_open() {
+        return "Tab/Shift-Tab field  Enter save  Esc cancel  Ctrl-C quit";
+    }
     if app.has_overlay() {
         return "Esc close  Ctrl-C quit";
     }
