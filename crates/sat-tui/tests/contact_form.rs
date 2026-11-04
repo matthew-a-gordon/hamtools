@@ -4,7 +4,7 @@
 use std::path::PathBuf;
 
 use chrono::{DateTime, TimeZone, Utc};
-use logbook::{Callsign, Log};
+use logbook::{Callsign, Grid, Log};
 use orbit::{Observer, parse_tles};
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use sat_tui::app::{App, Command, Logging, Settings};
@@ -370,7 +370,7 @@ mod saving {
         let path = scratch("overrides").join("log.adi");
         let mut app = bare_app();
         let mut logging = logging(&path);
-        logging.grid_override = Some("EN71DQ".to_string());
+        logging.grid_override = Some(Grid::new("EN71DQ").unwrap());
         logging
             .sat_names
             .insert("ISS (ZARYA)".to_string(), "ISS".to_string());

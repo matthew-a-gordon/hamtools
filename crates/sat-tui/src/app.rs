@@ -4,6 +4,7 @@
 use std::collections::HashSet;
 
 use chrono::{DateTime, Duration, Utc};
+use logbook::Grid;
 use orbit::{Observer, Pass, PropagationError, Satellite};
 use ratatui::crossterm::event::{KeyCode, KeyEvent};
 
@@ -477,11 +478,11 @@ impl App {
     }
 
     /// The operator's own locator for the Contact: the config override, else the observer's.
-    pub fn own_grid(&self) -> String {
+    pub fn own_grid(&self) -> Grid {
         self.logging
             .as_ref()
             .and_then(|l| l.grid_override.clone())
-            .unwrap_or_else(|| logbook::locator(self.observer.lat_deg, self.observer.lon_deg))
+            .unwrap_or_else(|| Grid::at(self.observer.lat_deg, self.observer.lon_deg))
     }
 
     fn open_form(&mut self) {

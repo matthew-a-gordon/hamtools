@@ -6,7 +6,7 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicU32, Ordering};
 
 use chrono::{DateTime, TimeZone, Utc};
-use logbook::{Callsign, Contact, ContactInput, Mode, satellite};
+use logbook::{Callsign, Contact, ContactInput, Grid, Mode, satellite};
 
 pub fn temp_dir(tag: &str) -> PathBuf {
     static N: AtomicU32 = AtomicU32::new(0);
@@ -39,7 +39,7 @@ pub fn satellite_contact() -> Contact {
         end: at(4, 12, 3, 30),
         freq_hz: 435_250_000,
         mode: Mode::Fm,
-        own_grid: Some("EN71DQ".into()),
+        own_grid: Some(Grid::new("EN71DQ").unwrap()),
         station_callsign: None,
         extras: satellite::extras("AO-91", 435_250_000, 145_960_000).unwrap(),
     })

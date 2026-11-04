@@ -4,7 +4,7 @@
 use std::collections::BTreeMap;
 
 use chrono::{DateTime, Utc};
-use logbook::{Contact, ContactInput, Log, Mode, Sideband, satellite};
+use logbook::{Contact, ContactInput, Grid, Log, Mode, Sideband, satellite};
 use ratatui::crossterm::event::{KeyCode, KeyEvent};
 
 use crate::satnogs::RigMode;
@@ -12,8 +12,8 @@ use crate::satnogs::RigMode;
 /// Everything logging needs, present only when the operator has a callsign.
 pub struct Logging {
     pub log: Log,
-    /// Own 6-character locator used verbatim instead of the one derived from the observer.
-    pub grid_override: Option<String>,
+    /// Own locator used verbatim instead of the one derived from the observer.
+    pub grid_override: Option<Grid>,
     /// Satellite name as shown in the UI, to the name written as `SAT_NAME`.
     pub sat_names: BTreeMap<String, String>,
 }
@@ -166,7 +166,7 @@ impl ContactForm {
     pub(crate) fn contact(
         &self,
         end: DateTime<Utc>,
-        own_grid: String,
+        own_grid: Grid,
         sat_name: &str,
     ) -> Result<Contact, String> {
         if self.call.trim().is_empty() {

@@ -4,7 +4,7 @@ use std::collections::BTreeMap;
 use std::fmt;
 use std::path::{Path, PathBuf};
 
-use logbook::{Callsign, validate_grid};
+use logbook::{Callsign, Grid};
 use serde::Deserialize;
 
 use crate::observer::Spec;
@@ -31,8 +31,8 @@ pub struct Config {
 pub struct LogbookConfig {
     /// Where the Log lives, if the file says (see [`log_path`]).
     pub path: Option<PathBuf>,
-    /// Own 6-character locator, validated and uppercased, used verbatim instead of the observer's.
-    pub grid: Option<String>,
+    /// Own locator, used verbatim instead of the observer's.
+    pub grid: Option<Grid>,
     /// Satellite name as shown in the UI, to the name written as `SAT_NAME`.
     pub satellites: BTreeMap<String, String>,
 }
@@ -140,7 +140,7 @@ impl Config {
             .logbook
             .grid
             .map(|g| {
-                validate_grid(&g).map_err(|_| {
+                Grid::new(&g).map_err(|_| {
                     ConfigError(format!(
                         "logbook.grid {g:?} must be a 6-character locator such as EN71DQ"
                     ))

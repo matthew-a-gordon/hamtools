@@ -47,7 +47,7 @@ pub(crate) fn record(c: &Contact, operator: &Callsign) -> String {
         field(&mut out, "GRIDSQUARE", g);
     }
     if let Some(g) = &c.own_grid {
-        field(&mut out, "MY_GRIDSQUARE", g);
+        field(&mut out, "MY_GRIDSQUARE", g.as_str());
     }
     field(&mut out, "QSO_DATE", &date(c.start));
     field(&mut out, "TIME_ON", &time(c.start));

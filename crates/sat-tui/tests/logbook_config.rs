@@ -1,5 +1,6 @@
 use std::path::{Path, PathBuf};
 
+use logbook::Grid;
 use sat_tui::config::{Config, log_path, logging_callsign, shared_callsign, shared_config_path};
 
 #[test]
@@ -27,7 +28,10 @@ fn reads_the_logbook_keys_and_per_satellite_names() {
     .unwrap();
 
     assert_eq!(config.logbook.path, Some(PathBuf::from("/data/my.adi")));
-    assert_eq!(config.logbook.grid.as_deref(), Some("EN71DQ"));
+    assert_eq!(
+        config.logbook.grid.as_ref().map(Grid::as_str),
+        Some("EN71DQ")
+    );
     assert_eq!(config.logbook.satellites["ISS (ZARYA)"], "ISS");
     assert_eq!(config.logbook.satellites.len(), 2);
 }

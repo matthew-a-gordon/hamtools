@@ -6,7 +6,7 @@ use chrono::{DateTime, Utc};
 
 use crate::band::band_for_hz;
 use crate::callsign::Callsign;
-use crate::locator::{LocatorError, validate_grid};
+use crate::locator::Grid;
 
 /// Fields the writer emits itself; an extra may not reuse these names.
 pub(crate) const CORE_FIELDS: [&str; 18] = [
@@ -84,19 +84,11 @@ impl Mode {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ContactError {
     /// A required field was empty.
-    Empty {
-        field: &'static str,
-    },
+    Empty { field: &'static str },
     /// A text field held a non-ASCII character.
-    NonAscii {
-        field: String,
-        ch: char,
-    },
+    NonAscii { field: String, ch: char },
     /// A text field held a control character.
-    NonPrintable {
-        field: String,
-        ch: char,
-    },
+    NonPrintable { field: String, ch: char },
     /// An extra's name is not uppercase A-Z, 0-9 or `_`.
     BadExtraName(String),
     /// An extra reuses a name the core writes, or one used twice.
@@ -104,10 +96,7 @@ pub enum ContactError {
     /// The frequency is outside the band table.
     FrequencyOutsideBands(u64),
     /// An uplink or downlink band has no AMSAT mode letter.
-    NoSatModeLetter {
-        band: &'static str,
-    },
-    InvalidGrid(LocatorError),
+    NoSatModeLetter { band: &'static str },
 }
 
 impl fmt::Display for ContactError {
@@ -132,18 +121,11 @@ impl fmt::Display for ContactError {
             ContactError::NoSatModeLetter { band } => {
                 write!(f, "band {band} has no satellite mode letter")
             }
-            ContactError::InvalidGrid(e) => e.fmt(f),
         }
     }
 }
 
 impl std::error::Error for ContactError {}
-
-impl From<LocatorError> for ContactError {
-    fn from(e: LocatorError) -> Self {
-        ContactError::InvalidGrid(e)
-    }
-}
 
 /// Reject non-ASCII and control characters; return the text trimmed.
 pub(crate) fn text<'a>(field: &str, value: &'a str) -> Result<&'a str, ContactError> {
@@ -187,8 +169,8 @@ pub struct ContactInput {
     /// Frequency in Hz; the logging station's transmit frequency on a satellite.
     pub freq_hz: u64,
     pub mode: Mode,
-    /// Own locator override for this Contact (6 characters, validated).
-    pub own_grid: Option<String>,
+    /// Own locator override for this Contact.
+    pub own_grid: Option<Grid>,
     /// Station callsign for this Contact when it differs from the operator's.
     pub station_callsign: Option<Callsign>,
     /// Extra ADIF fields, in order.
@@ -209,7 +191,7 @@ pub struct Contact {
     pub(crate) freq_hz: u64,
     pub(crate) band: &'static str,
     pub(crate) mode: Mode,
-    pub(crate) own_grid: Option<String>,
+    pub(crate) own_grid: Option<Grid>,
     pub(crate) station_callsign: Option<Callsign>,
     pub(crate) extras: Vec<(String, String)>,
 }
@@ -225,10 +207,6 @@ impl Contact {
         let comment = optional("COMMENT", input.comment.as_deref())?;
         let rst_sent = optional("RST_SENT", input.rst_sent.as_deref())?;
         let rst_rcvd = optional("RST_RCVD", input.rst_rcvd.as_deref())?;
-        let own_grid = match input.own_grid.as_deref() {
-            Some(g) => Some(validate_grid(g)?),
-            None => None,
-        };
         let band = band_for_hz(input.freq_hz)
             .ok_or(ContactError::FrequencyOutsideBands(input.freq_hz))?
             .name;
@@ -262,7 +240,7 @@ impl Contact {
             freq_hz: input.freq_hz,
             band,
             mode,
-            own_grid,
+            own_grid: input.own_grid,
             station_callsign: input.station_callsign,
             extras,
         })
@@ -411,12 +389,5 @@ mod tests {
             Contact::new(i),
             Err(ContactError::FrequencyOutsideBands(100_000_000))
         );
-    }
-
-    #[test]
-    fn own_grid_is_validated() {
-        let mut i = input();
-        i.own_grid = Some("EN71".into());
-        assert!(matches!(Contact::new(i), Err(ContactError::InvalidGrid(_))));
     }
 }

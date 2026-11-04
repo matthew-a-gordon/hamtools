@@ -1,9 +1,9 @@
-//! Maidenhead locators: derivation from a position and validation of an override.
+//! Maidenhead locators: a validated [`Grid`], from text or from a position.
 
 use std::fmt;
 
 /// 6-character Maidenhead locator (uppercase) for a position in degrees.
-pub fn locator(lat_deg: f64, lon_deg: f64) -> String {
+fn locator(lat_deg: f64, lon_deg: f64) -> String {
     let lon = (lon_deg + 180.0).clamp(0.0, 360.0 - 1e-9);
     let lat = (lat_deg + 90.0).clamp(0.0, 180.0 - 1e-9);
     let idx = |v: f64, max: usize| (v.floor() as usize).min(max);
@@ -41,18 +41,39 @@ impl fmt::Display for LocatorError {
 
 impl std::error::Error for LocatorError {}
 
-/// Validate a 6-character locator (case-insensitive) and return it uppercased.
-pub fn validate_grid(raw: &str) -> Result<String, LocatorError> {
-    let up = raw.trim().to_ascii_uppercase();
-    let b = up.as_bytes();
-    let ok = b.len() == 6
-        && b[0..2].iter().all(|c| (b'A'..=b'R').contains(c))
-        && b[2..4].iter().all(u8::is_ascii_digit)
-        && b[4..6].iter().all(|c| (b'A'..=b'X').contains(c));
-    if ok {
-        Ok(up)
-    } else {
-        Err(LocatorError(raw.to_string()))
+/// A valid 6-character Maidenhead locator, stored uppercase.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Grid(String);
+
+impl Grid {
+    /// Validate a 6-character locator (case-insensitive).
+    pub fn new(raw: &str) -> Result<Grid, LocatorError> {
+        let up = raw.trim().to_ascii_uppercase();
+        let b = up.as_bytes();
+        let ok = b.len() == 6
+            && b[0..2].iter().all(|c| (b'A'..=b'R').contains(c))
+            && b[2..4].iter().all(u8::is_ascii_digit)
+            && b[4..6].iter().all(|c| (b'A'..=b'X').contains(c));
+        if ok {
+            Ok(Grid(up))
+        } else {
+            Err(LocatorError(raw.to_string()))
+        }
+    }
+
+    /// The locator for a position in degrees.
+    pub fn at(lat_deg: f64, lon_deg: f64) -> Grid {
+        Grid(locator(lat_deg, lon_deg))
+    }
+
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl fmt::Display for Grid {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.0)
     }
 }
 
@@ -78,11 +99,11 @@ mod tests {
 
     #[test]
     fn grid_validation() {
-        assert_eq!(validate_grid("en71dq").unwrap(), "EN71DQ");
+        assert_eq!(Grid::new("en71dq").unwrap().as_str(), "EN71DQ");
         for bad in [
             "EN71", "EN71DQ11", "SN71DQ", "EN7ADQ", "EN71DY", "EN71D", "",
         ] {
-            assert!(validate_grid(bad).is_err(), "{bad}");
+            assert!(Grid::new(bad).is_err(), "{bad}");
         }
     }
 }
