@@ -53,5 +53,15 @@ The frequency (or passband) on which a transmitter listens, and so what the oper
 _Avoid_: TX frequency
 
 **Tracking**:
-Keeping the radio's receive and transmit frequencies corrected for Doppler shift as a satellite moves. Transmitting itself is always the operator's action.
+Keeping the radio's receive and transmit frequencies on a transmitter: at its nominal frequencies before AOS, corrected for Doppler shift from AOS, and always moving with the operator's dial. Transmitting itself is always the operator's action.
 _Avoid_: Auto-tune, rig control
+
+### Logging
+
+**Contact**:
+One two-way exchange with another station through a satellite, as recorded by the operator.
+_Avoid_: QSO (except in ADIF field names), call, log entry
+
+**Log**:
+The single append-only file holding every Contact, whatever the activity. Not a diagnostic log.
+_Avoid_: logbook (that is the crate's name), database
