@@ -66,6 +66,11 @@ pub trait ModePanel {
 
     fn logbook_mode(&self, mode: &RigMode) -> Option<LogMode>;
 
+    /// Whether a send from this panel may still be going out; blocks switching the Active rig.
+    fn sending(&self) -> bool {
+        false
+    }
+
     fn log_defaults(&self) -> LogDefaults {
         LogDefaults::default()
     }

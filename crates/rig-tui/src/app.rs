@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant, SystemTime};
 
 use chrono::{DateTime, Utc};
-use hamtools_config::{Callsign, Grid, Settings};
+use hamtools_config::{Callsign, Grid, RigKind, RigProfile};
 use logbook::{Log, band_for_hz};
 use ratatui::Frame;
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
@@ -20,6 +20,9 @@ use crate::geocode::GeocodeResult;
 use crate::logging::{Logging, Snapshot};
 use crate::panel::{LogDefaults, LogMode};
 use crate::rig::{Command, Feature, RigEvent, RigMode};
+use crate::rigs::{RigSlot, Switcher};
+
+mod rig_switch;
 
 /// How long to wait between attempts to reach `rigctld`. A starting value, untested on hardware.
 pub const RECONNECT_EVERY: Duration = Duration::from_secs(3);
@@ -33,7 +36,7 @@ pub const STALE_AFTER: Duration = Duration::from_secs(2);
 
 /// Tuning steps in Hz, smallest first.
 pub(crate) const STEPS: [u64; 6] = [1, 10, 100, 1_000, 10_000, 100_000];
-const DEFAULT_STEP: usize = 3;
+pub(crate) const DEFAULT_STEP: usize = 3;
 
 /// The order `m` and `M` walk through.
 const MODE_CYCLE: [RigMode; 8] = [
@@ -74,9 +77,9 @@ pub enum OverlayAction {
 
 /// A value the rig reported and when the app heard it.
 #[derive(Debug, Clone)]
-struct Reading<T> {
-    value: T,
-    at: Instant,
+pub(crate) struct Reading<T> {
+    pub(crate) value: T,
+    pub(crate) at: Instant,
 }
 
 /// A frequency being typed on the strip.
@@ -126,7 +129,14 @@ pub struct App {
     /// Every hosted Activity keeps its in-memory state; exactly one is in the foreground.
     activities: Vec<Box<dyn Activity>>,
     foreground: usize,
-    rig_name: String,
+    /// The configured rigs; the readings below belong to `rigs[active]`.
+    rigs: Vec<RigSlot>,
+    active: usize,
+    /// `rig.default` as read from the config (a name), for the config dialog.
+    rig_default: Option<String>,
+    /// No profile was configured: `rigs` holds one stand-in named after its address.
+    implicit_rig: bool,
+    switcher: Option<Switcher>,
     overlay: Option<Box<dyn Overlay>>,
     connected: bool,
     now: Instant,
@@ -150,7 +160,6 @@ pub struct App {
     locator: Option<String>,
     log_path: Option<PathBuf>,
     default_log_path: Option<PathBuf>,
-    rig_addr: String,
     config_path: Option<PathBuf>,
     config: Option<ConfigDialog>,
     last_connect: Option<Instant>,
@@ -170,7 +179,21 @@ impl App {
         Self {
             activities: vec![Box::new(General::new())],
             foreground: 0,
-            rig_name: DEFAULT_RIG_ADDR.to_string(),
+            rigs: vec![RigSlot::from_profile(
+                &RigProfile {
+                    name: DEFAULT_RIG_ADDR.to_string(),
+                    addr: DEFAULT_RIG_ADDR.to_string(),
+                    kind: RigKind::Kx3,
+                    cw: None,
+                    split: None,
+                    sat_mode: None,
+                },
+                DEFAULT_STEP,
+            )],
+            active: 0,
+            rig_default: None,
+            implicit_rig: true,
+            switcher: None,
             overlay: None,
             connected: false,
             // Only the starting point for staleness; every tick replaces it.
@@ -194,7 +217,6 @@ impl App {
             locator: None,
             log_path: None,
             default_log_path: None,
-            rig_addr: DEFAULT_RIG_ADDR.to_string(),
             config_path: None,
             config: None,
             last_connect: None,
@@ -245,9 +267,32 @@ impl App {
         self
     }
 
-    /// The `rigctld` address in use, shown in the config dialog when the file sets none.
+    /// The `rigctld` address of the Active rig (a command-line override, or the stand-in rig
+    /// when no profile is configured).
     pub fn with_rig_addr(mut self, addr: impl Into<String>) -> Self {
-        self.rig_addr = addr.into();
+        let slot = &mut self.rigs[self.active];
+        slot.addr = addr.into();
+        if self.implicit_rig {
+            slot.name = slot.addr.clone();
+        }
+        self
+    }
+
+    /// Use these rig profiles (in config order); start on `default` or else the first. An empty
+    /// list keeps the stand-in rig.
+    pub fn with_rigs(mut self, profiles: &[RigProfile], default: Option<&str>) -> Self {
+        if profiles.is_empty() {
+            return self;
+        }
+        self.rigs = profiles
+            .iter()
+            .map(|p| RigSlot::from_profile(p, DEFAULT_STEP))
+            .collect();
+        self.active = default
+            .and_then(|name| profiles.iter().position(|p| p.name == name))
+            .unwrap_or(0);
+        self.rig_default = default.map(str::to_string);
+        self.implicit_rig = false;
         self
     }
 
@@ -269,52 +314,20 @@ impl App {
 
     /// Bring the Activity at `index` to the foreground. Out of range is ignored.
     pub fn set_foreground(&mut self, index: usize) {
-        if index < self.activities.len() {
-            self.foreground = index;
-            self.entry = None;
+        if index >= self.activities.len() {
+            return;
         }
+        if let Some(why) = self.activity_unavailable(index) {
+            self.status = Some(why);
+            return;
+        }
+        self.foreground = index;
+        self.entry = None;
     }
 
     /// The foreground Activity's name, as the shared strip shows it.
     pub fn activity_name(&self) -> &'static str {
         self.activities[self.foreground].name()
-    }
-
-    pub(crate) fn rig_name(&self) -> &str {
-        &self.rig_name
-    }
-
-    pub fn rig_addr(&self) -> &str {
-        &self.rig_addr
-    }
-
-    /// What the app is using now, as config settings.
-    fn current_settings(&self) -> Settings {
-        Settings {
-            callsign: self.callsign.as_deref().and_then(|c| Callsign::new(c).ok()),
-            locator: self.locator.as_deref().and_then(|g| Grid::new(g).ok()),
-            log_path: self.log_path.clone(),
-            rig_addr: Some(self.rig_addr.clone()),
-            macros: self.soft_keys.clone(),
-        }
-    }
-
-    /// Use saved settings now, with no restart. Returns what the rig side must do.
-    fn apply_settings(&mut self, settings: Settings) -> Vec<Command> {
-        self.callsign = settings.callsign.map(|c| c.as_str().to_string());
-        self.locator = settings.locator.map(|g| g.as_str().to_string());
-        self.log_path = settings.log_path;
-        self.soft_keys = settings.macros;
-        match settings.rig_addr {
-            Some(addr) if addr != self.rig_addr => {
-                self.rig_addr = addr.clone();
-                self.rig_name = addr.clone();
-                self.connected = false;
-                self.last_connect = None;
-                vec![Command::SetRigAddr(addr)]
-            }
-            _ => Vec::new(),
-        }
     }
 
     /// The answer to a [`Command::Lookup`] (run by `main` on a short-lived thread).
@@ -433,7 +446,10 @@ impl App {
     }
 
     pub fn has_overlay(&self) -> bool {
-        self.overlay.is_some() || self.config.is_some() || self.logging.modal_open()
+        self.overlay.is_some()
+            || self.config.is_some()
+            || self.switcher_open()
+            || self.logging.modal_open()
     }
 
     pub(crate) fn log_form_open(&self) -> bool {
@@ -578,6 +594,10 @@ impl App {
                 }
             };
         }
+        if self.switcher_open() {
+            self.on_switcher_key(key);
+            return Vec::new();
+        }
         if let Some(overlay) = &mut self.overlay {
             if overlay.on_key(key) == OverlayAction::Close {
                 self.overlay = None;
@@ -594,6 +614,10 @@ impl App {
         }
         if key.code == KeyCode::Char('l') && key.modifiers.contains(KeyModifiers::CONTROL) {
             self.open_log_form();
+            return Vec::new();
+        }
+        if key.code == KeyCode::Char('r') && key.modifiers.contains(KeyModifiers::CONTROL) {
+            self.open_switcher();
             return Vec::new();
         }
         if self.entry.is_some() {
@@ -622,7 +646,8 @@ impl App {
                 self.config = Some(ConfigDialog::open(
                     self.config_path.as_deref(),
                     &self.current_settings(),
-                    &self.rig_addr,
+                    self.rig_name(),
+                    self.rig_addr(),
                 ));
                 Vec::new()
             }
@@ -862,9 +887,10 @@ impl App {
                 self.last_connect = Some(now);
                 commands.insert(0, Command::Connect);
             }
+            commands.extend(self.tick_inactive(now));
             return commands;
         }
-        let mut commands = Vec::new();
+        let mut commands = self.tick_inactive(now);
         if self
             .last_poll
             .is_none_or(|at| now.duration_since(at) >= STATE_POLL_EVERY)
@@ -903,6 +929,7 @@ impl App {
         if let Some(dialog) = &self.config {
             dialog.render(frame, area);
         }
+        self.render_switcher(frame, area);
         self.logging.render(frame, area, self.own_grid().is_some());
     }
 }

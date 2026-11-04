@@ -14,9 +14,25 @@ callsign = "N0CALL"
 # [logbook]
 # path = "/home/you/.local/share/hamtools/log.adi"
 
+# Rigs are named profiles, each with the address of its rigctld (see CLAUDE.md for the
+# commands) and a kind: "kx3", "ft847" or "generic". Both rigs stay connected; Ctrl-R switches.
+# The old single `[rig] addr` and `[kx3]` keys are no longer read and are rejected.
 [rig]
-# The rigctld to talk to (see CLAUDE.md for the command). `[kx3]` is still read as an alias.
+# The profile to start on. Omit it to start on the first one.
+default = "kx3"
+
+[rig.kx3]
 addr = "127.0.0.1:4532"
+kind = "kx3"
+
+[rig.ft847]
+addr = "127.0.0.1:4533"
+kind = "ft847"
+# Capabilities come from a built-in table for the kind; a profile may override any of these
+# three (the table's rows are labelled "untested on hardware" in Ctrl-R until verified):
+# cw = true
+# split = true
+# sat_mode = true
 
 # Soft keys F1 to F6 (CW and CWR only). Text is sent as CW when you press the key.
 # {call} expands to the callsign above.

@@ -1,5 +1,6 @@
 //! General: today's `rig-tui` body. The base Activity and the startup default.
 
+use std::collections::BTreeMap;
 use std::time::Instant;
 
 use ratatui::Frame;
@@ -16,13 +17,21 @@ pub struct General {
     panels: Vec<Box<dyn ModePanel>>,
     /// The active panel's input line has the keyboard.
     panel_focus: bool,
+    /// The panels (CW transcript, input, Soft key state) of the rigs that are not Active, by
+    /// rig index.
+    parked: BTreeMap<usize, Vec<Box<dyn ModePanel>>>,
+}
+
+fn fresh_panels() -> Vec<Box<dyn ModePanel>> {
+    vec![Box::new(CwPanel::new())]
 }
 
 impl General {
     pub fn new() -> Self {
         Self {
-            panels: vec![Box::new(CwPanel::new())],
+            panels: fresh_panels(),
             panel_focus: false,
+            parked: BTreeMap::new(),
         }
     }
 
@@ -50,6 +59,17 @@ impl Default for General {
 impl Activity for General {
     fn name(&self) -> &'static str {
         "General"
+    }
+
+    fn sending(&self) -> bool {
+        self.panels.iter().any(|p| p.sending())
+    }
+
+    fn switch_rig(&mut self, from: usize, to: usize) {
+        let incoming = self.parked.remove(&to).unwrap_or_else(fresh_panels);
+        let outgoing = std::mem::replace(&mut self.panels, incoming);
+        self.parked.insert(from, outgoing);
+        self.panel_focus = false;
     }
 
     fn on_key(&mut self, key: KeyEvent, ctx: &ActivityCtx) -> Option<ActivityOutput> {

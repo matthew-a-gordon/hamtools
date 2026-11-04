@@ -155,19 +155,23 @@ locator = "EN71DQ"        # 6 characters; never latitude or longitude
 path = "/home/you/.local/share/hamtools/log.adi"   # optional
 
 [rig]
+default = "kx3"
+
+[rig.kx3]
 addr = "127.0.0.1:4532"
+kind = "kx3"
 
 [macros]
 F1 = "CQ CQ CQ DE {call} {call} K"
 ```
 
-The old `[kx3] addr` key is still read as `[rig] addr` today. **It goes away with the unified app** (section 8).
+The old `[rig] addr` and `[kx3]` keys are no longer read: a config that still has them is rejected with a message naming the replacement (section 8, "Two rigs").
 
 Unknown keys are kept in the file and reported as warnings at startup. They are not errors.
 
 ### The config dialog
 
-Press `c` (or open it from the hint line) to edit the config without leaving the app. It has fields for callsign, Locator, Log path, rig address and Soft keys F1 to F6.
+Press `c` (or open it from the hint line) to edit the config without leaving the app. It has fields for callsign, Locator, Log path, the Active rig's address, the default rig (a profile name) and Soft keys F1 to F6. Adding or removing a rig profile is done in the TOML file.
 
 | Key | Action |
 | --- | --- |
@@ -289,7 +293,7 @@ kind = "ft847"
 
 Both rigs stay connected. The inactive one is polled lightly (health, frequency and mode about every 5 seconds), so switching is instant. `Ctrl-R` opens the switcher with both connection states. Switching is refused while the current rig is transmitting (PTT on or a CW send in progress). If the new rig cannot run the current Activity, the app drops to General with a status line. Each rig keeps its own state: last frequency, mode, VFO, split, step, CW transcript and Soft key state.
 
-What each rig can do comes from a static capability table keyed by `kind` (`kx3`, `ft847`, `generic`), not from probing Hamlib. Rows verified on hardware are the KX3's CW sending, VFO A/B, split and its transmit frequency, and the frequency, mode, passband and S-meter reads. Everything else, including every FT-847 row, is labelled *untested on hardware*.
+What each rig can do comes from a static capability table keyed by `kind` (`kx3`, `ft847`, `generic`), not from probing Hamlib. A profile may override `cw`, `split` or `sat_mode`; an override is never counted as verified. `Ctrl-R` shows each rig's row. Rows verified on hardware are the KX3's CW sending, VFO A/B, split and its transmit frequency, and the frequency, mode, passband and S-meter reads. Everything else, including every FT-847 row, is labelled *untested on hardware*.
 
 ### Satellite settings
 

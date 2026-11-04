@@ -14,6 +14,7 @@ mod logging;
 mod panel;
 pub mod reference;
 mod rig;
+mod rigs;
 mod style;
 mod ui;
 
@@ -27,4 +28,5 @@ pub use cw::{Line, Source, TbError, TbReply, parse_tb};
 pub use general::General;
 pub use panel::{LogDefaults, LogMode};
 pub use rig::{Command, Feature, Rig, RigEvent, RigMode};
+pub use rigs::{Capabilities, Capability, LIGHT_POLL_EVERY, Support, table as capability_table};
 pub use ui::render;
