@@ -176,6 +176,9 @@ pub(crate) fn render_no_panel(ctx: &ActivityCtx, frame: &mut Frame, area: Rect) 
 /// The keys that apply to the current focus.
 /// One or two rows (split by `\n`) so every key fits in 80 columns.
 fn hint(app: &App) -> &'static str {
+    if app.quit_confirm_open() {
+        return "y or Ctrl-C quit  n/Esc/Enter cancel";
+    }
     if app.log_form_open() {
         return "Tab/Shift-Tab field  Enter save  Esc cancel  Ctrl-C quit";
     }

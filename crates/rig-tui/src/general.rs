@@ -134,6 +134,14 @@ impl Activity for General {
         }
     }
 
+    fn quit_warnings(&self) -> Vec<String> {
+        if self.panels.iter().any(|p| p.has_unsent_input()) {
+            vec!["Unsent CW input will be lost.".to_string()]
+        } else {
+            Vec::new()
+        }
+    }
+
     fn hint(&self, ctx: &ActivityCtx) -> &'static str {
         if self.text_focus(ctx) {
             "Enter send  F1-F6 soft keys  Tab/Esc strip\nCtrl-L log  Ctrl-C quit"

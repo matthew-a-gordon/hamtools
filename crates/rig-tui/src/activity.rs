@@ -11,6 +11,7 @@ use ratatui::Frame;
 use ratatui::crossterm::event::KeyEvent;
 use ratatui::layout::Rect;
 
+use crate::keys::KeyEntry;
 use crate::panel::{LogDefaults, LogMode};
 use crate::rig::{Command, RigMode};
 
@@ -66,4 +67,15 @@ pub trait Activity {
     fn hint(&self, ctx: &ActivityCtx) -> &'static str;
 
     fn render(&self, frame: &mut Frame, area: Rect, ctx: &ActivityCtx);
+
+    /// The Activity's own plain keys, checked against the reserved table when it is hosted.
+    fn keys(&self) -> Vec<KeyEntry> {
+        Vec::new()
+    }
+
+    /// One line for each thing quitting now would lose (unsent CW input, active Doppler
+    /// tracking). Empty when nothing would be lost.
+    fn quit_warnings(&self) -> Vec<String> {
+        Vec::new()
+    }
 }

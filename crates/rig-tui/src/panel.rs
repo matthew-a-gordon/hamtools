@@ -66,6 +66,11 @@ pub trait ModePanel {
 
     fn logbook_mode(&self, mode: &RigMode) -> Option<LogMode>;
 
+    /// Typed input that has not been sent, which quitting would lose.
+    fn has_unsent_input(&self) -> bool {
+        false
+    }
+
     fn log_defaults(&self) -> LogDefaults {
         LogDefaults::default()
     }

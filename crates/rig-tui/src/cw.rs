@@ -7,7 +7,7 @@ use std::collections::BTreeMap;
 use std::fmt;
 
 use ratatui::Frame;
-use ratatui::crossterm::event::{KeyCode, KeyEvent};
+use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line as TextLine, Span};
@@ -157,6 +157,14 @@ impl ModePanel for CwPanel {
             },
             // Only the input line takes text; other keys belong to the app.
             _ if !ctx.focused => Vec::new(),
+            // Control and Alt combinations are commands, never text.
+            KeyCode::Char(_)
+                if key
+                    .modifiers
+                    .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT) =>
+            {
+                Vec::new()
+            }
             KeyCode::Char(c) => {
                 self.input.extend(c.to_uppercase());
                 Vec::new()
@@ -231,6 +239,10 @@ impl ModePanel for CwPanel {
         let polled = parse_tb(&reply?).map_err(|e| e.to_string())?;
         self.on_rx(&polled.text);
         Ok(())
+    }
+
+    fn has_unsent_input(&self) -> bool {
+        !self.input.trim().is_empty()
     }
 
     fn logbook_mode(&self, mode: &RigMode) -> Option<LogMode> {

@@ -65,6 +65,8 @@ struct ContactForm {
     extras: Vec<(String, String)>,
     /// A save problem not tied to a field (shown under the fields).
     error: Option<String>,
+    /// A key edited a field since the form opened.
+    dirty: bool,
 }
 
 impl ContactForm {
@@ -108,6 +110,7 @@ impl ContactForm {
             started,
             extras: defaults.extra_adif,
             error: None,
+            dirty: false,
         }
     }
 
@@ -223,7 +226,18 @@ impl Logging {
         self.form.is_some()
     }
 
+    /// The form has Contact text typed into it that closing would lose.
+    pub fn form_dirty(&self) -> bool {
+        self.form.as_ref().is_some_and(|f| f.dirty)
+    }
+
+    /// Only the session list is open (it holds nothing to lose).
+    pub fn list_only(&self) -> bool {
+        self.form.is_none() && self.list.is_some()
+    }
+
     pub fn open_form(&mut self, snapshot: Snapshot) {
+        self.list = None;
         self.form = Some(ContactForm::new(snapshot));
     }
 
@@ -251,6 +265,7 @@ impl Logging {
         match form.form.handle_key(key) {
             FormEvent::Edited => {
                 form.error = None;
+                form.dirty = true;
                 None
             }
             FormEvent::Cancel => {

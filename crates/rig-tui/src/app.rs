@@ -8,18 +8,23 @@ use std::time::{Duration, Instant, SystemTime};
 
 use chrono::{DateTime, Utc};
 use hamtools_config::{Callsign, Grid, Settings};
+use hamtools_tui::modal::Modal;
 use logbook::{Log, band_for_hz};
 use ratatui::Frame;
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::layout::Rect;
+use ratatui::text::Line;
+use ratatui::widgets::Paragraph;
 
 use crate::activity::{Activity, ActivityCtx};
 use crate::config_dialog::{ConfigDialog, Outcome};
 use crate::general::General;
 use crate::geocode::GeocodeResult;
+use crate::keys::{self, Action, Scope};
 use crate::logging::{Logging, Snapshot};
 use crate::panel::{LogDefaults, LogMode};
 use crate::rig::{Command, Feature, RigEvent, RigMode};
+use crate::style::{dim, red};
 
 /// How long to wait between attempts to reach `rigctld`. A starting value, untested on hardware.
 pub const RECONNECT_EVERY: Duration = Duration::from_secs(3);
@@ -128,6 +133,9 @@ pub struct App {
     foreground: usize,
     rig_name: String,
     overlay: Option<Box<dyn Overlay>>,
+    /// The quit confirmation, with a line for each thing quitting would lose. It sits above
+    /// every other overlay, which stay untouched underneath.
+    quit_confirm: Option<Vec<String>>,
     connected: bool,
     now: Instant,
     utc: Option<SystemTime>,
@@ -172,6 +180,7 @@ impl App {
             foreground: 0,
             rig_name: DEFAULT_RIG_ADDR.to_string(),
             overlay: None,
+            quit_confirm: None,
             connected: false,
             // Only the starting point for staleness; every tick replaces it.
             now: Instant::now(),
@@ -433,7 +442,71 @@ impl App {
     }
 
     pub fn has_overlay(&self) -> bool {
-        self.overlay.is_some() || self.config.is_some() || self.logging.modal_open()
+        self.overlay.is_some()
+            || self.config.is_some()
+            || self.logging.modal_open()
+            || self.quit_confirm.is_some()
+    }
+
+    pub(crate) fn quit_confirm_open(&self) -> bool {
+        self.quit_confirm.is_some()
+    }
+
+    /// Check every hosted Activity's own keys against the reserved plain-key table.
+    pub fn check_activity_keys(&self) -> Result<(), String> {
+        self.activities
+            .iter()
+            .try_for_each(|a| keys::validate_activity(a.name(), &a.keys()))
+    }
+
+    /// Ask before quitting, naming each thing that would be lost.
+    fn open_quit_confirm(&mut self) {
+        let mut lines = Vec::new();
+        if self.logging.form_dirty() {
+            lines.push("Unsaved Contact text in the log form will be lost.".to_string());
+        }
+        for activity in &self.activities {
+            lines.extend(activity.quit_warnings());
+        }
+        self.quit_confirm = Some(lines);
+    }
+
+    fn on_quit_confirm_key(&mut self, key: KeyEvent) -> Vec<Command> {
+        let ctrl_c =
+            key.code == KeyCode::Char('c') && key.modifiers.contains(KeyModifiers::CONTROL);
+        match key.code {
+            KeyCode::Char('y') if key.modifiers.is_empty() => vec![Command::Quit],
+            _ if ctrl_c => vec![Command::Quit],
+            KeyCode::Char('n') | KeyCode::Esc | KeyCode::Enter => {
+                self.quit_confirm = None;
+                Vec::new()
+            }
+            _ => Vec::new(),
+        }
+    }
+
+    fn open_config(&mut self) {
+        self.config = Some(ConfigDialog::open(
+            self.config_path.as_deref(),
+            &self.current_settings(),
+            &self.rig_addr,
+        ));
+    }
+
+    /// Do what a Chord or alias asks. The go-to palette, keybindings modal, bandplan and rig
+    /// switcher are not built yet, so those say so.
+    fn perform(&mut self, action: Action) -> Vec<Command> {
+        match action {
+            Action::GoTo | Action::Keybindings | Action::Bandplan | Action::RigSwitcher => {
+                self.status = Some("not available yet".to_string());
+            }
+            Action::LogForm => self.open_log_form(),
+            Action::SessionList => self.logging.open_list(),
+            Action::Config => self.open_config(),
+            Action::Quit => self.open_quit_confirm(),
+            _ => {}
+        }
+        Vec::new()
     }
 
     pub(crate) fn log_form_open(&self) -> bool {
@@ -559,8 +632,13 @@ impl App {
     }
 
     pub fn on_key(&mut self, key: KeyEvent) -> Vec<Command> {
-        if key.code == KeyCode::Char('c') && key.modifiers.contains(KeyModifiers::CONTROL) {
-            return vec![Command::Quit];
+        if self.quit_confirm.is_some() {
+            return self.on_quit_confirm_key(key);
+        }
+        let chord = keys::lookup(&key, &[Scope::Chord]).map(|e| e.action);
+        // Quit is the one Chord that works over every overlay.
+        if chord == Some(Action::Quit) {
+            return self.perform(Action::Quit);
         }
         if let Some(dialog) = &mut self.config {
             return match dialog.on_key(key) {
@@ -585,6 +663,10 @@ impl App {
             return Vec::new();
         }
         if self.logging.modal_open() {
+            // The session list holds nothing to lose, so a Chord may open over it.
+            if let (true, Some(action)) = (self.logging.list_only(), chord) {
+                return self.perform(action);
+            }
             let now = self.clock();
             let (log, grid) = (self.current_log(), self.own_grid());
             if let Some(status) = self.logging.on_key(key, now, log, grid.as_ref()) {
@@ -592,9 +674,9 @@ impl App {
             }
             return Vec::new();
         }
-        if key.code == KeyCode::Char('l') && key.modifiers.contains(KeyModifiers::CONTROL) {
-            self.open_log_form();
-            return Vec::new();
+        if let Some(action) = chord {
+            self.entry = None;
+            return self.perform(action);
         }
         if self.entry.is_some() {
             return self.on_entry_key(key);
@@ -609,59 +691,53 @@ impl App {
         self.on_strip_key(key)
     }
 
+    /// The plain keys and aliases of the shared table. Only reached when no text-entering area
+    /// has focus.
     fn on_strip_key(&mut self, key: KeyEvent) -> Vec<Command> {
-        if key
-            .modifiers
-            .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT)
-        {
+        if self.focus() == Focus::Panel {
             return Vec::new();
         }
-        match key.code {
-            KeyCode::Char('q') => vec![Command::Quit],
-            KeyCode::Char('c') => {
-                self.config = Some(ConfigDialog::open(
-                    self.config_path.as_deref(),
-                    &self.current_settings(),
-                    &self.rig_addr,
-                ));
+        let Some(entry) = keys::lookup(&key, &[Scope::Plain, Scope::Alias]) else {
+            return Vec::new();
+        };
+        match entry.action {
+            Action::Quit => {
+                if self.activity_name() == "General" {
+                    self.open_quit_confirm();
+                } else {
+                    self.status = entry.blocked.map(String::from);
+                }
                 Vec::new()
             }
-            KeyCode::Char('f') => {
+            Action::LogForm | Action::SessionList | Action::Config => self.perform(entry.action),
+            Action::FreqEntry => {
                 self.start_entry(Entry::Freq(String::new()));
                 Vec::new()
             }
-            KeyCode::Char(c) if c.is_ascii_digit() => {
+            Action::FreqDigit(c) => {
                 self.start_entry(Entry::Freq(c.to_string()));
                 Vec::new()
             }
-            KeyCode::Char('S') => {
+            Action::SplitFreqEntry => {
                 if self.require(Feature::Split) && self.require_split_on() {
                     self.start_entry(Entry::SplitFreq(String::new()));
                 }
                 Vec::new()
             }
-            KeyCode::Right => self.tune(true),
-            KeyCode::Left => self.tune(false),
-            KeyCode::Up => {
+            Action::TuneUp => self.tune(true),
+            Action::TuneDown => self.tune(false),
+            Action::StepUp => {
                 self.step = (self.step + 1).min(STEPS.len() - 1);
                 Vec::new()
             }
-            KeyCode::Down => {
+            Action::StepDown => {
                 self.step = self.step.saturating_sub(1);
                 Vec::new()
             }
-            KeyCode::Char('m') => self.cycle_mode(true),
-            KeyCode::Char('M') => self.cycle_mode(false),
-            KeyCode::Char('l') => {
-                self.open_log_form();
-                Vec::new()
-            }
-            KeyCode::Char('L') => {
-                self.logging.open_list();
-                Vec::new()
-            }
-            KeyCode::Char('v') => self.toggle_vfo(),
-            KeyCode::Char('s') => self.toggle_split(),
+            Action::ModeNext => self.cycle_mode(true),
+            Action::ModePrev => self.cycle_mode(false),
+            Action::ToggleVfo => self.toggle_vfo(),
+            Action::ToggleSplit => self.toggle_split(),
             _ => Vec::new(),
         }
     }
@@ -904,6 +980,23 @@ impl App {
             dialog.render(frame, area);
         }
         self.logging.render(frame, area, self.own_grid().is_some());
+        if let Some(lines) = &self.quit_confirm {
+            let rows = lines.len() as u16;
+            let inner = Modal::new("Quit rig-tui?", 60, rows + 5).render(frame, area);
+            let mut text: Vec<Line> = lines
+                .iter()
+                .map(|l| Line::styled(l.clone(), red()))
+                .collect();
+            if !lines.is_empty() {
+                text.push(Line::raw(""));
+            }
+            text.push(Line::raw("Quit rig-tui? (default: cancel)"));
+            text.push(Line::styled(
+                "y or Ctrl-C quit    n, Esc or Enter cancel",
+                dim(),
+            ));
+            frame.render_widget(Paragraph::new(text), inner);
+        }
     }
 }
 

@@ -313,20 +313,23 @@ mod keys {
     #[test]
     fn q_quits_from_the_strip_but_is_text_in_the_input_line() {
         let mut app = connected_app_in(App::new(), "CW");
-        assert_eq!(app.on_key(key(KeyCode::Char('q'))), vec![Command::Quit]);
+        assert_eq!(app.on_key(key(KeyCode::Char('q'))), vec![]);
+        assert!(has(&screen(&app, 80, 24), "Quit rig-tui?"));
+        assert_eq!(app.on_key(key(KeyCode::Char('y'))), vec![Command::Quit]);
 
-        let mut app = focus_input(app);
+        let mut app = focus_input(connected_app_in(App::new(), "CW"));
         assert_eq!(app.on_key(key(KeyCode::Char('q'))), vec![]);
         assert!(has(&screen(&app, 40, 14), "> Q"));
     }
 
     #[test]
-    fn ctrl_c_always_quits() {
-        assert_eq!(App::new().on_key(ctrl('c')), vec![Command::Quit]);
-        assert_eq!(cw_app().on_key(ctrl('c')), vec![Command::Quit]);
-        let mut app = App::new();
-        app.open_overlay(Box::new(TestOverlay));
-        assert_eq!(app.on_key(ctrl('c')), vec![Command::Quit]);
+    fn ctrl_c_always_asks_and_a_second_one_quits() {
+        let mut overlaid = App::new();
+        overlaid.open_overlay(Box::new(TestOverlay));
+        for mut app in [App::new(), cw_app(), overlaid] {
+            assert_eq!(app.on_key(ctrl('c')), vec![]);
+            assert_eq!(app.on_key(ctrl('c')), vec![Command::Quit]);
+        }
     }
 
     #[test]
