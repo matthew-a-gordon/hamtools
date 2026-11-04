@@ -17,6 +17,7 @@ use crate::activity::{Activity, ActivityCtx};
 use crate::config_dialog::{ConfigDialog, Outcome};
 use crate::general::General;
 use crate::geocode::GeocodeResult;
+use crate::layout::{self, Fit, Panes};
 use crate::logging::{Logging, Snapshot};
 use crate::panel::{LogDefaults, LogMode};
 use crate::rig::{Command, Feature, RigEvent, RigMode};
@@ -108,6 +109,9 @@ macro_rules! ctx {
         ctx!($self, &[])
     };
     ($self:ident, $recent:expr) => {
+        ctx!($self, $recent, crate::layout::Panes::MINIMAL)
+    };
+    ($self:ident, $recent:expr, $panes:expr) => {
         ActivityCtx {
             connected: $self.connected,
             live: $self.exchange.live($self.callsign.as_deref()),
@@ -119,6 +123,7 @@ macro_rules! ctx {
                 .filter(|r| $self.now.saturating_duration_since(r.at) <= STALE_AFTER)
                 .map(|r| &r.value.0),
             recent: $recent,
+            panes: $panes,
         }
     };
 }
@@ -166,6 +171,8 @@ pub struct App {
     last_connect: Option<Instant>,
     last_poll: Option<Instant>,
     last_smeter: Option<Instant>,
+    /// The terminal size, once the loop has reported it.
+    size: Option<(u16, u16)>,
 }
 
 impl Default for App {
@@ -216,6 +223,7 @@ impl App {
             last_connect: None,
             last_poll: None,
             last_smeter: None,
+            size: None,
         }
     }
 
@@ -644,9 +652,24 @@ impl App {
         self.mode.as_ref().map(|r| &r.value.0)
     }
 
+    /// Tell the app the terminal size, so keys are ignored while the window is too small.
+    pub fn set_size(&mut self, width: u16, height: u16) {
+        self.size = Some((width, height));
+    }
+
+    /// Whether the window is below the floor, so only the notice is shown.
+    pub fn too_small(&self) -> bool {
+        self.size
+            .is_some_and(|(w, h)| matches!(layout::fit(w, h), Fit::TooSmall { .. }))
+    }
+
     pub fn on_key(&mut self, key: KeyEvent) -> Vec<Command> {
         if key.code == KeyCode::Char('c') && key.modifiers.contains(KeyModifiers::CONTROL) {
             return vec![Command::Quit];
+        }
+        if self.too_small() {
+            // Nothing is on screen to act on; only the quit Chord works.
+            return Vec::new();
         }
         if let Some(dialog) = &mut self.config {
             return match dialog.on_key(key) {
@@ -975,10 +998,10 @@ impl App {
         self.activities[self.foreground].on_tick(now, &ctx)
     }
 
-    pub(crate) fn render_body(&self, frame: &mut Frame, area: Rect) {
+    pub(crate) fn render_body(&self, frame: &mut Frame, area: Rect, panes: Panes) {
         // Room inside the border, less the heading line.
         let recent = self.recent_contacts(usize::from(area.height.saturating_sub(3)));
-        let ctx = ctx!(self, &recent);
+        let ctx = ctx!(self, &recent, panes);
         self.activities[self.foreground].render(frame, area, &ctx);
     }
 

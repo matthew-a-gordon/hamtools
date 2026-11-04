@@ -10,6 +10,7 @@ mod config_dialog;
 mod cw;
 mod general;
 pub mod geocode;
+pub mod layout;
 mod logging;
 mod panel;
 pub mod refdata;

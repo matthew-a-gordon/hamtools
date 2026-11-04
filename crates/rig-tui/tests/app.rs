@@ -27,7 +27,7 @@ mod cw_input {
         app.on_key(key(KeyCode::Backspace));
         type_str(&mut app, "de");
 
-        assert!(has(&screen(&app, 40, 14), "> CQ DE"));
+        assert!(has(&screen(&app, 80, 24), "> CQ DE"));
     }
 
     #[test]
@@ -38,7 +38,7 @@ mod cw_input {
         let commands = app.on_key(key(KeyCode::Enter));
 
         assert_eq!(commands, vec![Command::Send("CQ CQ".to_string())]);
-        let rows = screen(&app, 40, 14);
+        let rows = screen(&app, 80, 24);
         assert!(has(&rows, "CQ CQ"), "{rows:#?}");
         assert!(has(&rows, ">"), "{rows:#?}");
         assert!(!has(&rows, "> CQ"), "input should be cleared: {rows:#?}");
@@ -65,7 +65,7 @@ mod cw_input {
             commands,
             vec![Command::Send("CQ CQ DE KD0RHV KD0RHV K".to_string())]
         );
-        assert!(has(&screen(&app, 40, 14), "CQ CQ DE KD0RHV KD0RHV K"));
+        assert!(has(&screen(&app, 80, 24), "CQ CQ DE KD0RHV KD0RHV K"));
     }
 
     #[test]
@@ -76,7 +76,7 @@ mod cw_input {
         let commands = app.on_key(key(KeyCode::Enter));
 
         assert_eq!(commands, vec![]);
-        let rows = screen(&app, 60, 14);
+        let rows = screen(&app, 80, 24);
         assert!(has(&rows, "> DE {MYCALL}"), "{rows:#?}");
         assert!(
             app.status().is_some_and(|s| s.contains("MYCALL")),
@@ -93,7 +93,7 @@ mod cw_input {
         rx(&mut app, "TB005DE W9;");
         rx(&mut app, "TB003XYZ;");
 
-        assert!(has(&screen(&app, 40, 14), "CQ CQ DE W9XYZ"));
+        assert!(has(&screen(&app, 80, 24), "CQ CQ DE W9XYZ"));
     }
 
     #[test]
@@ -105,7 +105,7 @@ mod cw_input {
 
         rx(&mut app, "TB003R R;");
 
-        let rows = screen(&app, 40, 20);
+        let rows = screen(&app, 80, 24);
         let at = |needle: &str| rows.iter().position(|r| r.contains(needle)).unwrap();
         assert!(
             at("CQ") < at("DE ME") && at("DE ME") < at("R R"),
@@ -137,7 +137,7 @@ mod cw_input {
             "{:?}",
             app.status()
         );
-        assert!(has(&screen(&app, 40, 14), "> CQ"), "input is kept");
+        assert!(has(&screen(&app, 80, 24), "> CQ"), "input is kept");
     }
 }
 
@@ -188,7 +188,7 @@ mod soft_keys {
 
         app.on_key(f(2));
 
-        assert!(has(&screen(&app, 80, 14), "> DE W9"));
+        assert!(has(&screen(&app, 80, 24), "> DE W9"));
     }
 
     #[test]
@@ -322,7 +322,7 @@ mod soft_keys {
             ..Exchange::default()
         });
         let _ = app.resolved_soft_keys();
-        let _ = screen(&app, 80, 14);
+        let _ = screen(&app, 80, 24);
         let mut commands = app.tick(std::time::Instant::now());
         commands.extend(app.tick(std::time::Instant::now()));
 
@@ -367,7 +367,7 @@ mod panel_visibility {
         ] {
             let app = connected_app_in(App::new(), mode);
 
-            let rows = screen(&app, 40, 14);
+            let rows = screen(&app, 80, 24);
 
             assert_eq!(has(&rows, "Send (Enter)"), shown, "{mode}: {rows:#?}");
         }
@@ -380,10 +380,10 @@ mod panel_visibility {
         type_str(&mut app, "de me");
 
         app.on_rig(mode_event("USB"));
-        assert!(!has(&screen(&app, 40, 14), "CQ"));
+        assert!(!has(&screen(&app, 80, 24), "CQ"));
         app.on_rig(mode_event("CWR"));
 
-        let rows = screen(&app, 40, 14);
+        let rows = screen(&app, 80, 24);
         assert!(has(&rows, "CQ"), "{rows:#?}");
         assert!(has(&rows, "> DE ME"), "{rows:#?}");
     }
@@ -438,7 +438,7 @@ mod keys {
 
         let mut app = focus_input(app);
         assert_eq!(app.on_key(key(KeyCode::Char('q'))), vec![]);
-        assert!(has(&screen(&app, 40, 14), "> Q"));
+        assert!(has(&screen(&app, 80, 24), "> Q"));
     }
 
     #[test]
@@ -516,10 +516,10 @@ mod keys {
         // `q`, F-keys and text reach neither the quit command nor the input line.
         assert_eq!(app.on_key(key(KeyCode::Char('q'))), vec![]);
         assert_eq!(app.on_key(key(KeyCode::F(1))), vec![]);
-        assert!(has(&screen(&app, 40, 14), "TEST MODAL"));
+        assert!(has(&screen(&app, 80, 24), "TEST MODAL"));
         app.on_key(key(KeyCode::Esc));
         assert!(!app.has_overlay());
-        assert!(!has(&screen(&app, 40, 14), "> Q"));
+        assert!(!has(&screen(&app, 80, 24), "> Q"));
     }
 
     #[test]
@@ -608,13 +608,13 @@ mod connection {
     #[test]
     fn the_strip_says_disconnected_and_then_shows_what_the_rig_reported() {
         let mut app = App::new();
-        assert!(has(&screen(&app, 60, 14), "disconnected"));
+        assert!(has(&screen(&app, 80, 24), "disconnected"));
 
         app.on_rig(RigEvent::Connected);
         app.on_rig(RigEvent::Freq(14_074_000));
         app.on_rig(mode_event("CW"));
 
-        let rows = screen(&app, 60, 14);
+        let rows = screen(&app, 80, 24);
         assert!(has(&rows, "14.074.000"), "{rows:#?}");
         assert!(has(&rows, "CW 500"), "{rows:#?}");
         assert!(!has(&rows, "disconnected"), "{rows:#?}");

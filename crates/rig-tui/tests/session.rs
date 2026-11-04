@@ -43,7 +43,7 @@ async fn in_cw_the_tb_buffer_is_polled_and_decoded_text_reaches_the_transcript()
     tick(&mut rig, &mut app, t).await; // learns the mode
     tick(&mut rig, &mut app, t).await; // CW is active now, so TB is polled
 
-    assert!(has(&screen(&app, 40, 14), "HELLO"));
+    assert!(has(&screen(&app, 80, 24), "HELLO"));
     assert!(fake.commands().contains(&"+w TB;".to_string()));
 }
 
@@ -128,7 +128,7 @@ async fn the_app_starts_with_no_rig_and_connects_once_the_daemon_appears() {
         "{:?}",
         app.status()
     );
-    assert!(has(&screen(&app, 80, 14), "disconnected"));
+    assert!(has(&screen(&app, 80, 24), "disconnected"));
 
     // Not due yet: no second attempt.
     assert_eq!(app.tick(t0 + Duration::from_secs(1)), vec![]);
@@ -155,7 +155,7 @@ async fn losing_the_connection_is_reported_and_the_app_reconnects() {
 
     assert!(!app.connected());
     assert!(app.status().is_some(), "the loss is reported");
-    assert!(has(&screen(&app, 80, 14), "disconnected"));
+    assert!(has(&screen(&app, 80, 24), "disconnected"));
 
     tick(&mut rig, &mut app, t0 + RECONNECT_EVERY).await;
     assert!(app.connected());

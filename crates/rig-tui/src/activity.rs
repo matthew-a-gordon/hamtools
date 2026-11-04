@@ -11,6 +11,7 @@ use ratatui::Frame;
 use ratatui::crossterm::event::KeyEvent;
 use ratatui::layout::Rect;
 
+use crate::layout::Panes;
 use crate::panel::{LogDefaults, LogMode};
 use crate::rig::{Command, RigMode};
 use crate::softkeys::{Live, ResolvedKey};
@@ -29,6 +30,8 @@ pub struct ActivityCtx<'a> {
     pub fresh_mode: Option<&'a RigMode>,
     /// Recent Contacts, newest first (filled for rendering only).
     pub recent: &'a [String],
+    /// The panes the window has room for (see [`crate::layout`]).
+    pub panes: Panes,
 }
 
 /// What an Activity returns: rig commands from the closed set, and an optional status line.
