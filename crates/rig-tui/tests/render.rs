@@ -112,16 +112,17 @@ mod soft_key_bar {
     #[test]
     fn bound_function_keys_are_listed_with_their_text() {
         let app = app(BTreeMap::from([
-            (1, "CQ CQ CQ DE {CALL} K".to_string()),
+            (1, "CQ CQ CQ DE {MYCALL} K".to_string()),
             (2, "73 TU".to_string()),
         ]));
 
-        let rows = screen(&app, 80, 14);
+        let rows = screen(&app, 200, 14);
 
         let bar = rows.iter().find(|r| r.contains("F1 ")).expect("no bar");
         assert!(bar.contains("F1 CQ CQ CQ DE KD0RHV K"), "{bar:?}");
         assert!(bar.contains("F2 73 TU"), "{bar:?}");
-        assert!(!bar.contains("F3"), "{bar:?}");
+        // Variables with no value yet stay visible as written.
+        assert!(bar.contains("F3 {THEIRCALL} TU 73 DE KD0RHV EE"), "{bar:?}");
     }
 
     #[test]
@@ -155,10 +156,34 @@ mod soft_key_bar {
     }
 
     #[test]
-    fn no_bar_without_soft_keys() {
+    fn built_in_defaults_fill_the_bar_when_nothing_is_set() {
         let app = app(BTreeMap::new());
 
-        assert!(!has(&screen(&app, 80, 14), "F1 "));
+        assert!(has(&screen(&app, 200, 14), "F1 CQ CQ DE KD0RHV KD0RHV K"));
+    }
+
+    #[test]
+    fn the_bar_styles_each_key_by_the_layer_it_came_from_and_strikes_invalid_ones() {
+        use ratatui::style::Modifier;
+        let app = app(BTreeMap::from([
+            (1, "CQ".to_string()),
+            (2, "DE {CALL}".to_string()),
+        ]));
+        let mut terminal = Terminal::new(TestBackend::new(120, 14)).unwrap();
+        terminal.draw(|frame| render(&app, frame)).unwrap();
+        let buffer = terminal.backend().buffer();
+        let row = (5..14u16)
+            .find(|&y| buffer[(0, y)].symbol() == "F")
+            .expect("no bar row");
+        let at = |text: &str| {
+            let line: String = (0..120u16).map(|x| buffer[(x, row)].symbol()).collect();
+            let x = line.find(text).expect(text) as u16;
+            buffer[(x, row)].modifier
+        };
+
+        assert!(!at("F1 CQ").intersects(Modifier::DIM | Modifier::CROSSED_OUT));
+        assert!(at("F2 DE").contains(Modifier::CROSSED_OUT));
+        assert!(at("F4 ").contains(Modifier::DIM));
     }
 
     #[test]

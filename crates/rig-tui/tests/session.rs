@@ -74,7 +74,7 @@ async fn a_soft_key_keys_the_rigs_morse_sender_with_the_callsign_filled_in() {
     let fake = FakeRigctld::start(&[]).await;
     let mut rig = Rig::new(fake.addr.to_string());
     let mut app = App::with_callsign(Some("W9XYZ".to_string()))
-        .with_soft_keys([(1, "CQ DE {CALL}".to_string())].into());
+        .with_soft_keys([(1, "CQ DE {MYCALL}".to_string())].into());
     tick(&mut rig, &mut app, Instant::now()).await; // connects
     tick(&mut rig, &mut app, Instant::now()).await; // learns the mode
 

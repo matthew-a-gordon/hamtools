@@ -11,6 +11,7 @@ pub mod geocode;
 mod logging;
 mod panel;
 mod rig;
+pub mod softkeys;
 mod style;
 mod ui;
 

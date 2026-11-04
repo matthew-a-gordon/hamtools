@@ -19,6 +19,7 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Paragraph, Wrap};
 
 use crate::geocode::{Candidate, GeocodeResult};
+use crate::softkeys::{Live, preview, validate};
 use crate::style::{dim, red, yellow};
 
 const LABEL_WIDTH: usize = 13;
@@ -696,12 +697,25 @@ impl ConfigDialog {
                 lines.push(Line::styled(format!("    {error}"), red()));
             }
             if focused && matches!(field, Field::Soft(_)) && !value.trim().is_empty() {
-                let shown = if callsign.is_empty() {
-                    value.to_string()
+                let report = validate(value);
+                if report.problems.is_empty() {
+                    let live = Live {
+                        my_call: Some(callsign),
+                        ..Live::default()
+                    };
+                    let shown = preview(value, &live);
+                    lines.push(Line::styled(format!("    sends: {shown}"), dim()));
                 } else {
-                    value.replace("{CALL}", callsign)
-                };
-                lines.push(Line::styled(format!("    sends: {shown}"), dim()));
+                    let problems: Vec<String> =
+                        report.problems.iter().map(ToString::to_string).collect();
+                    lines.push(Line::styled(
+                        format!("    will not send: {}", problems.join(", ")),
+                        red(),
+                    ));
+                }
+                for warning in &report.warnings {
+                    lines.push(Line::styled(format!("    {warning}"), yellow()));
+                }
             }
             if field == Field::Address {
                 for text in DISCLOSURE {
