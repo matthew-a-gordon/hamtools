@@ -124,6 +124,8 @@ fn run(
     let (lookups, answers) = mpsc::channel();
     loop {
         app.set_utc(SystemTime::now());
+        let size = terminal.size()?;
+        app.set_size(size.width, size.height);
         terminal.draw(|frame| render(&app, frame))?;
 
         if event::poll(TICK)?
