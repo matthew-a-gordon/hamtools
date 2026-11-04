@@ -6,6 +6,7 @@ use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::widgets::{Block, Borders, Paragraph};
 
+use crate::activity::ActivityCtx;
 use crate::app::{App, Entry, Focus};
 use crate::rig::Feature;
 use crate::style::{dim, focus_border, red};
@@ -131,7 +132,12 @@ fn row_two(app: &App) -> String {
 /// The two-row rig-state strip: what the rig last reported, never what was requested.
 fn render_strip(app: &App, frame: &mut Frame, area: Rect) {
     let border = focus_border(app.focus() == Focus::Strip);
-    let title = format!("rig-tui - {} logged", app.logged_count());
+    let title = format!(
+        "{} | {} | {} logged",
+        app.activity_name(),
+        app.rig_name(),
+        app.logged_count()
+    );
     let block = Block::default()
         .borders(Borders::ALL)
         .border_style(border)
@@ -143,13 +149,12 @@ fn render_strip(app: &App, frame: &mut Frame, area: Rect) {
 }
 
 /// Shown in the body when the rig's mode has no panel.
-pub(crate) fn render_no_panel(app: &App, frame: &mut Frame, area: Rect) {
-    let mut text = match app.rig_mode() {
+pub(crate) fn render_no_panel(ctx: &ActivityCtx, frame: &mut Frame, area: Rect) {
+    let mut text = match ctx.rig_mode {
         Some(mode) => format!("No panel for {mode}"),
         None => "No mode reported yet".to_string(),
     };
-    // Room inside the border, less the heading line.
-    let recent = app.recent_contacts(usize::from(area.height.saturating_sub(3)));
+    let recent = ctx.recent;
     if !recent.is_empty() {
         text.push_str("\nRecent contacts:");
         for line in recent
@@ -180,13 +185,5 @@ fn hint(app: &App) -> &'static str {
     if app.entry().is_some() {
         return "digits kHz, or MHz with '.'  Enter set  Esc cancel  Ctrl-C quit";
     }
-    match app.focus() {
-        Focus::Panel => "Enter send  F1-F6 soft keys  Tab/Esc strip\nCtrl-L log  Ctrl-C quit",
-        Focus::Strip if app.panel_active() => {
-            "f freq  </> tune  ^/v step  m/M mode  v VFO  s/S split\nl log  L list  c config  Tab input  q quit"
-        }
-        Focus::Strip => {
-            "f freq  </> tune  ^/v step  m/M mode  v VFO  s/S split\nl log  L list  c config  q quit"
-        }
-    }
+    app.activity_hint()
 }
