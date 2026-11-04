@@ -5,12 +5,12 @@ Rust TUIs (ratatui) for ham rig control and satellite work. Targets an Elecraft 
 | Crate | Purpose |
 | --- | --- |
 | `rigctld-client` | Async client for the rigctld text protocol |
-| `rig-tui` | Rig control TUI for any rigctld: rig strip, CW panel with Soft keys (F1-F6) |
+| `rig-tui` | Rig control TUI for any rigctld: rig strip, CW panel with Soft keys (F1-F6), logging, config dialog |
 | `hamtools-config` | The shared `config.toml`: typed read, field-level write |
 | `hamtools-tui` | Shared modal, text-field and list overlay widgets |
 | `sat-tui` | Pass prediction, Doppler-corrected rig tracking, SatNOGS transmitter data |
 
-Status: scaffolding. Nothing here has been tested on real hardware yet.
+Status: early. `rig-tui`'s strip, tuning, VFO and split, logging and config dialog have been run against a KX3 without transmitting; nothing else has been tried on real hardware. `CLAUDE.md` ("Hardware status") lists exactly what is verified.
 
 ## Development
 
