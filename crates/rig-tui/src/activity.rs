@@ -7,6 +7,9 @@
 use std::collections::BTreeMap;
 use std::time::Instant;
 
+use chrono::{DateTime, Utc};
+use hamtools_config::LicenseClass;
+
 use ratatui::Frame;
 use ratatui::crossterm::event::KeyEvent;
 use ratatui::layout::Rect;
@@ -33,6 +36,51 @@ pub struct ActivityCtx<'a> {
     pub recent: &'a [String],
     /// The panes the window has room for (see [`crate::layout`]).
     pub panes: Panes,
+    /// The UTC time the strip shows.
+    pub utc: DateTime<Utc>,
+    /// The Observer position (latitude, longitude in degrees) from the Locator, if one is set.
+    pub observer: Option<(f64, f64)>,
+    pub license_class: Option<LicenseClass>,
+    /// Contacts in the Log dated today (UTC), read each time. Empty unless the Activity says
+    /// [`Activity::uses_log`].
+    pub worked: &'a [Worked],
+    /// Contacts logged this run.
+    pub logged: usize,
+}
+
+/// One Contact from today's Log, as much as "worked today" needs.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Worked {
+    /// Uppercase.
+    pub call: String,
+    /// ADIF band name, e.g. `20m`.
+    pub band: String,
+    /// ADIF mode, e.g. `CW`, `SSB`, `FT8`.
+    pub mode: String,
+}
+
+/// Open the Contact form on this Call (and Their ref). Never tunes.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LogPrefill {
+    pub call: String,
+    pub their_ref: Option<String>,
+}
+
+/// Tune the receive frequency to `hz`, and the mode when one is mapped. The host applies its
+/// gates (not connected, Doppler tracking). Never touches split.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TuneRequest {
+    pub hz: u64,
+    pub mode: Option<RigMode>,
+    /// The name the source gave the mode, for the note when none is mapped.
+    pub mode_name: String,
+}
+
+/// A request an Activity makes of the host after a key, fetched with [`Activity::take_request`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum HostRequest {
+    OpenLog(LogPrefill),
+    Tune(TuneRequest),
 }
 
 /// What an Activity returns: rig commands from the closed set, and an optional status line.
@@ -76,6 +124,19 @@ pub trait Activity {
     /// Why tuning from outside this Activity (the band plan modal) must be refused right now:
     /// `Some("Doppler tracking")` while Satellite is correcting the dial itself.
     fn tuning_blocked(&self) -> Option<&'static str> {
+        None
+    }
+
+    /// The Activity has just come to the foreground.
+    fn on_enter(&mut self) {}
+
+    /// Whether the Activity wants [`ActivityCtx::worked`] filled (it reads the Log).
+    fn uses_log(&self) -> bool {
+        false
+    }
+
+    /// A request the last key made of the host (open the Contact form, tune). Taking it clears it.
+    fn take_request(&mut self) -> Option<HostRequest> {
         None
     }
 

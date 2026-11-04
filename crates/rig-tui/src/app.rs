@@ -16,7 +16,7 @@ use ratatui::layout::Rect;
 use ratatui::text::Line;
 use ratatui::widgets::Paragraph;
 
-use crate::activity::{Activity, ActivityCtx};
+use crate::activity::{Activity, ActivityCtx, HostRequest, LogPrefill, TuneRequest, Worked};
 use crate::bandplan::{BandAction, BandplanModal, View as BandView};
 use crate::config_dialog::{ConfigDialog, Outcome};
 use crate::general::General;
@@ -120,6 +120,9 @@ macro_rules! ctx {
         ctx!($self, $recent, crate::layout::Panes::MINIMAL)
     };
     ($self:ident, $recent:expr, $panes:expr) => {
+        ctx!($self, $recent, $panes, &[])
+    };
+    ($self:ident, $recent:expr, $panes:expr, $worked:expr) => {
         ActivityCtx {
             connected: $self.connected,
             live: $self.exchange.live($self.callsign.as_deref()),
@@ -132,6 +135,11 @@ macro_rules! ctx {
                 .map(|r| &r.value.0),
             recent: $recent,
             panes: $panes,
+            utc: $self.clock(),
+            observer: $self.locator.as_deref().and_then(crate::spots::grid_center),
+            license_class: $self.license_class,
+            worked: $worked,
+            logged: $self.logging.count(),
         }
     };
 }
@@ -394,6 +402,7 @@ impl App {
         if index < self.activities.len() {
             self.foreground = index;
             self.entry = None;
+            self.activities[index].on_enter();
         }
     }
 
@@ -755,10 +764,21 @@ impl App {
     /// The `l` gate. Opens the form with a snapshot of the rig, or says in the status line which
     /// condition failed.
     fn open_log_form(&mut self) {
+        self.open_log_form_with(None);
+    }
+
+    /// `open_log_form`, with the Call (and Their ref) an Activity chose, such as a spot.
+    fn open_log_form_with(&mut self, prefill: Option<LogPrefill>) {
         match self.log_snapshot() {
-            Ok(snapshot) => {
+            Ok(mut snapshot) => {
                 self.entry = None;
+                if let Some(their_ref) = prefill.as_ref().and_then(|p| p.their_ref.clone()) {
+                    snapshot.defaults.their_ref = Some(their_ref);
+                }
                 self.logging.open_form(snapshot);
+                if let Some(p) = &prefill {
+                    self.logging.prefill_call(&p.call);
+                }
                 self.sync_form_exchange();
             }
             Err(why) => self.status = Some(why),
@@ -977,14 +997,74 @@ impl App {
         if self.entry.is_some() {
             return self.on_entry_key(key);
         }
-        let ctx = ctx!(self);
+        let worked = self.worked_today();
+        let ctx = ctx!(self, &[], crate::layout::Panes::MINIMAL, &worked);
         if let Some(out) = self.activities[self.foreground].on_key(key, &ctx) {
             if out.status.is_some() {
                 self.status = out.status;
             }
-            return out.commands;
+            let mut commands = out.commands;
+            match self.activities[self.foreground].take_request() {
+                Some(HostRequest::OpenLog(prefill)) => self.open_log_form_with(Some(prefill)),
+                Some(HostRequest::Tune(tune)) => commands.extend(self.apply_tune(tune)),
+                None => {}
+            }
+            return commands;
         }
         self.on_strip_key(key)
+    }
+
+    /// Today's Contacts from the Log, for an Activity that marks "worked today". Derived afresh
+    /// each time so there is no state to drift; empty for any other Activity.
+    fn worked_today(&self) -> Vec<Worked> {
+        if !self.activities[self.foreground].uses_log() {
+            return Vec::new();
+        }
+        let Ok(records) = self
+            .current_log()
+            .and_then(|log| log.read().map_err(|e| e.to_string()))
+        else {
+            return Vec::new();
+        };
+        let today = self.clock().date_naive();
+        records
+            .iter()
+            .filter(|r| r.start().is_some_and(|s| s.date_naive() == today))
+            .filter_map(|r| {
+                Some(Worked {
+                    call: r.call()?.to_ascii_uppercase(),
+                    band: r.band()?.to_string(),
+                    mode: r.mode()?.to_ascii_uppercase(),
+                })
+            })
+            .collect()
+    }
+
+    /// Tune the receive frequency (and the mode when one is mapped) for an Activity. Refused
+    /// while any hosted Activity is correcting the dial itself. Never touches split, and none of
+    /// these commands can key the transmitter.
+    fn apply_tune(&mut self, tune: TuneRequest) -> Vec<Command> {
+        if let Some(why) = self.activities.iter().find_map(|a| a.tuning_blocked()) {
+            self.status = Some(format!("not while {why}"));
+            return Vec::new();
+        }
+        if !self.ready() {
+            return Vec::new();
+        }
+        let mut commands = Vec::new();
+        match tune.mode {
+            Some(mode) => {
+                self.status = None;
+                if self.last_mode() != Some(&mode) {
+                    commands.push(Command::SetMode { mode, passband: 0 });
+                }
+            }
+            None => {
+                self.status = Some(format!("mode {} not set: frequency only", tune.mode_name));
+            }
+        }
+        commands.push(Command::SetFreq(tune.hz));
+        commands
     }
 
     /// The plain keys and aliases of the shared table. Only reached when no text-entering area
@@ -1264,7 +1344,8 @@ impl App {
     pub(crate) fn render_body(&self, frame: &mut Frame, area: Rect, panes: Panes) {
         // Room inside the border, less the heading line.
         let recent = self.recent_contacts(usize::from(area.height.saturating_sub(3)));
-        let ctx = ctx!(self, &recent, panes);
+        let worked = self.worked_today();
+        let ctx = ctx!(self, &recent, panes, &worked);
         self.activities[self.foreground].render(frame, area, &ctx);
     }
 
