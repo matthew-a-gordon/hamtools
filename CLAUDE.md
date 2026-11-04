@@ -18,8 +18,11 @@ Verified on the user's KX3 (2026-10-26, hamlib 4.7.2, rigctld model 2045):
 - 38400 baud works on `/dev/kx3`. The user must be in `dialout` (a login session started before joining the group lacks it; use `sg dialout -c '...'`).
 - `w TB;` through rigctld returns the documented `TBtrrs;` reply (`Reply: TB006F C E ;\0RPRT 0`; `rigctld-client` handles the framing). The KX3's decoder emits `*` for undecodable characters, so weak or fading signals give garbage; that is the radio, not the client.
 - `b <text>` (`send_morse`) keys CW on the KX3; the user confirmed it on the radio display. `TB;`'s transmit count `t` drains as it sends.
+- Raw `rigctld` protocol on the KX3 (2026-11-04, hamlib 4.7.2, model 2045, `-s 38400`, a temporary daemon run by the agent), checked by hand over TCP, not through `rigctld-client`: `f`, `m` (`CWR` with passband `400`), `v` (`VFOA`), `s`, `t` (PTT, read only) and `l STRENGTH` (a signed dB value relative to S9, `-54` on a quiet band) all read back. `V VFOB`/`V VFOA`, `S 1 VFOB`/`S 0 VFOA`, `F` and `M` all returned `RPRT 0` and read back correctly, then were restored. Nothing was transmitted.
 
 Still unverified:
+- With split on and TX VFO B, `i` (split TX frequency) returned VFO A's frequency, not VFO B's; the cause is unknown. With split off, `i` returns 0 and `x` returns an empty mode.
+- The 2 Hz / 4 Hz polling cadences, and the above through `rigctld-client` (which has no `get_level`, VFO or split calls yet).
 - Sending when the text exceeds the KX3's 24-char `KY` packet or its buffer (hamlib is expected to chunk it).
 - FT-847: serial is 4800..57600, 8N2 in hamlib, but the actual CAT baud is unknown (menu item 14).
 - How hamlib's ft847 backend exposes sat mode, split and the sub-VFO.
