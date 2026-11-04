@@ -168,6 +168,8 @@ pub struct App {
     plan_soft_keys: Option<String>,
     plan_soft_overrides: BTreeMap<u8, String>,
     exchange: Exchange,
+    /// The exchange as it was before the Contact form began publishing into it.
+    exchange_saved: Option<Exchange>,
     /// The layered Soft keys, recomputed whenever a layer changes.
     resolved: Resolved,
     locator: Option<String>,
@@ -222,6 +224,7 @@ impl App {
             plan_soft_keys: None,
             plan_soft_overrides: BTreeMap::new(),
             exchange: Exchange::default(),
+            exchange_saved: None,
             resolved: resolve(&Layers::default()),
             locator: None,
             log_path: None,
@@ -641,8 +644,31 @@ impl App {
             Ok(snapshot) => {
                 self.entry = None;
                 self.logging.open_form(snapshot);
+                self.sync_form_exchange();
             }
             Err(why) => self.status = Some(why),
+        }
+    }
+
+    /// Publish the open form's call, reference and reports as the Soft key variables
+    /// `{THEIRCALL}`, `{THEIRREF}`, `{MYRST}` and `{THEIRRST}`, and put the exchange back as it
+    /// was when the form closes.
+    fn sync_form_exchange(&mut self) {
+        match self.logging.view() {
+            Some(view) => {
+                if self.exchange_saved.is_none() {
+                    self.exchange_saved = Some(self.exchange.clone());
+                }
+                self.exchange.their_call = Some(view.their_call.to_string());
+                self.exchange.their_ref = Some(view.their_ref.to_string());
+                self.exchange.my_rst = Some(view.rst_sent.to_string());
+                self.exchange.their_rst = Some(view.rst_rcvd.to_string());
+            }
+            None => {
+                if let Some(before) = self.exchange_saved.take() {
+                    self.exchange = before;
+                }
+            }
         }
     }
 
@@ -776,11 +802,35 @@ impl App {
             if let (true, Some(action)) = (self.logging.list_only(), chord) {
                 return self.perform(action);
             }
+            // Soft keys work while the form has the keyboard; the Activity sees what is typed.
+            if self.logging.form_open() && matches!(key.code, KeyCode::F(1..=6)) {
+                let ctx = ctx!(self);
+                return match self.activities[self.foreground].on_key(key, &ctx) {
+                    Some(out) => {
+                        if out.status.is_some() {
+                            self.status = out.status;
+                        }
+                        out.commands
+                    }
+                    None => Vec::new(),
+                };
+            }
             let now = self.clock();
             let (log, grid) = (self.current_log(), self.own_grid());
             if let Some(status) = self.logging.on_key(key, now, log, grid.as_ref()) {
                 self.status = Some(status);
             }
+            if self.logging.take_reopen() {
+                // Quick entry: the next Contact needs a fresh rig reading, like any other.
+                match self.log_snapshot() {
+                    Ok(snapshot) => self.logging.open_form(snapshot),
+                    Err(why) => {
+                        let saved = self.status.take().unwrap_or_default();
+                        self.status = Some(format!("{saved}; {why}"));
+                    }
+                }
+            }
+            self.sync_form_exchange();
             return Vec::new();
         }
         if let Some(action) = chord {
