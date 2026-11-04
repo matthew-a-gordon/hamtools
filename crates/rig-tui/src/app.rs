@@ -6,7 +6,9 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant, SystemTime};
 
+use chrono::{DateTime, Utc};
 use hamtools_config::{Callsign, Grid, Settings};
+use logbook::{Log, band_for_hz};
 use ratatui::Frame;
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::layout::Rect;
@@ -14,6 +16,7 @@ use ratatui::layout::Rect;
 use crate::config_dialog::{ConfigDialog, Outcome};
 use crate::cw::CwPanel;
 use crate::geocode::GeocodeResult;
+use crate::logging::{Logging, Snapshot, default_log_mode};
 use crate::panel::{LogDefaults, LogMode, ModePanel, PanelCommand, PanelCtx};
 use crate::rig::{Command, Feature, RigEvent, RigMode};
 
@@ -117,9 +120,11 @@ pub struct App {
     /// The status came from a failing poll, so the next good poll clears it.
     poll_failed: bool,
     callsign: Option<String>,
+    logging: Logging,
     soft_keys: BTreeMap<u8, String>,
     locator: Option<String>,
     log_path: Option<PathBuf>,
+    default_log_path: Option<PathBuf>,
     rig_addr: String,
     config_path: Option<PathBuf>,
     config: Option<ConfigDialog>,
@@ -158,9 +163,11 @@ impl App {
             status: None,
             poll_failed: false,
             callsign: None,
+            logging: Logging::new(),
             soft_keys: BTreeMap::new(),
             locator: None,
             log_path: None,
+            default_log_path: None,
             rig_addr: DEFAULT_RIG_ADDR.to_string(),
             config_path: None,
             config: None,
@@ -182,6 +189,17 @@ impl App {
     pub fn with_soft_keys(mut self, soft_keys: BTreeMap<u8, String>) -> Self {
         self.soft_keys = soft_keys;
         self
+    }
+
+    /// Where the Log lives when the config sets no `[logbook] path`. `None`: logging is off.
+    pub fn with_default_log_path(mut self, path: Option<PathBuf>) -> Self {
+        self.default_log_path = path;
+        self
+    }
+
+    /// How many Contacts were logged this run.
+    pub fn logged_count(&self) -> usize {
+        self.logging.count()
     }
 
     /// The config file the dialog edits (`None`: no location, so the dialog is read-only).
@@ -364,7 +382,92 @@ impl App {
     }
 
     pub fn has_overlay(&self) -> bool {
-        self.overlay.is_some() || self.config.is_some()
+        self.overlay.is_some() || self.config.is_some() || self.logging.modal_open()
+    }
+
+    pub(crate) fn log_form_open(&self) -> bool {
+        self.logging.form_open()
+    }
+
+    /// Recent Contacts for the body when no panel applies, newest first.
+    pub(crate) fn recent_contacts(&self, n: usize) -> Vec<String> {
+        self.logging.recent(n)
+    }
+
+    /// The Log for the settings in use now: the config's `[logbook] path`, else the default.
+    /// Built fresh each time (a `Log` holds no handle), so a saved path or callsign applies at
+    /// once and Contacts already logged keep what they were written with.
+    fn current_log(&self) -> Result<Log, String> {
+        let operator = self
+            .callsign
+            .as_deref()
+            .and_then(|c| Callsign::new(c).ok())
+            .ok_or("no callsign: set `callsign` in the config file to log")?;
+        let path = self
+            .log_path
+            .clone()
+            .or_else(|| self.default_log_path.clone())
+            .ok_or("no log path: set `[logbook] path` in the config file to log")?;
+        Ok(Log::new(path, operator))
+    }
+
+    /// The Locator for `MY_GRIDSQUARE`, if one is set and valid.
+    fn own_grid(&self) -> Option<Grid> {
+        self.locator.as_deref().and_then(|g| Grid::new(g).ok())
+    }
+
+    /// The `l` gate. Opens the form with a snapshot of the rig, or says in the status line which
+    /// condition failed.
+    fn open_log_form(&mut self) {
+        match self.log_snapshot() {
+            Ok(snapshot) => {
+                self.entry = None;
+                self.logging.open_form(snapshot);
+            }
+            Err(why) => self.status = Some(why),
+        }
+    }
+
+    fn log_snapshot(&self) -> Result<Snapshot, String> {
+        if !self.connected {
+            return Err("not connected: cannot log".to_string());
+        }
+        let (Some(_), Some(rig_mode)) = (self.frequency(), self.rig_mode().cloned()) else {
+            return Err("rig has not reported frequency and mode in the last 2 s".to_string());
+        };
+        // The transmit frequency under split. Its read-back on the KX3 is untested on hardware.
+        let Some(hz) = self.transmit_frequency() else {
+            return Err(
+                "transmit frequency not known: the rig has not reported split or its transmit frequency".to_string(),
+            );
+        };
+        if band_for_hz(hz).is_none() {
+            return Err(format!("{} Hz is outside the band table", hz));
+        }
+        self.current_log()?
+            .check()
+            .map_err(|e| format!("log: {e}"))?;
+        let (log_mode, defaults) = match self.active_panel().map(|i| &self.panels[i]) {
+            Some(panel) => (
+                panel
+                    .logbook_mode(&rig_mode)
+                    .or_else(|| default_log_mode(&rig_mode)),
+                panel.log_defaults(),
+            ),
+            None => (default_log_mode(&rig_mode), LogDefaults::default()),
+        };
+        Ok(Snapshot {
+            hz,
+            rig_mode,
+            started: self.clock(),
+            log_mode,
+            defaults,
+        })
+    }
+
+    /// The UTC time that stamps Contacts: the same clock the strip shows.
+    fn clock(&self) -> DateTime<Utc> {
+        self.utc.unwrap_or_else(SystemTime::now).into()
     }
 
     /// Open a modal; it gets every key until it closes.
@@ -432,6 +535,18 @@ impl App {
             }
             return Vec::new();
         }
+        if self.logging.modal_open() {
+            let now = self.clock();
+            let (log, grid) = (self.current_log(), self.own_grid());
+            if let Some(status) = self.logging.on_key(key, now, log, grid.as_ref()) {
+                self.status = Some(status);
+            }
+            return Vec::new();
+        }
+        if key.code == KeyCode::Char('l') && key.modifiers.contains(KeyModifiers::CONTROL) {
+            self.open_log_form();
+            return Vec::new();
+        }
         if self.entry.is_some() {
             return self.on_entry_key(key);
         }
@@ -497,6 +612,14 @@ impl App {
             }
             KeyCode::Char('m') => self.cycle_mode(true),
             KeyCode::Char('M') => self.cycle_mode(false),
+            KeyCode::Char('l') => {
+                self.open_log_form();
+                Vec::new()
+            }
+            KeyCode::Char('L') => {
+                self.logging.open_list();
+                Vec::new()
+            }
             KeyCode::Char('v') => self.toggle_vfo(),
             KeyCode::Char('s') => self.toggle_split(),
             _ => Vec::new(),
@@ -770,6 +893,7 @@ impl App {
         if let Some(dialog) = &self.config {
             dialog.render(frame, area);
         }
+        self.logging.render(frame, area, self.own_grid().is_some());
     }
 }
 

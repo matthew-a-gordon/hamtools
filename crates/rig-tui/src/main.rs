@@ -7,7 +7,7 @@ use std::time::{Duration, Instant, SystemTime};
 use ratatui::DefaultTerminal;
 use ratatui::crossterm::event::{self, Event, KeyEventKind};
 use rig_tui::geocode::{GeocodeResult, Geocoder};
-use rig_tui::{App, Command, Config, Rig, config_path, render};
+use rig_tui::{App, Command, Config, Rig, config_path, default_log_path, render};
 use tokio::runtime::Runtime;
 
 /// One loop pass. The KX3 clears its decode buffer on each `TB;` and holds only 40 characters,
@@ -68,6 +68,10 @@ fn try_main() -> Result<(), Box<dyn Error>> {
         .with_soft_keys(config.soft_keys)
         .with_locator(config.locator)
         .with_log_path(config.log_path)
+        .with_default_log_path(default_log_path(
+            std::env::var("XDG_DATA_HOME").ok().as_deref(),
+            std::env::var("HOME").ok().as_deref(),
+        ))
         .with_rig_addr(addr)
         .with_config_path(config_arg.or(default_path));
     let geocoder = Geocoder::new();

@@ -79,3 +79,14 @@ impl Config {
         })
     }
 }
+
+/// The default Log: `$XDG_DATA_HOME/hamtools/log.adi`, falling back to
+/// `$HOME/.local/share/hamtools/log.adi`. The same place sat-tui uses, so both tools share one
+/// file. The config's `[logbook] path` overrides it.
+pub fn default_log_path(xdg_data_home: Option<&str>, home: Option<&str>) -> Option<PathBuf> {
+    let base = match xdg_data_home.filter(|dir| !dir.is_empty()) {
+        Some(dir) => PathBuf::from(dir),
+        None => Path::new(home?).join(".local").join("share"),
+    };
+    Some(base.join("hamtools").join("log.adi"))
+}
