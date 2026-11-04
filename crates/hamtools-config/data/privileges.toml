@@ -1,0 +1,65 @@
+# FCC privilege layer (47 CFR 97.301, Region 2). Integer Hz. One row per range over which the
+# set of license classes is the same, so rows never overlap.
+#
+# Transcribed from a research note (2026-11-04), NOT yet re-read from the live eCFR. Verify
+# against the current rules and the operator's own license before relying on any row. Band
+# edges only: emission types and power limits are deliberately not encoded.
+#
+# x = extra, a = advanced, g = general, t = technician, n = novice.
+
+meta = { as_of = "2026-11-04", amended = "91 FR 1430 (per research note, unverified)" }
+
+segment = [
+  { band = "160m", lo_hz = 1_800_000, hi_hz = 2_000_000, classes = "xag", source = "fcc-97.301" },
+
+  { band = "80m", lo_hz = 3_500_000, hi_hz = 3_525_000, classes = "x", source = "fcc-97.301(b)" },
+  { band = "80m", lo_hz = 3_525_000, hi_hz = 3_600_000, classes = "xagtn", source = "fcc-97.301" },
+  { band = "80m", lo_hz = 3_600_000, hi_hz = 3_700_000, classes = "x", source = "fcc-97.301(b)" },
+  { band = "80m", lo_hz = 3_700_000, hi_hz = 3_800_000, classes = "xa", source = "fcc-97.301(b)(c)" },
+  { band = "80m", lo_hz = 3_800_000, hi_hz = 4_000_000, classes = "xag", source = "fcc-97.301" },
+
+  # 60 m: one contiguous segment plus the channels below.
+  { band = "60m", lo_hz = 5_351_500, hi_hz = 5_366_500, classes = "xag", source = "fcc-97.303(h)" },
+
+  { band = "40m", lo_hz = 7_000_000, hi_hz = 7_025_000, classes = "x", source = "fcc-97.301(b)" },
+  { band = "40m", lo_hz = 7_025_000, hi_hz = 7_125_000, classes = "xagtn", source = "fcc-97.301" },
+  { band = "40m", lo_hz = 7_125_000, hi_hz = 7_175_000, classes = "xa", source = "fcc-97.301(b)(c)" },
+  { band = "40m", lo_hz = 7_175_000, hi_hz = 7_300_000, classes = "xag", source = "fcc-97.301" },
+
+  { band = "30m", lo_hz = 10_100_000, hi_hz = 10_150_000, classes = "xag", source = "fcc-97.301" },
+
+  { band = "20m", lo_hz = 14_000_000, hi_hz = 14_025_000, classes = "x", source = "fcc-97.301(b)" },
+  { band = "20m", lo_hz = 14_025_000, hi_hz = 14_150_000, classes = "xag", source = "fcc-97.301" },
+  { band = "20m", lo_hz = 14_150_000, hi_hz = 14_175_000, classes = "x", source = "fcc-97.301(b)" },
+  { band = "20m", lo_hz = 14_175_000, hi_hz = 14_225_000, classes = "xa", source = "fcc-97.301(b)(c)" },
+  { band = "20m", lo_hz = 14_225_000, hi_hz = 14_350_000, classes = "xag", source = "fcc-97.301" },
+
+  { band = "17m", lo_hz = 18_068_000, hi_hz = 18_168_000, classes = "xag", source = "fcc-97.301" },
+
+  { band = "15m", lo_hz = 21_000_000, hi_hz = 21_025_000, classes = "x", source = "fcc-97.301(b)" },
+  { band = "15m", lo_hz = 21_025_000, hi_hz = 21_200_000, classes = "xagtn", source = "fcc-97.301" },
+  { band = "15m", lo_hz = 21_200_000, hi_hz = 21_225_000, classes = "x", source = "fcc-97.301(b)" },
+  { band = "15m", lo_hz = 21_225_000, hi_hz = 21_275_000, classes = "xa", source = "fcc-97.301(b)(c)" },
+  { band = "15m", lo_hz = 21_275_000, hi_hz = 21_450_000, classes = "xag", source = "fcc-97.301" },
+
+  { band = "12m", lo_hz = 24_890_000, hi_hz = 24_990_000, classes = "xag", source = "fcc-97.301" },
+
+  { band = "10m", lo_hz = 28_000_000, hi_hz = 28_500_000, classes = "xagtn", source = "fcc-97.301" },
+  { band = "10m", lo_hz = 28_500_000, hi_hz = 29_700_000, classes = "xag", source = "fcc-97.301" },
+
+  { band = "6m", lo_hz = 50_000_000, hi_hz = 54_000_000, classes = "xagtn", source = "fcc-97.301(a)" },
+  { band = "2m", lo_hz = 144_000_000, hi_hz = 148_000_000, classes = "xagtn", source = "fcc-97.301(a)" },
+  { band = "1.25m", lo_hz = 222_000_000, hi_hz = 225_000_000, classes = "xagtn", source = "fcc-97.301(a)" },
+  { band = "70cm", lo_hz = 420_000_000, hi_hz = 450_000_000, classes = "xagtn", source = "fcc-97.301(a)" },
+  { band = "33cm", lo_hz = 902_000_000, hi_hz = 928_000_000, classes = "xagtn", source = "fcc-97.301(a)" },
+  { band = "23cm", lo_hz = 1_240_000_000, hi_hz = 1_300_000_000, classes = "xagtn", source = "fcc-97.301(a)" },
+]
+
+# 60 m channels (97.303(h)(3) as read; the ARRL page disagrees on the channel count). The carrier
+# is the dial frequency for upper sideband; the center frequency is the channel's nominal one.
+channel = [
+  { band = "60m", center_hz = 5_332_000, carrier_hz = 5_330_500, classes = "xag", source = "fcc-97.303(h)" },
+  { band = "60m", center_hz = 5_348_000, carrier_hz = 5_346_500, classes = "xag", source = "fcc-97.303(h)" },
+  { band = "60m", center_hz = 5_373_000, carrier_hz = 5_371_500, classes = "xag", source = "fcc-97.303(h)" },
+  { band = "60m", center_hz = 5_405_000, carrier_hz = 5_403_500, classes = "xag", source = "fcc-97.303(h)" },
+]

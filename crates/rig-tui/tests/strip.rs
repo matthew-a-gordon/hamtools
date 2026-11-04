@@ -39,7 +39,7 @@ mod strip {
         let mut app = rig_app();
         app.set_utc(UNIX_EPOCH + Duration::from_secs(86_400 * 19_000 + 45_296)); // 12:34:56
 
-        let rows = screen(&app, 80, 14);
+        let rows = screen(&app, 80, 24);
 
         assert!(has(&rows, "14.074.000"), "{rows:#?}");
         assert!(has(&rows, "USB 500"), "{rows:#?}");
@@ -56,7 +56,7 @@ mod strip {
     fn disconnected_says_so() {
         let app = App::new();
 
-        let rows = screen(&app, 80, 14);
+        let rows = screen(&app, 80, 24);
 
         assert!(has(&rows, "disconnected"), "{rows:#?}");
         assert!(!has(&rows, "14.074"), "{rows:#?}");
@@ -67,7 +67,7 @@ mod strip {
         let mut app = rig_app();
         for (db, shown) in [(-54, "S0"), (-6, "S8"), (0, "S9"), (40, "S9+40")] {
             app.on_rig(RigEvent::Strength(db));
-            assert!(has(&screen(&app, 80, 14), shown), "{db} dB -> {shown}");
+            assert!(has(&screen(&app, 80, 24), shown), "{db} dB -> {shown}");
         }
     }
 
@@ -80,9 +80,9 @@ mod strip {
         app.on_rig(RigEvent::Strength(20));
 
         app.tick(t0 + Duration::from_millis(1_500));
-        let fresh = screen(&app, 80, 14);
+        let fresh = screen(&app, 80, 24);
         app.tick(t0 + Duration::from_millis(2_500));
-        let stale = screen(&app, 80, 14);
+        let stale = screen(&app, 80, 24);
 
         assert!(has(&fresh, "14.074.000"), "{fresh:#?}");
         assert!(!has(&stale, "14.074.000"), "{stale:#?}");
@@ -97,7 +97,7 @@ mod strip {
 
         app.on_rig(RigEvent::Ptt(true));
 
-        assert!(has(&screen(&app, 80, 14), "TX"));
+        assert!(has(&screen(&app, 80, 24), "TX"));
     }
 
     #[test]
@@ -110,7 +110,7 @@ mod strip {
         });
         app.on_rig(RigEvent::SplitFreq(14_075_500));
 
-        let rows = screen(&app, 80, 14);
+        let rows = screen(&app, 80, 24);
         assert!(has(&rows, "split B 14.075.500"), "{rows:#?}");
     }
 
@@ -121,7 +121,7 @@ mod strip {
         app.on_rig(RigEvent::Unsupported(Feature::Vfo));
         app.on_rig(RigEvent::Unsupported(Feature::Split));
 
-        let rows = screen(&app, 80, 14);
+        let rows = screen(&app, 80, 24);
         assert!(has(&rows, "VFO not supported"), "{rows:#?}");
         assert!(has(&rows, "split not supported"), "{rows:#?}");
     }
@@ -196,7 +196,7 @@ mod keys {
         let mut app = rig_app();
 
         press(&mut app, "7.0305");
-        assert!(has(&screen(&app, 80, 14), "7.0305"));
+        assert!(has(&screen(&app, 80, 24), "7.0305"));
         let commands = app.on_key(key(KeyCode::Enter));
 
         assert_eq!(commands, vec![Command::SetFreq(7_030_500)]);
@@ -261,14 +261,14 @@ mod keys {
             vec![Command::SetFreq(14_073_000)]
         );
         app.on_key(key(KeyCode::Up));
-        assert!(has(&screen(&app, 80, 14), "step 10 kHz"));
+        assert!(has(&screen(&app, 80, 24), "step 10 kHz"));
         assert_eq!(
             app.on_key(key(KeyCode::Right)),
             vec![Command::SetFreq(14_084_000)]
         );
         app.on_key(key(KeyCode::Down));
         app.on_key(key(KeyCode::Down));
-        assert!(has(&screen(&app, 80, 14), "step 100 Hz"));
+        assert!(has(&screen(&app, 80, 24), "step 100 Hz"));
     }
 
     #[test]
@@ -377,7 +377,7 @@ mod keys {
         ));
 
         assert!(has(
-            &screen(&app, 80, 14),
+            &screen(&app, 80, 24),
             "set frequency failed: rigctld error -1"
         ));
     }
@@ -398,7 +398,7 @@ mod keys {
 
         type_str(&mut app, "m7v");
 
-        assert!(has(&screen(&app, 80, 14), "> M7V"));
+        assert!(has(&screen(&app, 80, 24), "> M7V"));
     }
 
     #[test]
@@ -409,7 +409,7 @@ mod keys {
         app.on_rig(RigEvent::Disconnected("lost".to_string()));
         app.on_rig(RigEvent::Connected);
 
-        assert!(!has(&screen(&app, 80, 14), "VFO not supported"));
+        assert!(!has(&screen(&app, 80, 24), "VFO not supported"));
     }
 }
 
@@ -435,11 +435,11 @@ mod polling {
     #[test]
     fn the_utc_clock_is_whatever_the_app_was_told() {
         let mut app = App::new();
-        assert!(has(&screen(&app, 80, 14), "--:--:--Z"));
+        assert!(has(&screen(&app, 80, 24), "--:--:--Z"));
 
         app.set_utc(UNIX_EPOCH + Duration::from_secs(86_400 * 3 + 3_661));
 
-        assert!(has(&screen(&app, 80, 14), "01:01:01Z"));
+        assert!(has(&screen(&app, 80, 24), "01:01:01Z"));
         assert_eq!(
             app.utc(),
             Some(SystemTime::UNIX_EPOCH + Duration::from_secs(86_400 * 3 + 3_661))

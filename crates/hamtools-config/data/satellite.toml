@@ -1,0 +1,15 @@
+# Satellite sub-band layer. Ground-station privileges still follow the operator's license class on
+# the frequency used; being inside a satellite sub-band says nothing about that.
+# Sources: FCC 47 CFR 97.207(c) (space station transmit segments) and the ARRL band plan page
+# (terse edges only, no copied text).
+
+meta = { as_of = "2026-11-04" }
+
+segment = [
+  { band = "40m", lo_hz = 7_000_000, hi_hz = 7_100_000, label = "space stn", source = "fcc-97.207(c)" },
+  { band = "20m", lo_hz = 14_000_000, hi_hz = 14_250_000, label = "space stn", source = "fcc-97.207(c)" },
+  { band = "10m", lo_hz = 29_300_000, hi_hz = 29_510_000, label = "satellite", source = "arrl-band-plan" },
+  { band = "2m", lo_hz = 144_300_000, hi_hz = 144_500_000, label = "satellite", source = "arrl-band-plan" },
+  { band = "2m", lo_hz = 145_800_000, hi_hz = 146_000_000, label = "satellite", source = "arrl-band-plan" },
+  { band = "70cm", lo_hz = 435_000_000, hi_hz = 438_000_000, label = "satellite", source = "arrl-band-plan" },
+]

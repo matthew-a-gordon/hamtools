@@ -3,7 +3,7 @@
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
-use hamtools_config::{ConfigError, ConfigFile, RigProfile, Warning};
+use hamtools_config::{ConfigError, ConfigFile, LicenseClass, RigProfile, Warning};
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Config {
@@ -15,10 +15,14 @@ pub struct Config {
     pub rig_default: Option<String>,
     /// The operator's 6-character Locator, uppercase.
     pub locator: Option<String>,
+    /// `station.license_class`; no default.
+    pub license_class: Option<LicenseClass>,
     /// Where the Log lives; `None` means the default.
     pub log_path: Option<PathBuf>,
-    /// Soft key messages, keyed 1..=6 for F1..F6. Text is uppercase and may contain `{CALL}`.
+    /// Soft key messages, keyed 1..=6 for F1..F6. Text is uppercase and may contain variables such as `{MYCALL}`.
     pub soft_keys: BTreeMap<u8, String>,
+    /// Named Soft key sets from `[softkeys.<name>]`.
+    pub softkey_sets: BTreeMap<String, BTreeMap<u8, String>>,
     /// Keys in the file this app does not know. Reported by `main`, never an error.
     pub warnings: Vec<Warning>,
 }
@@ -58,8 +62,10 @@ impl Config {
             rigs: settings.rigs.clone(),
             rig_default: settings.rig_default.clone(),
             locator: settings.locator.as_ref().map(|g| g.as_str().to_string()),
+            license_class: settings.license_class,
             log_path: settings.log_path.clone(),
             soft_keys: settings.macros.clone(),
+            softkey_sets: settings.softkey_sets.clone(),
             warnings: file.warnings().to_vec(),
         })
     }

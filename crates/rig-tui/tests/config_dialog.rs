@@ -90,7 +90,7 @@ const RIG: usize = 4;
 const DEFAULT_RIG: usize = 5;
 const F1: usize = 6;
 
-const SAMPLE: &str = "# my station\ncallsign = \"W1AW\"\n\n[rig.kx3]\naddr = \"127.0.0.1:4533\"\nkind = \"kx3\"\n\n[macros]\nF1 = \"CQ DE {CALL}\"\n";
+const SAMPLE: &str = "# my station\ncallsign = \"W1AW\"\n\n[rig.kx3]\naddr = \"127.0.0.1:4533\"\nkind = \"kx3\"\n\n[macros]\nF1 = \"CQ DE {MYCALL}\"\n";
 
 #[test]
 fn c_opens_the_dialog_while_disconnected_and_shows_the_file_fresh() {
@@ -102,7 +102,7 @@ fn c_opens_the_dialog_while_disconnected_and_shows_the_file_fresh() {
     assert!(!app.connected());
     assert!(shows(&app, "W1AW"));
     assert!(shows(&app, "127.0.0.1:4533"));
-    assert!(shows(&app, "CQ DE {CALL}"));
+    assert!(shows(&app, "CQ DE {MYCALL}"));
     for heading in ["Station", "Logging", "Rig", "Soft keys"] {
         assert!(shows(&app, heading), "{heading}");
     }
@@ -212,7 +212,7 @@ fn save_patches_the_file_applies_live_and_closes() {
     for _ in 0..30 {
         app.on_key(key(KeyCode::Backspace));
     }
-    type_in(&mut app, "73 de {call}");
+    type_in(&mut app, "73 de {mycall}");
 
     let commands = app.on_key(ctrl('s'));
 
@@ -221,7 +221,7 @@ fn save_patches_the_file_applies_live_and_closes() {
     assert_eq!(app.locator(), Some("EN71DQ"));
     assert_eq!(
         app.soft_keys().get(&1).map(String::as_str),
-        Some("73 DE {CALL}")
+        Some("73 DE {MYCALL}")
     );
     assert_eq!(
         commands,
@@ -235,7 +235,7 @@ fn save_patches_the_file_applies_live_and_closes() {
     );
     assert_eq!(
         read(&path),
-        "# my station\ncallsign = \"W1AW\"\n\n[rig.kx3]\naddr = \"127.0.0.1:4533\"\nkind = \"kx3\"\n\n[macros]\nF1 = \"73 DE {CALL}\"\n\n[station]\nlocator = \"EN71DQ\"\n"
+        "# my station\ncallsign = \"W1AW\"\n\n[rig.kx3]\naddr = \"127.0.0.1:4533\"\nkind = \"kx3\"\n\n[macros]\nF1 = \"73 DE {MYCALL}\"\n\n[station]\nlocator = \"EN71DQ\"\n"
     );
 }
 

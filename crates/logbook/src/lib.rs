@@ -6,6 +6,7 @@ pub mod callsign;
 pub mod contact;
 pub mod locator;
 pub mod log;
+pub mod reader;
 pub mod satellite;
 
 pub use band::{BANDS, Band, band_for_hz};
@@ -13,3 +14,4 @@ pub use callsign::{Callsign, CallsignError};
 pub use contact::{Contact, ContactError, ContactInput, Mode, Sideband};
 pub use locator::{Grid, LocatorError};
 pub use log::{AppendError, Log};
+pub use reader::{ReadError, Record};

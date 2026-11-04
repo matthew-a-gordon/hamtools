@@ -64,7 +64,9 @@ fn try_main() -> Result<(), Box<dyn Error>> {
         .build()?;
     let mut app = App::with_callsign(config.callsign)
         .with_soft_keys(config.soft_keys)
+        .with_softkey_sets(config.softkey_sets)
         .with_locator(config.locator)
+        .with_license_class(config.license_class)
         .with_log_path(config.log_path)
         .with_default_log_path(default_log_path(
             std::env::var("XDG_DATA_HOME").ok().as_deref(),
@@ -141,6 +143,8 @@ fn run(
     let (lookups, answers) = mpsc::channel();
     loop {
         app.set_utc(SystemTime::now());
+        let size = terminal.size()?;
+        app.set_size(size.width, size.height);
         terminal.draw(|frame| render(&app, frame))?;
 
         if event::poll(TICK)?

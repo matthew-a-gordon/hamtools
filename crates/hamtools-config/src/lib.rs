@@ -17,6 +17,7 @@
 //! callsign = "W1AW"
 //! [station]
 //! locator = "EN71DQ"      # 6 characters; latitude and longitude are never stored
+//! license_class = "general"  # technician, general, extra, advanced, novice; no default
 //! [logbook]
 //! path = "/home/me/log.adi"
 //! [rig]
@@ -25,8 +26,10 @@
 //! addr = "127.0.0.1:4532"
 //! kind = "kx3"            # "kx3", "ft847" or "generic"
 //! cw = true               # optional capability overrides: cw, split, sat_mode
-//! [macros]                # F1 to F6
-//! F1 = "CQ DE {CALL}"
+//! [macros]                # F1 to F6: the General Soft key set
+//! F1 = "CQ DE {MYCALL}"
+//! [softkeys.pota]         # a named set, same shape
+//! F1 = "CQ POTA DE {MYCALL}"
 //! ```
 //!
 //! The old single `[rig] addr` and the `[kx3]` table are not read: they are rejected with a
@@ -34,6 +37,8 @@
 //!
 //! Unknown keys are [`Warning`]s, never errors and never dropped; a wrong value for a known key
 //! is a [`ConfigError::Invalid`] naming the key.
+
+pub mod bandplan;
 
 use std::collections::BTreeMap;
 use std::fmt;
@@ -46,6 +51,49 @@ use std::time::SystemTime;
 pub use logbook::{Callsign, Grid};
 use toml_edit::{Document, DocumentMut, Item, Table, Value};
 
+/// The operator's US license class. Runtime config with no default: the app never guesses it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum LicenseClass {
+    Technician,
+    General,
+    Extra,
+    Advanced,
+    Novice,
+}
+
+impl LicenseClass {
+    pub const ALL: [LicenseClass; 5] = [
+        LicenseClass::Technician,
+        LicenseClass::General,
+        LicenseClass::Extra,
+        LicenseClass::Advanced,
+        LicenseClass::Novice,
+    ];
+
+    /// The lowercase name used in the config file.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            LicenseClass::Technician => "technician",
+            LicenseClass::General => "general",
+            LicenseClass::Extra => "extra",
+            LicenseClass::Advanced => "advanced",
+            LicenseClass::Novice => "novice",
+        }
+    }
+
+    /// Parse a class name, ignoring case and surrounding space.
+    pub fn parse(text: &str) -> Option<Self> {
+        let text = text.trim().to_ascii_lowercase();
+        Self::ALL.into_iter().find(|c| c.as_str() == text)
+    }
+}
+
+impl fmt::Display for LicenseClass {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
 /// The typed view of the file. `None` and an absent macro mean "not set".
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Settings {
@@ -53,12 +101,18 @@ pub struct Settings {
     /// The operator's 6-character Locator.
     pub locator: Option<Grid>,
     pub log_path: Option<PathBuf>,
+    /// `station.license_class`; no default.
+    pub license_class: Option<LicenseClass>,
     /// The named rig profiles, in file order.
     pub rigs: Vec<RigProfile>,
     /// `rig.default`: the profile to start on. `None`: the first.
     pub rig_default: Option<String>,
-    /// Soft key text for F1..=F6, uppercase, may contain `{CALL}`.
+    /// Soft key text for F1..=F6, uppercase, may contain variables such as `{MYCALL}`. The
+    /// General Soft key set.
     pub macros: BTreeMap<u8, String>,
+    /// Named Soft key sets from `[softkeys.<name>]`, same shape as `macros`. Read only here; the
+    /// config dialog does not write them.
+    pub softkey_sets: BTreeMap<String, BTreeMap<u8, String>>,
 }
 
 /// The kind of radio a profile describes. It keys the capability table in the apps.
@@ -442,6 +496,7 @@ fn write_atomic(path: &Path, text: &str) -> Result<(), SaveError> {
 enum Field {
     Callsign,
     Locator,
+    LicenseClass,
     LogPath,
     RigDefault,
     /// The address of the named profile.
@@ -455,6 +510,7 @@ impl Field {
         let mut fields = vec![
             Field::Callsign,
             Field::Locator,
+            Field::LicenseClass,
             Field::LogPath,
             Field::RigDefault,
         ];
@@ -473,6 +529,7 @@ impl Field {
         match self {
             Field::Callsign => "callsign".into(),
             Field::Locator => "station.locator".into(),
+            Field::LicenseClass => "station.license_class".into(),
             Field::LogPath => "logbook.path".into(),
             Field::RigDefault => "rig.default".into(),
             Field::RigAddr(name) => format!("rig.{name}.addr"),
@@ -485,6 +542,7 @@ impl Field {
         match self {
             Field::Callsign => s.callsign.as_ref().map(|c| c.as_str().to_string()),
             Field::Locator => s.locator.as_ref().map(|g| g.as_str().to_string()),
+            Field::LicenseClass => s.license_class.map(|c| c.as_str().to_string()),
             Field::LogPath => s
                 .log_path
                 .as_ref()
@@ -500,6 +558,7 @@ impl Field {
         match self {
             Field::Callsign => put(doc.as_table_mut(), "callsign", value),
             Field::Locator => put(table(doc, "station"), "locator", value),
+            Field::LicenseClass => put(table(doc, "station"), "license_class", value),
             Field::LogPath => put(table(doc, "logbook"), "path", value),
             Field::RigDefault => {
                 let rig = table(doc, "rig");
@@ -697,6 +756,19 @@ fn read_settings_lenient(root: &Table) -> (Settings, Vec<ConfigError>) {
         Ok(())
     })());
     keep((|| {
+        if let Some(item) = sub_table(root, "station")?.and_then(|t| t.get("license_class")) {
+            s.license_class = Some(
+                LicenseClass::parse(string(item, "station.license_class")?).ok_or_else(|| {
+                    invalid(
+                        "station.license_class",
+                        "expected technician, general, extra, advanced or novice",
+                    )
+                })?,
+            );
+        }
+        Ok(())
+    })());
+    keep((|| {
         if let Some(item) = sub_table(root, "logbook")?.and_then(|t| t.get("path")) {
             let path = string(item, "logbook.path")?.trim();
             if path.is_empty() {
@@ -708,24 +780,44 @@ fn read_settings_lenient(root: &Table) -> (Settings, Vec<ConfigError>) {
     })());
     keep((|| {
         if let Some(macros) = sub_table(root, "macros")? {
-            for (name, item) in macros {
-                let key = format!("macros.{name}");
-                let n = name
-                    .strip_prefix('F')
-                    .and_then(|n| n.parse::<u8>().ok())
-                    .filter(|n| (1..=6).contains(n) && name == format!("F{n}"))
-                    .ok_or_else(|| invalid(&key, "only F1 to F6 are supported"))?;
-                let text = string(item, &key)?.trim().to_uppercase();
-                if text.is_empty() {
-                    return Err(invalid(&key, "has no text"));
-                }
-                s.macros.insert(n, text);
+            s.macros = read_soft_keys(macros, "macros")?;
+        }
+        Ok(())
+    })());
+    keep((|| {
+        if let Some(sets) = sub_table(root, "softkeys")? {
+            for (name, item) in sets {
+                let key = format!("softkeys.{name}");
+                let table = item
+                    .as_table()
+                    .ok_or_else(|| invalid(&key, "expected a table of F1 to F6"))?;
+                s.softkey_sets
+                    .insert(name.to_string(), read_soft_keys(table, &key)?);
             }
         }
         Ok(())
     })());
     read_rigs(root, &mut s, &mut errs);
     (s, errs)
+}
+
+/// F1..F6 messages from one table, uppercased. `prefix` names the table in errors.
+fn read_soft_keys(table: &Table, prefix: &str) -> Result<BTreeMap<u8, String>, ConfigError> {
+    let mut keys = BTreeMap::new();
+    for (name, item) in table {
+        let key = format!("{prefix}.{name}");
+        let n = name
+            .strip_prefix('F')
+            .and_then(|n| n.parse::<u8>().ok())
+            .filter(|n| (1..=6).contains(n) && name == format!("F{n}"))
+            .ok_or_else(|| invalid(&key, "only F1 to F6 are supported"))?;
+        let text = string(item, &key)?.trim().to_uppercase();
+        if text.is_empty() {
+            return Err(invalid(&key, "has no text"));
+        }
+        keys.insert(n, text);
+    }
+    Ok(keys)
 }
 
 fn read_settings(root: &Table) -> Result<Settings, ConfigError> {
@@ -789,11 +881,12 @@ pub fn load_lenient(path: &Path) -> Result<(Settings, Vec<ConfigError>), ConfigE
     Ok((settings, errs))
 }
 
-const KNOWN: [(&str, &[&str]); 4] = [
-    ("station", &["locator"]),
+const KNOWN: [(&str, &[&str]); 5] = [
+    ("station", &["locator", "license_class"]),
     ("logbook", &["path"]),
     ("rig", &["default"]),
     ("macros", &[]),
+    ("softkeys", &[]),
 ];
 
 /// Keys a `[rig.NAME]` table may hold.
@@ -820,7 +913,7 @@ fn parse(text: &str) -> Result<(Settings, Vec<Warning>), ConfigError> {
                     continue;
                 };
                 for (key, sub) in table {
-                    if name == "macros" || keys.contains(&key) {
+                    if name == "macros" || name == "softkeys" || keys.contains(&key) {
                         continue;
                     }
                     if name == "rig"

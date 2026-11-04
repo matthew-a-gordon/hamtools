@@ -4,10 +4,11 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Rect};
-use ratatui::widgets::{Block, Borders, Paragraph};
+use ratatui::widgets::{Block, Borders, Paragraph, Wrap};
 
 use crate::activity::ActivityCtx;
 use crate::app::{App, Entry, Focus};
+use crate::layout::{self, Fit};
 use crate::rig::Feature;
 use crate::style::{dim, focus_border, red};
 
@@ -22,6 +23,19 @@ pub(crate) fn format_hz(hz: u64) -> String {
 }
 
 pub fn render(app: &App, frame: &mut Frame) {
+    let area = frame.area();
+    let panes = match layout::fit(area.width, area.height) {
+        Fit::Fits(panes) => panes,
+        Fit::TooSmall { width, height } => {
+            frame.render_widget(
+                Paragraph::new(layout::too_small_notice(width, height))
+                    .style(red())
+                    .wrap(Wrap { trim: true }),
+                area,
+            );
+            return;
+        }
+    };
     let [strip_area, body_area, status_area, hint_area] = Layout::vertical([
         Constraint::Length(4),
         Constraint::Min(3),
@@ -31,7 +45,7 @@ pub fn render(app: &App, frame: &mut Frame) {
     .areas(frame.area());
 
     render_strip(app, frame, strip_area);
-    app.render_body(frame, body_area);
+    app.render_body(frame, body_area, panes);
 
     if let Some(status) = app.status() {
         frame.render_widget(Paragraph::new(status).style(red()), status_area);
@@ -149,13 +163,13 @@ fn render_strip(app: &App, frame: &mut Frame, area: Rect) {
 }
 
 /// Shown in the body when the rig's mode has no panel.
-pub(crate) fn render_no_panel(ctx: &ActivityCtx, frame: &mut Frame, area: Rect) {
+pub(crate) fn render_no_panel(ctx: &ActivityCtx, frame: &mut Frame, area: Rect, show_recent: bool) {
     let mut text = match ctx.fresh_mode {
         Some(mode) => format!("No panel for {mode}"),
         None => "No mode reported yet".to_string(),
     };
     let recent = ctx.recent;
-    if !recent.is_empty() {
+    if show_recent && !recent.is_empty() {
         text.push_str("\nRecent contacts:");
         for line in recent
             .iter()
@@ -176,6 +190,9 @@ pub(crate) fn render_no_panel(ctx: &ActivityCtx, frame: &mut Frame, area: Rect) 
 /// The keys that apply to the current focus.
 /// One or two rows (split by `\n`) so every key fits in 80 columns.
 fn hint(app: &App) -> &'static str {
+    if app.quit_confirm_open() {
+        return "y or Ctrl-C quit  n/Esc/Enter cancel";
+    }
     if app.log_form_open() {
         return "Tab/Shift-Tab field  Enter save  Esc cancel  Ctrl-C quit";
     }

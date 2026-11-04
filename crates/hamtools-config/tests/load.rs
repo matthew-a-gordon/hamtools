@@ -152,6 +152,38 @@ fn wrong_values_are_errors_naming_the_key() {
 }
 
 #[test]
+fn named_soft_key_sets_load_beside_macros() {
+    let dir = TempDir::new();
+    let path = dir.write(
+        "config.toml",
+        "[macros]\nF1 = \"cq\"\n\n[softkeys.pota]\nF1 = \"cq pota de {mycall}\"\nF3 = \"73\"\n\n[softkeys.sota]\nF2 = \"x\"\n",
+    );
+    let cfg = ConfigFile::load(&path).unwrap();
+    let s = cfg.settings();
+    assert_eq!(s.softkey_sets["pota"][&1], "CQ POTA DE {MYCALL}");
+    assert_eq!(s.softkey_sets["pota"][&3], "73");
+    assert_eq!(s.softkey_sets["sota"][&2], "X");
+    assert_eq!(s.macros[&1], "CQ");
+    assert!(cfg.warnings().is_empty(), "{:?}", cfg.warnings());
+}
+
+#[test]
+fn wrong_soft_key_set_values_are_errors_naming_the_key() {
+    for (text, key) in [
+        ("[softkeys.pota]\nF7 = \"x\"\n", "softkeys.pota.F7"),
+        ("[softkeys.pota]\nF1 = \"\"\n", "softkeys.pota.F1"),
+        ("[softkeys]\npota = \"x\"\n", "softkeys.pota"),
+    ] {
+        let dir = TempDir::new();
+        let path = dir.write("config.toml", text);
+        match ConfigFile::load(&path) {
+            Err(ConfigError::Invalid { key: k, .. }) => assert_eq!(k, key, "{text}"),
+            other => panic!("{text}: {other:?}"),
+        }
+    }
+}
+
+#[test]
 fn syntax_errors_carry_a_line() {
     let dir = TempDir::new();
     let path = dir.write("config.toml", "callsign = \"W1AW\"\nthis is not toml\n");

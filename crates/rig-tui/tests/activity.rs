@@ -160,7 +160,8 @@ fn only_a_cw_send_from_a_key_press_can_reach_the_transmitter() {
         keys.push(key(KeyCode::F(n)));
     }
 
-    // With empty input and no Soft keys, nothing at all may transmit, in either focus.
+    // With empty input, only a Soft key press (F1 to F6, which have built-in defaults) may
+    // transmit, in either focus; no other key and no tick does.
     for focus_input in [false, true] {
         let mut a = app;
         if focus_input {
@@ -170,7 +171,10 @@ fn only_a_cw_send_from_a_key_press_can_reach_the_transmitter() {
         }
         for k in &keys {
             for command in a.on_key(*k) {
-                assert!(!command.transmits(), "{k:?} produced {command:?}");
+                assert!(
+                    !command.transmits() || matches!(k.code, KeyCode::F(1..=6)),
+                    "{k:?} produced {command:?}"
+                );
             }
             // Dismiss anything the key opened and return to a known state.
             a.on_key(key(KeyCode::Esc));

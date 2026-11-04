@@ -1,7 +1,7 @@
 # Copy to ~/.config/hamtools/config.toml (or pass --config PATH).
 # Shared by the hamtools apps; keys an app does not know are kept and reported as warnings.
 
-# Your callsign. Typing {call} in rig-tui expands to it when you send.
+# Your callsign. Typing {MYCALL} in rig-tui expands to it when you send.
 callsign = "N0CALL"
 
 # Where you are, as a 6-character Locator (never latitude/longitude). Town-level only; example:
@@ -35,8 +35,8 @@ kind = "ft847"
 # sat_mode = true
 
 # Soft keys F1 to F6 (CW and CWR only). Text is sent as CW when you press the key.
-# {call} expands to the callsign above.
+# {MYCALL} expands to the callsign above.
 [macros]
-F1 = "CQ CQ CQ DE {call} {call} K"
-F2 = "{call}"
-F3 = "R R 73 TU DE {call} SK"
+F1 = "CQ CQ CQ DE {MYCALL} {MYCALL} K"
+F2 = "{MYCALL}"
+F3 = "R R 73 TU DE {MYCALL} SK"

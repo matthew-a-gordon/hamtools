@@ -97,6 +97,12 @@ impl Log {
         &self.path
     }
 
+    /// Every record in the file, oldest first. A missing file has none; a file that is not
+    /// well-formed ADI is an error. Nothing is written.
+    pub fn read(&self) -> Result<Vec<crate::reader::Record>, crate::reader::ReadError> {
+        crate::reader::read(&self.path)
+    }
+
     /// Run the header and tail checks `append` runs, writing nothing. A missing file is fine.
     pub fn check(&self) -> Result<(), AppendError> {
         let mut file = match File::open(&self.path) {

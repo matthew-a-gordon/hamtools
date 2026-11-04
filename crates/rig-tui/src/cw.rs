@@ -7,7 +7,7 @@ use std::collections::BTreeMap;
 use std::fmt;
 
 use ratatui::Frame;
-use ratatui::crossterm::event::{KeyCode, KeyEvent};
+use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line as TextLine, Span};
@@ -15,6 +15,7 @@ use ratatui::widgets::{Block, Borders, Paragraph};
 
 use crate::panel::{LogMode, ModePanel, PanelCommand, PanelCtx};
 use crate::rig::RigMode;
+use crate::softkeys::{Layer, Live, ResolvedKey, expand, preview};
 use crate::style::{focus_border, yellow};
 
 /// Decoded form of a KX3 `TB;` reply.
@@ -115,23 +116,20 @@ impl CwPanel {
         }
     }
 
-    /// Expand `{CALL}` in `text` and queue it for sending, echoing it into the transcript.
-    /// Refused with a status message while the rig is disconnected, or when the text needs a
-    /// callsign and none is configured.
+    /// Expand the variables in `text` from live state and queue it for sending, echoing it into
+    /// the transcript. Refused, with a status naming why, while the rig is disconnected, when
+    /// the message is invalid, or when any variable has no value.
     fn send(&mut self, text: &str, ctx: &PanelCtx) -> Vec<PanelCommand> {
         if !ctx.connected {
             return vec![PanelCommand::Status(
                 "rig disconnected: cannot send".to_string(),
             )];
         }
-        let text = match (text.contains("{CALL}"), ctx.callsign) {
-            (true, None) => {
-                return vec![PanelCommand::Status(
-                    "no callsign set in the config file".to_string(),
-                )];
+        let text = match expand(text, &ctx.live) {
+            Ok(text) => text,
+            Err(refusal) => {
+                return vec![PanelCommand::Status(format!("not sent: {refusal}"))];
             }
-            (true, Some(call)) => text.replace("{CALL}", call),
-            (false, _) => text.to_string(),
         };
         self.lines.push(Line {
             source: Source::Tx,
@@ -154,14 +152,30 @@ impl ModePanel for CwPanel {
     fn handle_key(&mut self, key: KeyEvent, ctx: &PanelCtx) -> Vec<PanelCommand> {
         match key.code {
             KeyCode::F(n @ 1..=6) => match ctx.soft_keys.get(&n) {
-                Some(text) => {
-                    let text = text.clone();
+                Some(key) if key.is_valid() => {
+                    let text = key.text.clone();
                     self.send(&text, ctx)
+                }
+                Some(key) => {
+                    let problems: Vec<String> =
+                        key.problems.iter().map(ToString::to_string).collect();
+                    vec![PanelCommand::Status(format!(
+                        "F{n} is invalid, not sent: {}",
+                        problems.join(", ")
+                    ))]
                 }
                 None => vec![PanelCommand::Status(format!("F{n} is not set"))],
             },
             // Only the input line takes text; other keys belong to the app.
             _ if !ctx.focused => Vec::new(),
+            // Control and Alt combinations are commands, never text.
+            KeyCode::Char(_)
+                if key
+                    .modifiers
+                    .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT) =>
+            {
+                Vec::new()
+            }
             KeyCode::Char(c) => {
                 self.input.extend(c.to_uppercase());
                 Vec::new()
@@ -217,9 +231,10 @@ impl ModePanel for CwPanel {
         frame.render_widget(input, input_area);
 
         if bar_area.height > 0 {
-            let bar = soft_key_bar(ctx.soft_keys, ctx.callsign, bar_area.width as usize);
+            let bar = soft_key_bar(ctx.soft_keys, &ctx.live, bar_area.width as usize);
             frame.render_widget(
-                Paragraph::new(bar).style(Style::default().add_modifier(Modifier::REVERSED)),
+                Paragraph::new(TextLine::from(bar))
+                    .style(Style::default().add_modifier(Modifier::REVERSED)),
                 bar_area,
             );
         }
@@ -242,6 +257,10 @@ impl ModePanel for CwPanel {
 
     fn sending(&self) -> bool {
         self.sent_since_poll || self.tx_pending > 0
+    }
+
+    fn has_unsent_input(&self) -> bool {
+        !self.input.trim().is_empty()
     }
 
     fn logbook_mode(&self, mode: &RigMode) -> Option<LogMode> {
@@ -274,19 +293,35 @@ fn shorten(text: &str, max: usize) -> String {
     format!("{keep}…")
 }
 
-/// One `F<n> <text>` entry per bound Soft key, with the callsign filled in, sharing `width`
-/// columns fairly: short entries stay whole and long ones give up the most.
-fn soft_key_bar(soft_keys: &BTreeMap<u8, String>, callsign: Option<&str>, width: usize) -> String {
+/// How the bar marks which layer a key came from (and an invalid key), in modifiers so it reads
+/// on the bar's reverse video: the plan's own key bold and underlined, the plan's set bold, the
+/// user's set plain, a built-in default dim, and an invalid key struck through.
+pub(crate) fn layer_style(key: &ResolvedKey) -> Style {
+    let style = match key.layer {
+        Layer::PlanOverride => Style::default().add_modifier(Modifier::BOLD | Modifier::UNDERLINED),
+        Layer::PlanSet => Style::default().add_modifier(Modifier::BOLD),
+        Layer::UserSet => Style::default(),
+        Layer::BuiltIn => Style::default().add_modifier(Modifier::DIM),
+    };
+    if key.is_valid() {
+        style
+    } else {
+        style.add_modifier(Modifier::CROSSED_OUT)
+    }
+}
+
+/// One `F<n> <text>` entry per Soft key, with the variables that have a value filled in (the
+/// rest shown as written), sharing `width` columns fairly: short entries stay whole and long
+/// ones give up the most. Each entry is styled by its layer.
+fn soft_key_bar(
+    soft_keys: &BTreeMap<u8, ResolvedKey>,
+    live: &Live,
+    width: usize,
+) -> Vec<Span<'static>> {
     const GAP: usize = 2;
     let entries: Vec<String> = soft_keys
         .iter()
-        .map(|(n, text)| {
-            let text = match callsign {
-                Some(call) => text.replace("{CALL}", call),
-                None => text.clone(),
-            };
-            format!("F{n} {text}")
-        })
+        .map(|(n, key)| format!("F{n} {}", preview(&key.text, live)))
         .collect();
     let mut by_length: Vec<usize> = (0..entries.len()).collect();
     by_length.sort_by_key(|&i| entries[i].chars().count());
@@ -297,10 +332,12 @@ fn soft_key_bar(soft_keys: &BTreeMap<u8, String>, callsign: Option<&str>, width:
         budget[i] = entries[i].chars().count().min(share);
         remaining -= budget[i];
     }
-    entries
-        .iter()
-        .zip(&budget)
-        .map(|(entry, &max)| shorten(entry, max))
-        .collect::<Vec<_>>()
-        .join(&" ".repeat(GAP))
+    let mut spans = Vec::new();
+    for ((entry, &max), key) in entries.iter().zip(&budget).zip(soft_keys.values()) {
+        if !spans.is_empty() {
+            spans.push(Span::raw(" ".repeat(GAP)));
+        }
+        spans.push(Span::styled(shorten(entry, max), layer_style(key)));
+    }
+    spans
 }

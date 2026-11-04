@@ -91,9 +91,11 @@ impl App {
             callsign: self.callsign.as_deref().and_then(|c| Callsign::new(c).ok()),
             locator: self.locator.as_deref().and_then(|g| Grid::new(g).ok()),
             log_path: self.log_path.clone(),
+            license_class: self.license_class,
             rigs,
             rig_default: self.rig_default.clone(),
             macros: self.soft_keys.clone(),
+            softkey_sets: self.softkey_sets.clone(),
         }
     }
 
@@ -103,7 +105,10 @@ impl App {
         self.callsign = settings.callsign.map(|c| c.as_str().to_string());
         self.locator = settings.locator.map(|g| g.as_str().to_string());
         self.log_path = settings.log_path;
+        self.license_class = settings.license_class;
         self.soft_keys = settings.macros;
+        self.softkey_sets = settings.softkey_sets;
+        self.refresh_soft_keys();
         self.rig_default = settings.rig_default;
         let mut commands = Vec::new();
         for index in 0..self.rigs.len() {
