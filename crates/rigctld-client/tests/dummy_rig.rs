@@ -153,6 +153,15 @@ async fn set_split_frequency_is_read_back() {
 }
 
 #[tokio::test]
+async fn strength_level_is_a_signed_db_value_string() {
+    let (_rig, mut client) = DummyRig::start().await;
+
+    let level = client.get_level("STRENGTH").await.unwrap();
+
+    assert!(level.parse::<i32>().is_ok(), "not a dB value: {level:?}");
+}
+
+#[tokio::test]
 async fn set_split_mode_is_read_back_with_passband() {
     let (_rig, mut client) = DummyRig::start().await;
     client.set_split(true, "VFOB").await.unwrap();

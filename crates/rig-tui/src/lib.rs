@@ -12,9 +12,12 @@ mod panel;
 mod rig;
 mod ui;
 
-pub use app::{App, Focus, Overlay, OverlayAction, RECONNECT_EVERY, STATE_POLL_EVERY};
+pub use app::{
+    App, Focus, Overlay, OverlayAction, RECONNECT_EVERY, SMETER_POLL_EVERY, STALE_AFTER,
+    STATE_POLL_EVERY,
+};
 pub use config::{Config, config_path};
 pub use cw::{Line, Source, TbError, TbReply, parse_tb};
 pub use panel::{LogDefaults, LogMode};
-pub use rig::{Command, Rig, RigEvent, RigMode};
+pub use rig::{Command, Feature, Rig, RigEvent, RigMode};
 pub use ui::render;

@@ -455,9 +455,12 @@ mod connection {
         let mut app = App::new();
         app.on_rig(RigEvent::Connected);
 
-        assert_eq!(app.tick(t0), vec![Command::PollState]);
+        assert_eq!(app.tick(t0), vec![Command::PollState, Command::PollSMeter]);
         assert_eq!(app.tick(t0 + Duration::from_millis(100)), vec![]);
-        assert_eq!(app.tick(t0 + STATE_POLL_EVERY), vec![Command::PollState]);
+        assert_eq!(
+            app.tick(t0 + STATE_POLL_EVERY),
+            vec![Command::PollState, Command::PollSMeter]
+        );
     }
 
     #[test]
