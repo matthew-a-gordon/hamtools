@@ -51,6 +51,13 @@ const FIELDS: [Field; 6] = [
     Field::Comment,
 ];
 
+/// One side of the radio link: a frequency and the mode it is worked in.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Link {
+    pub hz: u64,
+    pub mode: RigMode,
+}
+
 /// The Contact form. Everything above the input fields is a snapshot taken when it was opened.
 #[derive(Debug, Clone)]
 pub struct ContactForm {
@@ -58,10 +65,8 @@ pub struct ContactForm {
     pub transmitter: String,
     pub started: DateTime<Utc>,
     /// The frequencies last sent to the radio when the form was opened.
-    pub rx_hz: u64,
-    pub tx_hz: u64,
-    pub rx_mode: RigMode,
-    pub tx_mode: RigMode,
+    pub rx: Link,
+    pub tx: Link,
     pub call: String,
     pub grid: String,
     pub name: String,
@@ -85,8 +90,8 @@ impl ContactForm {
         satellite: String,
         transmitter: String,
         started: DateTime<Utc>,
-        (rx_hz, rx_mode): (u64, RigMode),
-        (tx_hz, tx_mode): (u64, RigMode),
+        rx: Link,
+        tx: Link,
     ) -> Self {
         // RST sent is the report for our uplink, RST received the one for what we hear.
         let rst = |mode| if mode == RigMode::Cw { "599" } else { "59" };
@@ -94,15 +99,13 @@ impl ContactForm {
             satellite,
             transmitter,
             started,
-            rx_hz,
-            tx_hz,
-            rx_mode,
-            tx_mode,
+            rx,
+            tx,
             call: String::new(),
             grid: String::new(),
             name: String::new(),
-            rst_sent: rst(tx_mode).to_string(),
-            rst_rcvd: rst(rx_mode).to_string(),
+            rst_sent: rst(tx.mode).to_string(),
+            rst_rcvd: rst(rx.mode).to_string(),
             comment: String::new(),
             field: Field::Call,
             error: None,
@@ -170,7 +173,7 @@ impl ContactForm {
             return Err("Call is required".to_string());
         }
         let extras =
-            satellite::extras(sat_name, self.tx_hz, self.rx_hz).map_err(|e| e.to_string())?;
+            satellite::extras(sat_name, self.tx.hz, self.rx.hz).map_err(|e| e.to_string())?;
         Contact::new(ContactInput {
             call: self.call.clone(),
             grid: Some(self.grid.clone()),
@@ -180,8 +183,8 @@ impl ContactForm {
             rst_rcvd: Some(self.rst_rcvd.clone()),
             start: self.started,
             end,
-            freq_hz: self.tx_hz,
-            mode: logbook_mode(self.tx_mode),
+            freq_hz: self.tx.hz,
+            mode: logbook_mode(self.tx.mode),
             own_grid: Some(own_grid),
             station_callsign: None,
             extras,
@@ -224,8 +227,14 @@ mod tests {
             "AO-7".to_string(),
             "Mode B".to_string(),
             started,
-            (435_000_000, rx),
-            (145_900_000, tx),
+            Link {
+                hz: 435_000_000,
+                mode: rx,
+            },
+            Link {
+                hz: 145_900_000,
+                mode: tx,
+            },
         )
     }
 

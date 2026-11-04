@@ -404,11 +404,11 @@ mod saving {
         assert!(!later.is_empty(), "Doppler keeps moving the radio");
         assert!(app.tracking().is_some());
         let form = app.form().unwrap();
-        assert_eq!(form.rx_hz, rx_hz(&sent));
-        assert_eq!(form.tx_hz, tx_hz(&sent));
+        assert_eq!(form.rx.hz, rx_hz(&sent));
+        assert_eq!(form.tx.hz, tx_hz(&sent));
         assert_eq!(form.started, at(13, 15, 0));
         assert_eq!(app.radio_now_rx_hz(), Some(rx_hz(&later)));
-        assert_ne!(form.rx_hz, rx_hz(&later));
+        assert_ne!(form.rx.hz, rx_hz(&later));
 
         press(&mut app, KeyCode::Enter);
         let adi = std::fs::read_to_string(&path).unwrap();
@@ -427,7 +427,7 @@ mod saving {
         app.set_rig_live(false);
 
         let form = app.form().unwrap();
-        assert_eq!(form.rx_hz, rx_hz(&sent));
+        assert_eq!(form.rx.hz, rx_hz(&sent));
         press(&mut app, KeyCode::Enter);
         // Still no Call, so it stays open; the point is the snapshot survived.
         assert!(app.form().is_some());

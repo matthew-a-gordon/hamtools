@@ -279,10 +279,10 @@ fn render_form(app: &App, form: &ContactForm, now: DateTime<Utc>, frame: &mut Fr
         )),
         Line::from(format!(
             "RX {} Hz  {}    TX {} Hz  {}",
-            grouped(form.rx_hz),
-            form.rx_mode.name(),
-            grouped(form.tx_hz),
-            form.tx_mode.name()
+            grouped(form.rx.hz),
+            form.rx.mode.name(),
+            grouped(form.tx.hz),
+            form.tx.mode.name()
         )),
         Line::from(match app.radio_now_rx_hz() {
             Some(hz) => format!("radio now RX {} Hz", grouped(hz)),

@@ -8,7 +8,7 @@ use orbit::{Observer, Pass, PropagationError, Satellite};
 use ratatui::crossterm::event::{KeyCode, KeyEvent};
 
 use crate::logging::FormEvent;
-pub use crate::logging::{ContactForm, Field, LoggedContact, Logging};
+pub use crate::logging::{ContactForm, Field, Link, LoggedContact, Logging};
 use crate::satnogs::{Plan, Transmitter};
 use crate::tracker::{RigCommand, STEP_HZ, Tracker, doppler_range_rate};
 
@@ -517,8 +517,14 @@ impl App {
             tracking.satellite.clone(),
             tracking.transmitter.description.clone(),
             self.clock,
-            (rx_hz, plan.rx_mode),
-            (tx_hz, tx_mode),
+            Link {
+                hz: rx_hz,
+                mode: plan.rx_mode,
+            },
+            Link {
+                hz: tx_hz,
+                mode: tx_mode,
+            },
         ));
     }
 
