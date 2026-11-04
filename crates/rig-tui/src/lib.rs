@@ -10,6 +10,7 @@ mod cw;
 pub mod geocode;
 mod logging;
 mod panel;
+pub mod reference;
 mod rig;
 mod style;
 mod ui;
