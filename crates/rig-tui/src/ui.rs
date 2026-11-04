@@ -1,11 +1,14 @@
 //! Layout and rendering: the strip on top, the body below, then the status and hint lines.
 
+use std::time::{SystemTime, UNIX_EPOCH};
+
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Color, Style};
 use ratatui::widgets::{Block, Borders, Paragraph};
 
-use crate::app::{App, Focus};
+use crate::app::{App, Entry, Focus};
+use crate::rig::Feature;
 
 /// Group a frequency in Hz as `14.074.000`.
 fn format_hz(hz: u64) -> String {
@@ -42,9 +45,41 @@ pub fn render(app: &App, frame: &mut Frame) {
     app.render_overlay(frame, frame.area());
 }
 
-/// A placeholder until the rig-state strip ticket: frequency, mode and connection on row 1.
-fn render_strip(app: &App, frame: &mut Frame, area: Rect) {
-    let freq = app.frequency().map_or("-".to_string(), format_hz);
+fn format_step(hz: u64) -> String {
+    if hz >= 1_000 {
+        format!("{} kHz", hz / 1_000)
+    } else {
+        format!("{hz} Hz")
+    }
+}
+
+/// The S-meter from hamlib's dB relative to S9: S0 at -54 dB, 6 dB per S-unit, then S9+dB.
+fn format_strength(db: i32) -> String {
+    if db > 0 {
+        format!("S9+{db}")
+    } else {
+        format!("S{}", (9 + db / 6).max(0))
+    }
+}
+
+/// `HH:MM:SSZ`, or dashes before the first clock reading.
+fn format_utc(utc: Option<SystemTime>) -> String {
+    let Some(secs) = utc
+        .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
+        .map(|d| d.as_secs())
+    else {
+        return "--:--:--Z".to_string();
+    };
+    let day = secs % 86_400;
+    format!("{:02}:{:02}:{:02}Z", day / 3_600, day / 60 % 60, day % 60)
+}
+
+fn row_one(app: &App) -> String {
+    let freq = match app.entry() {
+        Some(Entry::Freq(text)) => format!("freq> {text}_"),
+        Some(Entry::SplitFreq(text)) => format!("split tx> {text}_"),
+        None => app.frequency().map_or("-".to_string(), format_hz),
+    };
     let mode = match (app.rig_mode(), app.passband()) {
         (Some(mode), Some(passband)) => format!("{mode} {passband}"),
         (Some(mode), None) => mode.to_string(),
@@ -55,6 +90,52 @@ fn render_strip(app: &App, frame: &mut Frame, area: Rect) {
     } else {
         "disconnected"
     };
+    format!(
+        "{freq}  {mode}  step {}  {connection}",
+        format_step(app.tuning_step())
+    )
+}
+
+fn row_two(app: &App) -> String {
+    let vfo = if app.is_unsupported(Feature::Vfo) {
+        "VFO not supported".to_string()
+    } else {
+        app.vfo().map_or("VFO -".to_string(), |v| {
+            format!("VFO {}", v.trim_start_matches("VFO"))
+        })
+    };
+    let split = if app.is_unsupported(Feature::Split) {
+        "split not supported".to_string()
+    } else {
+        match app.split() {
+            None => "split -".to_string(),
+            Some((false, _)) => "split off".to_string(),
+            Some((true, tx_vfo)) => {
+                let tx = tx_vfo.trim_start_matches("VFO");
+                if app.is_unsupported(Feature::SplitFreq) {
+                    format!("split {tx} (transmit frequency not supported)")
+                } else {
+                    let freq = app.transmit_frequency().map_or("-".to_string(), format_hz);
+                    format!("split {tx} {freq}")
+                }
+            }
+        }
+    };
+    let ptt = match app.ptt() {
+        Some(true) => "TX",
+        Some(false) => "RX",
+        None => "-",
+    };
+    let smeter = if app.is_unsupported(Feature::SMeter) {
+        "S-meter not supported".to_string()
+    } else {
+        app.strength().map_or("S-".to_string(), format_strength)
+    };
+    format!("{vfo}  {split}  {ptt}  {smeter}  {}", format_utc(app.utc()))
+}
+
+/// The two-row rig-state strip: what the rig last reported, never what was requested.
+fn render_strip(app: &App, frame: &mut Frame, area: Rect) {
     let border = if app.focus() == Focus::Strip {
         Style::default().fg(Color::Cyan)
     } else {
@@ -65,7 +146,7 @@ fn render_strip(app: &App, frame: &mut Frame, area: Rect) {
         .border_style(border)
         .title("rig-tui");
     frame.render_widget(
-        Paragraph::new(format!("{freq}  {mode}  {connection}")).block(block),
+        Paragraph::new(format!("{}\n{}", row_one(app), row_two(app))).block(block),
         area,
     );
 }
@@ -89,9 +170,14 @@ fn hint(app: &App) -> &'static str {
     if app.has_overlay() {
         return "Esc close  Ctrl-C quit";
     }
+    if app.entry().is_some() {
+        return "digits kHz, or MHz with '.'  Enter set  Esc cancel  Ctrl-C quit";
+    }
     match app.focus() {
         Focus::Panel => "Enter send  F1-F6 soft keys  Tab/Esc strip  Ctrl-C quit",
-        Focus::Strip if app.panel_active() => "Tab input  F1-F6 soft keys  q quit  Ctrl-C quit",
-        Focus::Strip => "q quit  Ctrl-C quit",
+        Focus::Strip if app.panel_active() => {
+            "f freq  </> tune  ^/v step  m/M mode  v VFO  s/S split  Tab input  q quit"
+        }
+        Focus::Strip => "f freq  </> tune  ^/v step  m/M mode  v VFO  s/S split  q quit",
     }
 }

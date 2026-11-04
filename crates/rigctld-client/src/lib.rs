@@ -124,6 +124,20 @@ impl Client {
         Ok(())
     }
 
+    /// A level such as `STRENGTH` (the S-meter: a signed dB value relative to S9), as the string
+    /// rigctld reports it. Callers parse it; this crate takes on no rig semantics.
+    pub async fn get_level(&mut self, name: &str) -> Result<String> {
+        let reply = self.request(&format!("l {name}")).await?;
+        // Extended mode answers with the header and then the bare value, with no `Key:` label.
+        reply
+            .lines
+            .get(1)
+            .map(|v| v.trim().to_string())
+            .filter(|v| !v.is_empty())
+            .ok_or_else(|| Error::Protocol(format!("no level value in {:?}", reply.lines)))
+    }
+
+    /// Read PTT. Reading cannot key the transmitter.
     pub async fn get_ptt(&mut self) -> Result<bool> {
         let reply = self.request("t").await?;
         let state: u8 = parse_field(&reply, "PTT")?;

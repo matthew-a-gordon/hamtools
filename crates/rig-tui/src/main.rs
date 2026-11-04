@@ -1,7 +1,7 @@
 use std::error::Error;
 use std::path::PathBuf;
 use std::process::ExitCode;
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime};
 
 use ratatui::DefaultTerminal;
 use ratatui::crossterm::event::{self, Event, KeyEventKind};
@@ -91,6 +91,7 @@ fn run(
     mut app: App,
 ) -> Result<(), Box<dyn Error>> {
     loop {
+        app.set_utc(SystemTime::now());
         terminal.draw(|frame| render(&app, frame))?;
 
         if event::poll(TICK)?
