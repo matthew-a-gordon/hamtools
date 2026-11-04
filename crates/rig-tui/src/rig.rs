@@ -114,7 +114,13 @@ pub enum Command {
     Panel(String),
     /// Talk to a different `rigctld` from now on: drop the connection and let the retry loop
     /// reconnect.
-    SetRigAddr(String),
+    SetRigAddr {
+        rig: usize,
+        addr: String,
+    },
+    /// Light poll of the inactive rig `rig` (index into `App::rig_addrs`): reconnect if it is
+    /// down, else read frequency and mode. Answers go to `App::on_rig_at`. Reads only.
+    LightPoll(usize),
     /// Look this address up (config dialog). Not a rig command: `main` runs it on a thread and
     /// hands the answer back through `App::on_geocode`.
     Lookup(String),
@@ -138,7 +144,8 @@ impl Command {
             | Self::SetSplit { .. }
             | Self::SetSplitFreq(_)
             | Self::Panel(_)
-            | Self::SetRigAddr(_)
+            | Self::SetRigAddr { .. }
+            | Self::LightPoll(_)
             | Self::Lookup(_)
             | Self::ClearGeocodeCache => false,
         }
@@ -208,12 +215,13 @@ impl Rig {
     pub async fn execute(&mut self, command: Command) -> Vec<RigEvent> {
         match command {
             Command::Quit | Command::Lookup(_) | Command::ClearGeocodeCache => Vec::new(),
-            Command::SetRigAddr(addr) => {
+            Command::SetRigAddr { addr, .. } => {
                 self.addr = addr;
                 self.client = None;
                 Vec::new()
             }
             Command::Connect => self.connect().await,
+            Command::LightPoll(_) => self.light_poll().await,
             _ if self.client.is_none() => Vec::new(),
             Command::PollState => self.poll_state().await,
             Command::PollSMeter => self.poll_smeter().await,
@@ -325,6 +333,31 @@ impl Rig {
             }
             Err(Failure::Refused(_)) => None,
         }
+    }
+
+    /// What an inactive rig is asked: connect if it is down, else frequency and mode. This is
+    /// also its health check, since a lost connection reports `Disconnected`. Reads only.
+    async fn light_poll(&mut self) -> Vec<RigEvent> {
+        if self.client.is_none() {
+            return self.connect().await;
+        }
+        let mut events = Vec::new();
+        if let Some(hz) = self
+            .read(None, &mut events, async |c| c.get_freq().await)
+            .await
+        {
+            events.push(RigEvent::Freq(hz));
+        }
+        if let Some((mode, passband)) = self
+            .read(None, &mut events, async |c| c.get_mode().await)
+            .await
+        {
+            events.push(RigEvent::Mode {
+                mode: RigMode::parse(&mode),
+                passband,
+            });
+        }
+        events
     }
 
     async fn poll_state(&mut self) -> Vec<RigEvent> {

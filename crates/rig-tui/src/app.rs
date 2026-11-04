@@ -4,10 +4,11 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime};
 
-use chrono::{DateTime, Utc};
-use hamtools_config::{Callsign, Grid, LicenseClass, Settings};
+use chrono::{DateTime, Datelike, Utc};
+use hamtools_config::{Callsign, Grid, LicenseClass, Plan, PlanActivity, RigKind, RigProfile};
 use hamtools_tui::modal::Modal;
 use logbook::{Log, band_for_hz};
 use ratatui::Frame;
@@ -26,10 +27,15 @@ use crate::keys::{self, Action, Scope};
 use crate::layout::{self, Fit, Panes};
 use crate::logging::{Logging, Snapshot};
 use crate::palette::{Palette, PaletteOutcome, PaletteRow, Target};
-use crate::panel::{LogDefaults, LogMode};
+use crate::panel::{LogDefaults, LogMode, Role};
+use crate::plans::{self, PlanRow, Plans, PlansModal, PlansOutcome};
+use crate::refdata::ReferenceData;
 use crate::rig::{Command, Feature, RigEvent, RigMode};
+use crate::rigs::{RigSlot, Switcher};
 use crate::softkeys::{Exchange, Layers, NamedSet, Resolved, resolve};
 use crate::style::{dim, red};
+
+mod rig_switch;
 
 /// How long to wait between attempts to reach `rigctld`. A starting value, untested on hardware.
 pub const RECONNECT_EVERY: Duration = Duration::from_secs(3);
@@ -43,7 +49,7 @@ pub const STALE_AFTER: Duration = Duration::from_secs(2);
 
 /// Tuning steps in Hz, smallest first.
 pub(crate) const STEPS: [u64; 6] = [1, 10, 100, 1_000, 10_000, 100_000];
-const DEFAULT_STEP: usize = 3;
+pub(crate) const DEFAULT_STEP: usize = 3;
 
 /// The order `m` and `M` walk through.
 const MODE_CYCLE: [RigMode; 8] = [
@@ -84,9 +90,9 @@ pub enum OverlayAction {
 
 /// A value the rig reported and when the app heard it.
 #[derive(Debug, Clone)]
-struct Reading<T> {
-    value: T,
-    at: Instant,
+pub(crate) struct Reading<T> {
+    pub(crate) value: T,
+    pub(crate) at: Instant,
 }
 
 /// A frequency being typed on the strip.
@@ -148,7 +154,14 @@ pub struct App {
     /// Every hosted Activity keeps its in-memory state; exactly one is in the foreground.
     activities: Vec<Box<dyn Activity>>,
     foreground: usize,
-    rig_name: String,
+    /// The configured rigs; the readings below belong to `rigs[active]`.
+    rigs: Vec<RigSlot>,
+    active: usize,
+    /// `rig.default` as read from the config (a name), for the config dialog.
+    rig_default: Option<String>,
+    /// No profile was configured: `rigs` holds one stand-in named after its address.
+    implicit_rig: bool,
+    switcher: Option<Switcher>,
     overlay: Option<Box<dyn Overlay>>,
     /// The quit confirmation, with a line for each thing quitting would lose. It sits above
     /// every other overlay, which stay untouched underneath.
@@ -156,6 +169,11 @@ pub struct App {
     /// The Ctrl-G go-to palette and the Ctrl-K keybindings modal.
     palette: Option<Palette>,
     keybindings: Option<KeybindingsModal>,
+    /// The Activation plans: stored list, the one active this session, and their modal.
+    plans: Plans,
+    plans_modal: Option<PlansModal>,
+    refdata: Option<Arc<ReferenceData>>,
+    last_resolve: Option<Instant>,
     connected: bool,
     now: Instant,
     utc: Option<SystemTime>,
@@ -189,7 +207,6 @@ pub struct App {
     locator: Option<String>,
     log_path: Option<PathBuf>,
     default_log_path: Option<PathBuf>,
-    rig_addr: String,
     config_path: Option<PathBuf>,
     config: Option<ConfigDialog>,
     /// The Ctrl-B band plan modal, when open.
@@ -214,11 +231,29 @@ impl App {
         Self {
             activities: vec![Box::new(General::new())],
             foreground: 0,
-            rig_name: DEFAULT_RIG_ADDR.to_string(),
+            rigs: vec![RigSlot::from_profile(
+                &RigProfile {
+                    name: DEFAULT_RIG_ADDR.to_string(),
+                    addr: DEFAULT_RIG_ADDR.to_string(),
+                    kind: RigKind::Kx3,
+                    cw: None,
+                    split: None,
+                    sat_mode: None,
+                },
+                DEFAULT_STEP,
+            )],
+            active: 0,
+            rig_default: None,
+            implicit_rig: true,
+            switcher: None,
             overlay: None,
             quit_confirm: None,
             palette: None,
             keybindings: None,
+            plans: Plans::none(),
+            plans_modal: None,
+            refdata: None,
+            last_resolve: None,
             connected: false,
             // Only the starting point for staleness; every tick replaces it.
             now: Instant::now(),
@@ -248,7 +283,6 @@ impl App {
             locator: None,
             log_path: None,
             default_log_path: None,
-            rig_addr: DEFAULT_RIG_ADDR.to_string(),
             config_path: None,
             config: None,
             bandplan: None,
@@ -354,8 +388,28 @@ impl App {
 
     /// The config file the dialog edits (`None`: no location, so the dialog is read-only).
     pub fn with_config_path(mut self, path: Option<PathBuf>) -> Self {
+        self.plans = path
+            .as_deref()
+            .map_or_else(Plans::none, |p| Plans::load(&plans::plans_path(p)));
         self.config_path = path;
         self
+    }
+
+    /// The park and summit data plans snapshot from. Without it plans still save, unresolved.
+    pub fn with_reference_data(mut self, data: Arc<ReferenceData>) -> Self {
+        self.refdata = Some(data);
+        self
+    }
+
+    /// The plan launched from the palette this session, if any (never stored; a restart returns
+    /// it to planned).
+    pub fn active_plan(&self) -> Option<&Plan> {
+        self.plans.active()
+    }
+
+    /// Why plans cannot be stored (no config directory, or `plans.toml` does not parse).
+    pub fn plans_error(&self) -> Option<&str> {
+        self.plans.error()
     }
 
     /// The Locator in use (6 characters, uppercase), if any.
@@ -375,9 +429,32 @@ impl App {
         self
     }
 
-    /// The `rigctld` address in use, shown in the config dialog when the file sets none.
+    /// The `rigctld` address of the Active rig (a command-line override, or the stand-in rig
+    /// when no profile is configured).
     pub fn with_rig_addr(mut self, addr: impl Into<String>) -> Self {
-        self.rig_addr = addr.into();
+        let slot = &mut self.rigs[self.active];
+        slot.addr = addr.into();
+        if self.implicit_rig {
+            slot.name = slot.addr.clone();
+        }
+        self
+    }
+
+    /// Use these rig profiles (in config order); start on `default` or else the first. An empty
+    /// list keeps the stand-in rig.
+    pub fn with_rigs(mut self, profiles: &[RigProfile], default: Option<&str>) -> Self {
+        if profiles.is_empty() {
+            return self;
+        }
+        self.rigs = profiles
+            .iter()
+            .map(|p| RigSlot::from_profile(p, DEFAULT_STEP))
+            .collect();
+        self.active = default
+            .and_then(|name| profiles.iter().position(|p| p.name == name))
+            .unwrap_or(0);
+        self.rig_default = default.map(str::to_string);
+        self.implicit_rig = false;
         self
     }
 
@@ -399,58 +476,21 @@ impl App {
 
     /// Bring the Activity at `index` to the foreground. Out of range is ignored.
     pub fn set_foreground(&mut self, index: usize) {
-        if index < self.activities.len() {
-            self.foreground = index;
-            self.entry = None;
-            self.activities[index].on_enter();
+        if index >= self.activities.len() {
+            return;
         }
+        if let Some(why) = self.activity_unavailable(index) {
+            self.status = Some(why);
+            return;
+        }
+        self.foreground = index;
+        self.entry = None;
+        self.activities[index].on_enter();
     }
 
     /// The foreground Activity's name, as the shared strip shows it.
     pub fn activity_name(&self) -> &'static str {
         self.activities[self.foreground].name()
-    }
-
-    pub(crate) fn rig_name(&self) -> &str {
-        &self.rig_name
-    }
-
-    pub fn rig_addr(&self) -> &str {
-        &self.rig_addr
-    }
-
-    /// What the app is using now, as config settings.
-    fn current_settings(&self) -> Settings {
-        Settings {
-            callsign: self.callsign.as_deref().and_then(|c| Callsign::new(c).ok()),
-            locator: self.locator.as_deref().and_then(|g| Grid::new(g).ok()),
-            log_path: self.log_path.clone(),
-            license_class: self.license_class,
-            rig_addr: Some(self.rig_addr.clone()),
-            macros: self.soft_keys.clone(),
-            softkey_sets: self.softkey_sets.clone(),
-        }
-    }
-
-    /// Use saved settings now, with no restart. Returns what the rig side must do.
-    fn apply_settings(&mut self, settings: Settings) -> Vec<Command> {
-        self.callsign = settings.callsign.map(|c| c.as_str().to_string());
-        self.locator = settings.locator.map(|g| g.as_str().to_string());
-        self.log_path = settings.log_path;
-        self.license_class = settings.license_class;
-        self.soft_keys = settings.macros;
-        self.softkey_sets = settings.softkey_sets;
-        self.refresh_soft_keys();
-        match settings.rig_addr {
-            Some(addr) if addr != self.rig_addr => {
-                self.rig_addr = addr.clone();
-                self.rig_name = addr.clone();
-                self.connected = false;
-                self.last_connect = None;
-                vec![Command::SetRigAddr(addr)]
-            }
-            _ => Vec::new(),
-        }
     }
 
     /// The answer to a [`Command::Lookup`] (run by `main` on a short-lived thread).
@@ -571,10 +611,12 @@ impl App {
     pub fn has_overlay(&self) -> bool {
         self.overlay.is_some()
             || self.config.is_some()
+            || self.switcher_open()
             || self.bandplan.is_some()
             || self.logging.modal_open()
             || self.quit_confirm.is_some()
             || self.palette.is_some()
+            || self.plans_modal.is_some()
             || self.keybindings.is_some()
     }
 
@@ -674,19 +716,241 @@ impl App {
         }
     }
 
-    /// One palette row per hosted Activity. Rows for upcoming Activation plans go in front.
+    /// The palette: upcoming Activation plans first (soonest first, overdue ones flagged), then
+    /// one row per hosted Activity, then the way into the plan manager.
     fn palette_rows(&self) -> Vec<PaletteRow> {
         let ctx = ctx!(self);
-        self.activities
-            .iter()
-            .enumerate()
-            .map(|(i, a)| PaletteRow {
-                target: Target::Activity(i),
-                name: a.name().to_string(),
-                state: a.state_line(&ctx),
-                unavailable: a.unavailable(),
+        let today = self.today();
+        let now_unix = self.now_unix();
+        let mut rows: Vec<PaletteRow> = self
+            .plans
+            .sorted()
+            .into_iter()
+            .filter(|p| !p.done)
+            .filter_map(|p| {
+                let index = self.plans.list().iter().position(|q| q.id == p.id)?;
+                let name = plans::display_name(p, self.refdata.as_deref(), now_unix);
+                Some(PaletteRow {
+                    target: Target::Plan(index),
+                    name: format!(
+                        "{} {}",
+                        plans::activity_label(p.activity),
+                        plans::refs_label(p)
+                    ),
+                    state: format!(
+                        "{} {}{}",
+                        p.date,
+                        self.plans.status(p, &today).label(),
+                        name.map(|n| format!(" {n}")).unwrap_or_default()
+                    ),
+                    unavailable: None,
+                })
+            })
+            .collect();
+        rows.extend(self.activities.iter().enumerate().map(|(i, a)| PaletteRow {
+            target: Target::Activity(i),
+            name: a.name().to_string(),
+            state: a.state_line(&ctx),
+            unavailable: a.unavailable().or_else(|| self.activity_unavailable(i)),
+        }));
+        rows.push(PaletteRow {
+            target: Target::ManagePlans,
+            name: "Plans".to_string(),
+            state: format!(
+                "{} stored: new, edit, duplicate, delete",
+                self.plans.list().len()
+            ),
+            unavailable: None,
+        });
+        rows
+    }
+
+    /// Today's UTC date as `YYYY-MM-DD`.
+    fn today(&self) -> String {
+        let d = self.clock();
+        format!("{:04}-{:02}-{:02}", d.year(), d.month(), d.day())
+    }
+
+    fn now_unix(&self) -> u64 {
+        u64::try_from(self.clock().timestamp()).unwrap_or(0)
+    }
+
+    fn plan_rows(&self) -> Vec<PlanRow> {
+        let today = self.today();
+        let now_unix = self.now_unix();
+        self.plans
+            .sorted()
+            .into_iter()
+            .map(|p| PlanRow {
+                plan: p.clone(),
+                status: self.plans.status(p, &today),
+                name: plans::display_name(p, self.refdata.as_deref(), now_unix),
             })
             .collect()
+    }
+
+    fn open_plans(&mut self) {
+        self.plans_modal = Some(PlansModal::new(
+            self.plan_rows(),
+            self.plans.error().map(str::to_string),
+            self.today(),
+        ));
+    }
+
+    fn refresh_plans_modal(&mut self) {
+        let (rows, blocked) = (self.plan_rows(), self.plans.error().map(str::to_string));
+        if let Some(modal) = &mut self.plans_modal {
+            modal.set_rows(rows, blocked);
+        }
+    }
+
+    /// Stop using the active plan's reference and Soft keys (it was finished or deleted).
+    fn deactivate_plan(&mut self) {
+        self.exchange.my_ref = None;
+        self.set_plan_soft_keys(None, BTreeMap::new());
+        self.tell_activities_plan(None);
+    }
+
+    fn tell_activities_plan(&mut self, plan: Option<&Plan>) {
+        let (role, refs) = match plan {
+            Some(p) => (
+                match p.activity {
+                    PlanActivity::Sota => Role::SotaActivator,
+                    PlanActivity::Pota => Role::PotaActivator,
+                },
+                p.references.clone(),
+            ),
+            None => (Role::General, Vec::new()),
+        };
+        for a in &mut self.activities {
+            a.set_plan(role, &refs);
+        }
+    }
+
+    /// Start the plan at `index` of the stored list: it becomes the active plan, its reference is
+    /// my reference, its Soft key set loads, and its Activity comes to the foreground in the
+    /// Activator Role. A missing Soft key set is flagged and never stops this.
+    fn launch_plan(&mut self, index: usize) {
+        let Some(plan) = self.plans.list().get(index).cloned() else {
+            return;
+        };
+        self.launch_plan_quietly(index);
+        let name = plans::activity_label(plan.activity);
+        let primary = plan.primary().unwrap_or("");
+        let position = self.activities.iter().position(|a| a.name() == name);
+        if let Some(position) = position {
+            self.set_foreground(position);
+        }
+        // A flag about a missing Soft key set stays on the status line.
+        if self.resolved.missing_sets.is_empty() {
+            self.status = Some(match position {
+                Some(_) => format!("Plan {name} {primary} launched"),
+                None => format!(
+                    "Plan {name} {primary} is active; the {name} Activity is not available yet"
+                ),
+            });
+        }
+    }
+
+    fn on_plans_key(&mut self, key: KeyEvent) {
+        let Some(modal) = &mut self.plans_modal else {
+            return;
+        };
+        match modal.on_key(key) {
+            PlansOutcome::Stay => {}
+            PlansOutcome::Close => self.plans_modal = None,
+            PlansOutcome::Save(plan) => {
+                let mut plan = *plan;
+                plan.snapshot =
+                    plans::snapshot_for(&plan, self.refdata.as_deref(), self.now_unix());
+                let id = plan.id.clone();
+                let was_active = self.plans.active().is_some_and(|a| a.id == id);
+                match self.plans.upsert(plan) {
+                    Ok(()) => {
+                        if was_active {
+                            self.deactivate_plan();
+                            if let Some(i) = self.plans.list().iter().position(|p| p.id == id) {
+                                self.launch_plan_quietly(i);
+                            }
+                        }
+                        self.refresh_plans_modal();
+                        if let Some(modal) = &mut self.plans_modal {
+                            modal.show_list();
+                            modal.select(&id);
+                        }
+                    }
+                    Err(why) => self.plans_notice(why),
+                }
+            }
+            PlansOutcome::Delete(id) => {
+                let was_active = self.plans.active().is_some_and(|a| a.id == id);
+                match self.plans.delete(&id) {
+                    Ok(()) => {
+                        if was_active {
+                            self.deactivate_plan();
+                        }
+                        self.refresh_plans_modal();
+                    }
+                    Err(why) => self.plans_notice(why),
+                }
+            }
+            PlansOutcome::ToggleDone(id, done) => {
+                let was_active = self.plans.active().is_some_and(|a| a.id == id);
+                match self.plans.set_done(&id, done) {
+                    Ok(()) => {
+                        if was_active && done {
+                            self.deactivate_plan();
+                        }
+                        self.refresh_plans_modal();
+                    }
+                    Err(why) => self.plans_notice(why),
+                }
+            }
+            PlansOutcome::Reload => {
+                let path = self.config_path.as_deref().map(plans::plans_path);
+                self.plans.reload(path.as_deref());
+                self.refresh_plans_modal();
+                if let Some(modal) = &mut self.plans_modal {
+                    modal.show_list();
+                }
+            }
+        }
+    }
+
+    /// Re-apply an edited active plan's reference and Soft keys without moving the screen.
+    fn launch_plan_quietly(&mut self, index: usize) {
+        let Some(plan) = self.plans.list().get(index).cloned() else {
+            return;
+        };
+        self.plans.set_active(Some(plan.id.clone()));
+        self.exchange.my_ref = plan.primary().map(str::to_string);
+        self.set_plan_soft_keys(plan.softkey_set.clone(), plan.softkeys.clone());
+        self.tell_activities_plan(Some(&plan));
+    }
+
+    fn plans_notice(&mut self, why: String) {
+        if let Some(modal) = &mut self.plans_modal {
+            modal.set_notice(Some(why));
+        }
+    }
+
+    /// Plans saved offline get their snapshot once the reference turns up in the cache. Cheap
+    /// when nothing is pending, and never fetches.
+    fn tick_plans(&mut self, now: Instant) {
+        const EVERY: Duration = Duration::from_secs(5);
+        if !self.plans.has_unresolved()
+            || self
+                .last_resolve
+                .is_some_and(|at| now.duration_since(at) < EVERY)
+        {
+            return;
+        }
+        self.last_resolve = Some(now);
+        if let Some(data) = self.refdata.clone()
+            && self.plans.resolve_pending(&data, self.now_unix())
+        {
+            self.refresh_plans_modal();
+        }
     }
 
     fn open_palette(&mut self) {
@@ -707,7 +971,8 @@ impl App {
         self.config = Some(ConfigDialog::open(
             self.config_path.as_deref(),
             &self.current_settings(),
-            &self.rig_addr,
+            self.rig_name(),
+            self.rig_addr(),
         ));
     }
 
@@ -718,7 +983,7 @@ impl App {
             Action::GoTo => self.open_palette(),
             Action::Keybindings => self.open_keybindings(),
             Action::RigSwitcher => {
-                self.status = Some("not available yet".to_string());
+                self.open_switcher();
             }
             Action::Bandplan => self.bandplan = Some(BandplanModal::open(self.frequency())),
             Action::LogForm => self.open_log_form(),
@@ -926,15 +1191,27 @@ impl App {
                 }
             };
         }
+        if self.switcher_open() {
+            self.on_switcher_key(key);
+            return Vec::new();
+        }
         if let Some(palette) = &mut self.palette {
             match palette.on_key(key) {
                 PaletteOutcome::Keep => {}
                 PaletteOutcome::Close => self.palette = None,
-                PaletteOutcome::Choose(Target::Activity(index)) => {
+                PaletteOutcome::Choose(target) => {
                     self.palette = None;
-                    self.set_foreground(index);
+                    match target {
+                        Target::Activity(index) => self.set_foreground(index),
+                        Target::Plan(index) => self.launch_plan(index),
+                        Target::ManagePlans => self.open_plans(),
+                    }
                 }
             }
+            return Vec::new();
+        }
+        if self.plans_modal.is_some() {
+            self.on_plans_key(key);
             return Vec::new();
         }
         if let Some(modal) = &mut self.keybindings {
@@ -1305,6 +1582,7 @@ impl App {
     /// poll, the S-meter poll and the active panel's requests (the CW panel's `TB;` every tick).
     pub fn tick(&mut self, now: Instant) -> Vec<Command> {
         self.now = now;
+        self.tick_plans(now);
         if !self.connected {
             let due = self
                 .last_connect
@@ -1314,9 +1592,10 @@ impl App {
                 self.last_connect = Some(now);
                 commands.insert(0, Command::Connect);
             }
+            commands.extend(self.tick_inactive(now));
             return commands;
         }
-        let mut commands = Vec::new();
+        let mut commands = self.tick_inactive(now);
         if self
             .last_poll
             .is_none_or(|at| now.duration_since(at) >= STATE_POLL_EVERY)
@@ -1356,6 +1635,7 @@ impl App {
         if let Some(dialog) = &self.config {
             dialog.render(frame, area);
         }
+        self.render_switcher(frame, area);
         if let Some(modal) = &self.bandplan {
             let view = BandView {
                 rx: self.frequency(),
@@ -1370,6 +1650,9 @@ impl App {
         }
         if let Some(palette) = &self.palette {
             palette.render(frame, area);
+        }
+        if let Some(modal) = &self.plans_modal {
+            modal.render(frame, area);
         }
         if let Some(modal) = &self.keybindings {
             modal.render(frame, area);

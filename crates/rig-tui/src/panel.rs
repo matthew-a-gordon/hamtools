@@ -98,6 +98,11 @@ pub trait ModePanel {
 
     fn logbook_mode(&self, mode: &RigMode) -> Option<LogMode>;
 
+    /// Whether a send from this panel may still be going out; blocks switching the Active rig.
+    fn sending(&self) -> bool {
+        false
+    }
+
     /// Typed input that has not been sent, which quitting would lose.
     fn has_unsent_input(&self) -> bool {
         false

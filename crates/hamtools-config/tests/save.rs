@@ -52,7 +52,6 @@ fn new_keys_go_at_the_end_of_their_table() {
     let mut cfg = ConfigFile::load(&path).unwrap();
     let mut s = cfg.settings().clone();
     s.macros.insert(1, "CQ DE {CALL} K".into());
-    s.rig_addr = Some("127.0.0.1:4532".into());
     s.log_path = Some("/tmp/log.adi".into());
     cfg.save(&s).unwrap();
     assert_eq!(
@@ -76,9 +75,6 @@ F1 = \"CQ DE {CALL} K\"
 
 [logbook]
 path = \"/tmp/log.adi\"
-
-[rig]
-addr = \"127.0.0.1:4532\"
 "
     );
 }
@@ -86,12 +82,15 @@ addr = \"127.0.0.1:4532\"
 #[test]
 fn new_top_level_key_stays_in_the_root_table() {
     let dir = TempDir::new();
-    let path = dir.write("config.toml", "[rig]\naddr = \"a:1\"\n");
+    let path = dir.write("config.toml", "[rig.a]\naddr = \"a:1\"\nkind = \"kx3\"\n");
     let mut cfg = ConfigFile::load(&path).unwrap();
     let mut s = cfg.settings().clone();
     s.callsign = call("W1AW");
     cfg.save(&s).unwrap();
-    assert_eq!(read(&path), "callsign = \"W1AW\"\n[rig]\naddr = \"a:1\"\n");
+    assert_eq!(
+        read(&path),
+        "callsign = \"W1AW\"\n[rig.a]\naddr = \"a:1\"\nkind = \"kx3\"\n"
+    );
     assert_eq!(
         ConfigFile::load(&path).unwrap().settings().callsign,
         call("W1AW")
@@ -110,14 +109,32 @@ fn clearing_a_field_removes_its_key_only() {
 }
 
 #[test]
-fn a_kx3_address_is_patched_in_place() {
+fn a_profile_address_is_patched_in_place_and_nothing_else_moves() {
     let dir = TempDir::new();
-    let path = dir.write("config.toml", "[kx3]\naddr = \"127.0.0.1:4532\" # kx3\n");
+    let text = "[rig.kx3]\naddr = \"127.0.0.1:4532\" # kx3\nkind = \"kx3\"\n[rig.ft847]\naddr = \"127.0.0.1:4533\"\nkind = \"ft847\"\n";
+    let path = dir.write("config.toml", text);
     let mut cfg = ConfigFile::load(&path).unwrap();
     let mut s = cfg.settings().clone();
-    s.rig_addr = Some("127.0.0.1:4533".into());
+    s.rigs[0].addr = "127.0.0.1:5000".into();
     cfg.save(&s).unwrap();
-    assert_eq!(read(&path), "[kx3]\naddr = \"127.0.0.1:4533\" # kx3\n");
+    assert_eq!(
+        read(&path),
+        text.replace("127.0.0.1:4532\" # kx3", "127.0.0.1:5000\" # kx3")
+    );
+}
+
+#[test]
+fn the_default_rig_is_written_under_a_rig_header() {
+    let dir = TempDir::new();
+    let text = "[rig.kx3]\naddr = \"a:1\"\nkind = \"kx3\"\n[rig.ft847]\naddr = \"b:2\"\nkind = \"ft847\"\n";
+    let path = dir.write("config.toml", text);
+    let mut cfg = ConfigFile::load(&path).unwrap();
+    let mut s = cfg.settings().clone();
+    s.rig_default = Some("ft847".into());
+    cfg.save(&s).unwrap();
+    let saved = ConfigFile::load(&path).unwrap();
+    assert_eq!(saved.settings().rig_default.as_deref(), Some("ft847"));
+    assert_eq!(saved.settings().rigs.len(), 2);
 }
 
 #[test]
@@ -318,7 +335,7 @@ fn same_field_changed_differently_is_a_conflict_with_both_values() {
     std::fs::write(&path, &theirs).unwrap();
     let mut s = cfg.settings().clone();
     s.callsign = call("K1ABC");
-    s.rig_addr = Some("h:1".into());
+    s.log_path = Some("/h/l.adi".into());
     assert_eq!(
         cfg.save(&s),
         Err(SaveError::Conflict(vec![FieldConflict {
@@ -332,8 +349,8 @@ fn same_field_changed_differently_is_a_conflict_with_both_values() {
     // Resolve by keeping the file's callsign: reload, apply the rest, save again.
     cfg.reload().unwrap();
     let mut s = cfg.settings().clone();
-    s.rig_addr = Some("h:1".into());
+    s.log_path = Some("/h/l.adi".into());
     assert_eq!(cfg.save(&s), Ok(Saved::Written));
     assert!(read(&path).contains("N9XYZ"));
-    assert!(read(&path).contains("addr = \"h:1\""));
+    assert!(read(&path).contains("path = \"/h/l.adi\""));
 }

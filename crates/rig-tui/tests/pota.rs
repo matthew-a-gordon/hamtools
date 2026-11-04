@@ -345,7 +345,7 @@ fn markers_each_have_a_character_that_needs_no_colour() {
 
 #[test]
 fn worked_today_comes_from_the_log_with_no_state_of_its_own() {
-    let mut s = Setup::entered();
+    let s = Setup::entered();
     assert!(!s.screen().iter().any(|r| r.contains('✓')));
     // A Contact appears in the Log by another route; the next frame shows it.
     s.append_contact(
@@ -362,7 +362,7 @@ fn worked_today_comes_from_the_log_with_no_state_of_its_own() {
             .any(|r| r.contains("N3CCC") && r.contains('✓'))
     );
     // A different band is not the same Contact.
-    let mut t = Setup::entered();
+    let t = Setup::entered();
     t.append_contact("W2BBB", 14_250_000, Mode::Ssb(logbook::Sideband::Upper));
     assert!(!t.screen().iter().any(|r| r.contains('✓')));
 }

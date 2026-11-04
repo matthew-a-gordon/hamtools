@@ -3,16 +3,16 @@
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
-use hamtools_config::{ConfigError, ConfigFile, LicenseClass, Warning};
+use hamtools_config::{ConfigError, ConfigFile, LicenseClass, RigProfile, Warning};
 
-const DEFAULT_ADDR: &str = "127.0.0.1:4532";
-
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Config {
     /// Operator callsign, uppercase. Substituted for `{CALL}` in text you send.
     pub callsign: Option<String>,
-    /// Address of the rigctld to talk to.
-    pub rig_addr: String,
+    /// The rig profiles, in file order. Empty: one stand-in rig on the default address.
+    pub rigs: Vec<RigProfile>,
+    /// `rig.default`: the profile to start on; `None` means the first.
+    pub rig_default: Option<String>,
     /// The operator's 6-character Locator, uppercase.
     pub locator: Option<String>,
     /// `station.license_class`; no default.
@@ -25,21 +25,6 @@ pub struct Config {
     pub softkey_sets: BTreeMap<String, BTreeMap<u8, String>>,
     /// Keys in the file this app does not know. Reported by `main`, never an error.
     pub warnings: Vec<Warning>,
-}
-
-impl Default for Config {
-    fn default() -> Self {
-        Self {
-            callsign: None,
-            rig_addr: DEFAULT_ADDR.to_string(),
-            locator: None,
-            license_class: None,
-            log_path: None,
-            soft_keys: BTreeMap::new(),
-            softkey_sets: BTreeMap::new(),
-            warnings: Vec::new(),
-        }
-    }
 }
 
 /// Where the config file lives: `$XDG_CONFIG_HOME/hamtools/config.toml`, falling back to
@@ -74,10 +59,8 @@ impl Config {
         let settings = file.settings();
         Ok(Self {
             callsign: settings.callsign.as_ref().map(|c| c.as_str().to_string()),
-            rig_addr: settings
-                .rig_addr
-                .clone()
-                .unwrap_or_else(|| DEFAULT_ADDR.to_string()),
+            rigs: settings.rigs.clone(),
+            rig_default: settings.rig_default.clone(),
             locator: settings.locator.as_ref().map(|g| g.as_str().to_string()),
             license_class: settings.license_class,
             log_path: settings.log_path.clone(),
