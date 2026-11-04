@@ -95,3 +95,7 @@ _Avoid_: Current radio, selected rig
 **Role**:
 The part the operator plays within an Activity. SOTA and POTA each have two: **Activator** (at the summit or park, working whoever calls) and **Hunter** (working activators from elsewhere, found through spots). SOTA's screens label the second Role "chaser"; it is the same Role.
 _Avoid_: Spotter (a spotter posts spots, which this project does not do), mode, profile
+
+**Rig**:
+A radio the app can control, reached through its own `rigctld` and described by a profile in the shared config (name, address, kind). The app knows two today, the KX3 and the FT-847.
+_Avoid_: Radio, transceiver (except when quoting hardware), device
