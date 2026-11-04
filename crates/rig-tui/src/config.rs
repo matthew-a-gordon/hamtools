@@ -3,7 +3,7 @@
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
-use hamtools_config::{ConfigError, ConfigFile, Grid, Warning};
+use hamtools_config::{ConfigError, ConfigFile, Warning};
 
 const DEFAULT_ADDR: &str = "127.0.0.1:4532";
 
@@ -11,12 +11,12 @@ const DEFAULT_ADDR: &str = "127.0.0.1:4532";
 pub struct Config {
     /// Operator callsign, uppercase. Substituted for `{CALL}` in text you send.
     pub callsign: Option<String>,
-    /// The operator's Locator (`[station] locator`), for `MY_GRIDSQUARE`.
-    pub locator: Option<Grid>,
-    /// `[logbook] path`: where the shared Log lives, if set.
-    pub log_path: Option<PathBuf>,
     /// Address of the rigctld to talk to.
     pub rig_addr: String,
+    /// The operator's 6-character Locator, uppercase.
+    pub locator: Option<String>,
+    /// Where the Log lives; `None` means the default.
+    pub log_path: Option<PathBuf>,
     /// Soft key messages, keyed 1..=6 for F1..F6. Text is uppercase and may contain `{CALL}`.
     pub soft_keys: BTreeMap<u8, String>,
     /// Keys in the file this app does not know. Reported by `main`, never an error.
@@ -27,9 +27,9 @@ impl Default for Config {
     fn default() -> Self {
         Self {
             callsign: None,
+            rig_addr: DEFAULT_ADDR.to_string(),
             locator: None,
             log_path: None,
-            rig_addr: DEFAULT_ADDR.to_string(),
             soft_keys: BTreeMap::new(),
             warnings: Vec::new(),
         }
@@ -68,29 +68,22 @@ impl Config {
         let settings = file.settings();
         Ok(Self {
             callsign: settings.callsign.as_ref().map(|c| c.as_str().to_string()),
-            locator: settings.locator.clone(),
-            log_path: settings.log_path.clone(),
             rig_addr: settings
                 .rig_addr
                 .clone()
                 .unwrap_or_else(|| DEFAULT_ADDR.to_string()),
+            locator: settings.locator.as_ref().map(|g| g.as_str().to_string()),
+            log_path: settings.log_path.clone(),
             soft_keys: settings.macros.clone(),
             warnings: file.warnings().to_vec(),
         })
     }
 }
 
-/// Where the Log lives: `[logbook] path` from the config, else `$XDG_DATA_HOME/hamtools/log.adi`,
-/// falling back to `$HOME/.local/share/hamtools/log.adi`. The same rule as sat-tui, so both tools
-/// share one file.
-pub fn log_path(
-    config: Option<&Path>,
-    xdg_data_home: Option<&str>,
-    home: Option<&str>,
-) -> Option<PathBuf> {
-    if let Some(path) = config {
-        return Some(path.to_path_buf());
-    }
+/// The default Log: `$XDG_DATA_HOME/hamtools/log.adi`, falling back to
+/// `$HOME/.local/share/hamtools/log.adi`. The same place sat-tui uses, so both tools share one
+/// file. The config's `[logbook] path` overrides it.
+pub fn default_log_path(xdg_data_home: Option<&str>, home: Option<&str>) -> Option<PathBuf> {
     let base = match xdg_data_home.filter(|dir| !dir.is_empty()) {
         Some(dir) => PathBuf::from(dir),
         None => Path::new(home?).join(".local").join("share"),

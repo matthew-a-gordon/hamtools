@@ -3,15 +3,19 @@
 //! terminal.
 
 use std::collections::{BTreeMap, BTreeSet};
+use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant, SystemTime};
 
 use chrono::{DateTime, Utc};
-use logbook::{Grid, Log, band_for_hz};
+use hamtools_config::{Callsign, Grid, Settings};
+use logbook::{Log, band_for_hz};
 use ratatui::Frame;
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::layout::Rect;
 
+use crate::config_dialog::{ConfigDialog, Outcome};
 use crate::cw::CwPanel;
+use crate::geocode::GeocodeResult;
 use crate::logging::{Logging, Snapshot, default_log_mode};
 use crate::panel::{LogDefaults, LogMode, ModePanel, PanelCommand, PanelCtx};
 use crate::rig::{Command, Feature, RigEvent, RigMode};
@@ -41,6 +45,8 @@ const MODE_CYCLE: [RigMode; 8] = [
     RigMode::Rtty,
     RigMode::RttyR,
 ];
+
+const DEFAULT_RIG_ADDR: &str = "127.0.0.1:4532";
 
 /// Which widget gets plain keys.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -114,8 +120,14 @@ pub struct App {
     /// The status came from a failing poll, so the next good poll clears it.
     poll_failed: bool,
     callsign: Option<String>,
-    logging: Option<Logging>,
+    logging: Logging,
     soft_keys: BTreeMap<u8, String>,
+    locator: Option<String>,
+    log_path: Option<PathBuf>,
+    default_log_path: Option<PathBuf>,
+    rig_addr: String,
+    config_path: Option<PathBuf>,
+    config: Option<ConfigDialog>,
     last_connect: Option<Instant>,
     last_poll: Option<Instant>,
     last_smeter: Option<Instant>,
@@ -151,8 +163,14 @@ impl App {
             status: None,
             poll_failed: false,
             callsign: None,
-            logging: None,
+            logging: Logging::new(),
             soft_keys: BTreeMap::new(),
+            locator: None,
+            log_path: None,
+            default_log_path: None,
+            rig_addr: DEFAULT_RIG_ADDR.to_string(),
+            config_path: None,
+            config: None,
             last_connect: None,
             last_poll: None,
             last_smeter: None,
@@ -173,16 +191,86 @@ impl App {
         self
     }
 
-    /// Log Contacts to `log`, with `locator` as `MY_GRIDSQUARE` (omitted when `None`). Without
-    /// this, or without a callsign, `l` refuses and says why.
-    pub fn with_logging(mut self, log: Log, locator: Option<Grid>) -> Self {
-        self.logging = Some(Logging::new(log, locator));
+    /// Where the Log lives when the config sets no `[logbook] path`. `None`: logging is off.
+    pub fn with_default_log_path(mut self, path: Option<PathBuf>) -> Self {
+        self.default_log_path = path;
         self
     }
 
-    /// How many Contacts were logged this run, when logging is set up.
-    pub fn logged_count(&self) -> Option<usize> {
-        self.logging.as_ref().map(Logging::count)
+    /// How many Contacts were logged this run.
+    pub fn logged_count(&self) -> usize {
+        self.logging.count()
+    }
+
+    /// The config file the dialog edits (`None`: no location, so the dialog is read-only).
+    pub fn with_config_path(mut self, path: Option<PathBuf>) -> Self {
+        self.config_path = path;
+        self
+    }
+
+    /// The Locator in use (6 characters, uppercase), if any.
+    pub fn with_locator(mut self, locator: Option<String>) -> Self {
+        self.locator = locator;
+        self
+    }
+
+    pub fn with_log_path(mut self, log_path: Option<PathBuf>) -> Self {
+        self.log_path = log_path;
+        self
+    }
+
+    /// The `rigctld` address in use, shown in the config dialog when the file sets none.
+    pub fn with_rig_addr(mut self, addr: impl Into<String>) -> Self {
+        self.rig_addr = addr.into();
+        self
+    }
+
+    pub fn locator(&self) -> Option<&str> {
+        self.locator.as_deref()
+    }
+
+    /// The Log path in use; `None` means the default.
+    pub fn log_path(&self) -> Option<&Path> {
+        self.log_path.as_deref()
+    }
+
+    pub fn rig_addr(&self) -> &str {
+        &self.rig_addr
+    }
+
+    /// What the app is using now, as config settings.
+    fn current_settings(&self) -> Settings {
+        Settings {
+            callsign: self.callsign.as_deref().and_then(|c| Callsign::new(c).ok()),
+            locator: self.locator.as_deref().and_then(|g| Grid::new(g).ok()),
+            log_path: self.log_path.clone(),
+            rig_addr: Some(self.rig_addr.clone()),
+            macros: self.soft_keys.clone(),
+        }
+    }
+
+    /// Use saved settings now, with no restart. Returns what the rig side must do.
+    fn apply_settings(&mut self, settings: Settings) -> Vec<Command> {
+        self.callsign = settings.callsign.map(|c| c.as_str().to_string());
+        self.locator = settings.locator.map(|g| g.as_str().to_string());
+        self.log_path = settings.log_path;
+        self.soft_keys = settings.macros;
+        match settings.rig_addr {
+            Some(addr) if addr != self.rig_addr => {
+                self.rig_addr = addr.clone();
+                self.connected = false;
+                self.last_connect = None;
+                vec![Command::SetRigAddr(addr)]
+            }
+            _ => Vec::new(),
+        }
+    }
+
+    /// The answer to a [`Command::Lookup`] (run by `main` on a short-lived thread).
+    pub fn on_geocode(&mut self, result: GeocodeResult) {
+        if let Some(dialog) = &mut self.config {
+            dialog.on_geocode(result);
+        }
     }
 
     pub fn status(&self) -> Option<&str> {
@@ -294,20 +382,38 @@ impl App {
     }
 
     pub fn has_overlay(&self) -> bool {
-        self.overlay.is_some() || self.logging_modal_open()
-    }
-
-    fn logging_modal_open(&self) -> bool {
-        self.logging.as_ref().is_some_and(Logging::modal_open)
+        self.overlay.is_some() || self.config.is_some() || self.logging.modal_open()
     }
 
     pub(crate) fn log_form_open(&self) -> bool {
-        self.logging.as_ref().is_some_and(Logging::form_open)
+        self.logging.form_open()
     }
 
     /// Recent Contacts for the body when no panel applies, newest first.
     pub(crate) fn recent_contacts(&self, n: usize) -> Vec<String> {
-        self.logging.as_ref().map_or_else(Vec::new, |l| l.recent(n))
+        self.logging.recent(n)
+    }
+
+    /// The Log for the settings in use now: the config's `[logbook] path`, else the default.
+    /// Built fresh each time (a `Log` holds no handle), so a saved path or callsign applies at
+    /// once and Contacts already logged keep what they were written with.
+    fn current_log(&self) -> Result<Log, String> {
+        let operator = self
+            .callsign
+            .as_deref()
+            .and_then(|c| Callsign::new(c).ok())
+            .ok_or("no callsign: set `callsign` in the config file to log")?;
+        let path = self
+            .log_path
+            .clone()
+            .or_else(|| self.default_log_path.clone())
+            .ok_or("no log path: set `[logbook] path` in the config file to log")?;
+        Ok(Log::new(path, operator))
+    }
+
+    /// The Locator for `MY_GRIDSQUARE`, if one is set and valid.
+    fn own_grid(&self) -> Option<Grid> {
+        self.locator.as_deref().and_then(|g| Grid::new(g).ok())
     }
 
     /// The `l` gate. Opens the form with a snapshot of the rig, or says in the status line which
@@ -316,9 +422,7 @@ impl App {
         match self.log_snapshot() {
             Ok(snapshot) => {
                 self.entry = None;
-                if let Some(logging) = &mut self.logging {
-                    logging.open_form(snapshot);
-                }
+                self.logging.open_form(snapshot);
             }
             Err(why) => self.status = Some(why),
         }
@@ -340,11 +444,9 @@ impl App {
         if band_for_hz(hz).is_none() {
             return Err(format!("{} Hz is outside the band table", hz));
         }
-        let logging = match (&self.callsign, &self.logging) {
-            (Some(_), Some(logging)) => logging,
-            _ => return Err("no callsign: set `callsign` in the config file to log".to_string()),
-        };
-        logging.check_log()?;
+        self.current_log()?
+            .check()
+            .map_err(|e| format!("log: {e}"))?;
         let (log_mode, defaults) = match self.active_panel().map(|i| &self.panels[i]) {
             Some(panel) => (
                 panel
@@ -411,15 +513,32 @@ impl App {
         if key.code == KeyCode::Char('c') && key.modifiers.contains(KeyModifiers::CONTROL) {
             return vec![Command::Quit];
         }
+        if let Some(dialog) = &mut self.config {
+            return match dialog.on_key(key) {
+                Outcome::Stay => Vec::new(),
+                Outcome::Lookup(address) => vec![Command::Lookup(address)],
+                Outcome::Close => {
+                    self.config = None;
+                    vec![Command::ClearGeocodeCache]
+                }
+                Outcome::Apply(settings) => {
+                    self.config = None;
+                    let mut commands = self.apply_settings(settings);
+                    commands.push(Command::ClearGeocodeCache);
+                    commands
+                }
+            };
+        }
         if let Some(overlay) = &mut self.overlay {
             if overlay.on_key(key) == OverlayAction::Close {
                 self.overlay = None;
             }
             return Vec::new();
         }
-        if self.logging_modal_open() {
+        if self.logging.modal_open() {
             let now = self.clock();
-            if let Some(status) = self.logging.as_mut().and_then(|l| l.on_key(key, now)) {
+            let (log, grid) = (self.current_log(), self.own_grid());
+            if let Some(status) = self.logging.on_key(key, now, log, grid.as_ref()) {
                 self.status = Some(status);
             }
             return Vec::new();
@@ -455,6 +574,14 @@ impl App {
         }
         match key.code {
             KeyCode::Char('q') => vec![Command::Quit],
+            KeyCode::Char('c') => {
+                self.config = Some(ConfigDialog::open(
+                    self.config_path.as_deref(),
+                    &self.current_settings(),
+                    &self.rig_addr,
+                ));
+                Vec::new()
+            }
             KeyCode::Tab if panel_takes_text => {
                 self.focus = Focus::Panel;
                 Vec::new()
@@ -490,9 +617,7 @@ impl App {
                 Vec::new()
             }
             KeyCode::Char('L') => {
-                if let Some(logging) = &mut self.logging {
-                    logging.open_list();
-                }
+                self.logging.open_list();
                 Vec::new()
             }
             KeyCode::Char('v') => self.toggle_vfo(),
@@ -765,9 +890,10 @@ impl App {
         if let Some(overlay) = &self.overlay {
             overlay.render(frame, area);
         }
-        if let Some(logging) = &self.logging {
-            logging.render(frame, area);
+        if let Some(dialog) = &self.config {
+            dialog.render(frame, area);
         }
+        self.logging.render(frame, area, self.own_grid().is_some());
     }
 }
 

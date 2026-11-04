@@ -1294,7 +1294,9 @@ dependencies = [
  "logbook",
  "ratatui",
  "rigctld-client",
+ "serde_json",
  "tokio",
+ "ureq",
 ]
 
 [[package]]

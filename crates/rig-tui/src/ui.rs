@@ -141,10 +141,7 @@ fn render_strip(app: &App, frame: &mut Frame, area: Rect) {
     } else {
         Style::default()
     };
-    let title = match app.logged_count() {
-        Some(n) => format!("rig-tui - {n} logged"),
-        None => "rig-tui".to_string(),
-    };
+    let title = format!("rig-tui - {} logged", app.logged_count());
     let block = Block::default()
         .borders(Borders::ALL)
         .border_style(border)

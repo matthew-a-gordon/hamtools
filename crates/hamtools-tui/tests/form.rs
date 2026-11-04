@@ -22,6 +22,23 @@ fn form() -> Form {
 }
 
 #[test]
+fn set_value_replaces_the_text_and_clears_its_error_and_focus_can_be_set() {
+    let mut f = form();
+    f.set_error(1, "bad");
+
+    f.set_value(1, "new");
+    f.set_focus(1);
+
+    assert_eq!(f.value(1), "new");
+    assert_eq!(f.error(1), None);
+    assert_eq!(f.focus(), 1);
+
+    f.set_error(0, "again");
+    f.clear_error(0);
+    assert_eq!(f.error(0), None);
+}
+
+#[test]
 fn typing_edits_the_focused_field_and_backspace_deletes() {
     let mut f = form();
     type_str(&mut f, "ab");

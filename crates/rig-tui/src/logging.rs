@@ -198,23 +198,16 @@ impl Logged {
 }
 
 /// Everything logging needs: the Log, the operator's Locator, the form and the session.
+#[derive(Default)]
 pub(crate) struct Logging {
-    log: Log,
-    locator: Option<Grid>,
     form: Option<ContactForm>,
     list: Option<ListOverlay>,
     session: Vec<Logged>,
 }
 
 impl Logging {
-    pub fn new(log: Log, locator: Option<Grid>) -> Self {
-        Self {
-            log,
-            locator,
-            form: None,
-            list: None,
-            session: Vec::new(),
-        }
+    pub fn new() -> Self {
+        Self::default()
     }
 
     pub fn count(&self) -> usize {
@@ -230,11 +223,6 @@ impl Logging {
         self.form.is_some()
     }
 
-    /// Whether the Log can be appended to now (checked when the operator asks to log).
-    pub fn check_log(&self) -> Result<(), String> {
-        self.log.check().map_err(|e| format!("log: {e}"))
-    }
-
     pub fn open_form(&mut self, snapshot: Snapshot) {
         self.form = Some(ContactForm::new(snapshot));
     }
@@ -246,7 +234,13 @@ impl Logging {
 
     /// Feed a key to the open form or list. Returns a status message when the key finished the
     /// form with news for the operator.
-    pub fn on_key(&mut self, key: KeyEvent, now: DateTime<Utc>) -> Option<String> {
+    pub fn on_key(
+        &mut self,
+        key: KeyEvent,
+        now: DateTime<Utc>,
+        log: Result<Log, String>,
+        own_grid: Option<&Grid>,
+    ) -> Option<String> {
         if let Some(list) = &mut self.list {
             if matches!(list.handle_key(key), ListEvent::Close) {
                 self.list = None;
@@ -263,20 +257,29 @@ impl Logging {
                 self.form = None;
                 None
             }
-            FormEvent::Submit => self.save(now),
+            FormEvent::Submit => self.save(now, log, own_grid),
         }
     }
 
-    fn save(&mut self, now: DateTime<Utc>) -> Option<String> {
+    fn save(
+        &mut self,
+        now: DateTime<Utc>,
+        log: Result<Log, String>,
+        own_grid: Option<&Grid>,
+    ) -> Option<String> {
         let form = self.form.as_mut()?;
-        let contact = match form.contact(now, self.locator.as_ref()) {
+        let contact = match form.contact(now, own_grid) {
             Ok(contact) => contact,
             Err(message) => {
                 form.error = Some(message);
                 return None;
             }
         };
-        if let Err(e) = self.log.append(&contact) {
+        let log = match log {
+            Ok(log) => log,
+            Err(why) => return Some(format!("not logged: {why}")),
+        };
+        if let Err(e) = log.append(&contact) {
             form.error = None;
             return Some(format!("not logged: {e}"));
         }
@@ -297,9 +300,9 @@ impl Logging {
             .collect()
     }
 
-    pub fn render(&self, frame: &mut Frame, area: Rect) {
+    pub fn render(&self, frame: &mut Frame, area: Rect, has_locator: bool) {
         if let Some(form) = &self.form {
-            let title = if self.locator.is_some() {
+            let title = if has_locator {
                 "Log contact".to_string()
             } else {
                 "Log contact (no locator)".to_string()

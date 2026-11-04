@@ -4,12 +4,11 @@
 
 mod common;
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::{Duration, Instant, UNIX_EPOCH};
 
 use common::*;
-use logbook::{Callsign, Grid, Log};
 use ratatui::crossterm::event::KeyCode;
 use rig_tui::{App, RigEvent};
 
@@ -31,17 +30,16 @@ fn utc(secs: u64) -> std::time::SystemTime {
 const T_START: u64 = 12 * 3600 + 34 * 60 + 56; // 12:34:56
 const T_END: u64 = 12 * 3600 + 40 * 60; // 12:40:00
 
-fn base_app(log: &PathBuf, locator: Option<&str>) -> App {
-    let mut app = App::with_callsign(Some("K9TST".to_string())).with_logging(
-        Log::new(log, Callsign::new("K9TST").unwrap()),
-        locator.map(|l| Grid::new(l).unwrap()),
-    );
+fn base_app(log: &Path, locator: Option<&str>) -> App {
+    let mut app = App::with_callsign(Some("K9TST".to_string()))
+        .with_log_path(Some(log.to_path_buf()))
+        .with_locator(locator.map(String::from));
     app.set_utc(utc(T_START));
     app
 }
 
 /// Connected, 14.074 MHz, in `mode`, with a logging setup writing to `log`.
-fn app_in(mode: &str, log: &PathBuf) -> App {
+fn app_in(mode: &str, log: &Path) -> App {
     let mut app = connected_app_in(base_app(log, Some("EN71DQ")), mode);
     app.on_rig(RigEvent::Split {
         enabled: false,
@@ -69,7 +67,7 @@ fn tab(app: &mut App, times: usize) {
     }
 }
 
-fn adif(log: &PathBuf) -> String {
+fn adif(log: &Path) -> String {
     std::fs::read_to_string(log).unwrap_or_default()
 }
 
@@ -113,10 +111,7 @@ mod gate {
     #[test]
     fn refuses_without_a_callsign_naming_the_key() {
         let log = temp_log("nocall");
-        let mut app = connected_app_in(
-            App::new().with_logging(Log::new(&log, Callsign::new("K9TST").unwrap()), None),
-            "USB",
-        );
+        let mut app = connected_app_in(App::new().with_log_path(Some(log.to_path_buf())), "USB");
         app.on_rig(RigEvent::Split {
             enabled: false,
             tx_vfo: "VFOA".to_string(),
@@ -144,7 +139,7 @@ mod gate {
         assert!(has(&screen(&app, 80, 24), "Log contact"));
     }
 
-    fn cw_app_with_logging(log: &PathBuf) -> App {
+    fn cw_app_with_logging(log: &Path) -> App {
         focus_input(app_in("CW", log))
     }
 
@@ -357,7 +352,7 @@ mod modes {
 mod split {
     use super::*;
 
-    fn split_app(log: &PathBuf) -> App {
+    fn split_app(log: &Path) -> App {
         let mut app = app_in("USB", log);
         app.on_rig(RigEvent::Vfo("VFOA".to_string()));
         app.on_rig(RigEvent::Split {

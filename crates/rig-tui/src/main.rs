@@ -1,12 +1,13 @@
 use std::error::Error;
 use std::path::PathBuf;
 use std::process::ExitCode;
+use std::sync::mpsc::{self, Sender};
 use std::time::{Duration, Instant, SystemTime};
 
-use logbook::{Callsign, Log};
 use ratatui::DefaultTerminal;
 use ratatui::crossterm::event::{self, Event, KeyEventKind};
-use rig_tui::{App, Command, Config, Rig, config_path, log_path, render};
+use rig_tui::geocode::{GeocodeResult, Geocoder};
+use rig_tui::{App, Command, Config, Rig, config_path, default_log_path, render};
 use tokio::runtime::Runtime;
 
 /// One loop pass. The KX3 clears its decode buffer on each `TB;` and holds only 40 characters,
@@ -62,30 +63,47 @@ fn try_main() -> Result<(), Box<dyn Error>> {
     let rt = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()?;
-    let mut rig = Rig::new(addr);
-    let log_path = log_path(
-        config.log_path.as_deref(),
-        std::env::var("XDG_DATA_HOME").ok().as_deref(),
-        std::env::var("HOME").ok().as_deref(),
-    );
-    let mut app = App::with_callsign(config.callsign.clone()).with_soft_keys(config.soft_keys);
-    if let (Some(path), Some(callsign)) = (log_path, &config.callsign) {
-        let operator = Callsign::new(callsign)?;
-        app = app.with_logging(Log::new(path, operator), config.locator.clone());
-    }
+    let mut rig = Rig::new(addr.clone());
+    let app = App::with_callsign(config.callsign)
+        .with_soft_keys(config.soft_keys)
+        .with_locator(config.locator)
+        .with_log_path(config.log_path)
+        .with_default_log_path(default_log_path(
+            std::env::var("XDG_DATA_HOME").ok().as_deref(),
+            std::env::var("HOME").ok().as_deref(),
+        ))
+        .with_rig_addr(addr)
+        .with_config_path(config_arg.or(default_path));
+    let geocoder = Geocoder::new();
 
     let mut terminal = ratatui::init();
-    let result = run(&mut terminal, &rt, &mut rig, app);
+    let result = run(&mut terminal, &rt, &mut rig, app, &geocoder);
     ratatui::restore();
     result
 }
 
 /// Run each command against the rig and feed what it reports back to the app. Returns true when
 /// the app asked to quit.
-fn dispatch(rt: &Runtime, rig: &mut Rig, app: &mut App, commands: Vec<Command>) -> bool {
+fn dispatch(
+    rt: &Runtime,
+    rig: &mut Rig,
+    app: &mut App,
+    geocoder: &Geocoder,
+    lookups: &Sender<GeocodeResult>,
+    commands: Vec<Command>,
+) -> bool {
     for command in commands {
-        if command == Command::Quit {
-            return true;
+        match &command {
+            Command::Quit => return true,
+            Command::Lookup(address) => {
+                geocoder.lookup_in_background(address.clone(), lookups.clone());
+                continue;
+            }
+            Command::ClearGeocodeCache => {
+                geocoder.clear_cache();
+                continue;
+            }
+            _ => {}
         }
         for event in rt.block_on(rig.execute(command)) {
             app.on_rig(event);
@@ -99,7 +117,11 @@ fn run(
     rt: &Runtime,
     rig: &mut Rig,
     mut app: App,
+    geocoder: &Geocoder,
 ) -> Result<(), Box<dyn Error>> {
+    // The address lookup runs on a short-lived thread; its answer comes back here, like sat-tui's
+    // fetcher, so `App` stays free of threads.
+    let (lookups, answers) = mpsc::channel();
     loop {
         app.set_utc(SystemTime::now());
         terminal.draw(|frame| render(&app, frame))?;
@@ -109,13 +131,17 @@ fn run(
             && key.kind == KeyEventKind::Press
         {
             let commands = app.on_key(key);
-            if dispatch(rt, rig, &mut app, commands) {
+            if dispatch(rt, rig, &mut app, geocoder, &lookups, commands) {
                 return Ok(());
             }
         }
 
+        while let Ok(answer) = answers.try_recv() {
+            app.on_geocode(answer);
+        }
+
         let commands = app.tick(Instant::now());
-        if dispatch(rt, rig, &mut app, commands) {
+        if dispatch(rt, rig, &mut app, geocoder, &lookups, commands) {
             return Ok(());
         }
     }
