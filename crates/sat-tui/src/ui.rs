@@ -267,7 +267,7 @@ fn render_form(app: &App, form: &ContactForm, now: DateTime<Utc>, frame: &mut Fr
     let area = centred(frame.area(), 70, 17);
     let block = Block::default()
         .borders(Borders::ALL)
-        .title(format!("Log Contact (my grid {})", app.own_grid()))
+        .title(format!("Log Contact (my grid {})", form.own_grid))
         .border_style(Style::default().fg(Color::Yellow));
     let open_for = now - form.started;
     let mut lines = vec![

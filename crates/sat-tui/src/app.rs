@@ -8,8 +8,8 @@ use logbook::Grid;
 use orbit::{Observer, Pass, PropagationError, Satellite};
 use ratatui::crossterm::event::{KeyCode, KeyEvent};
 
-use crate::logging::FormEvent;
-pub use crate::logging::{ContactForm, Field, Link, LoggedContact, Logging};
+use crate::logging::Link;
+pub use crate::logging::{ContactForm, Field, LoggedContact, Logging};
 use crate::satnogs::{Plan, Transmitter};
 use crate::tracker::{RigCommand, STEP_HZ, Tracker, doppler_range_rate};
 
@@ -77,7 +77,6 @@ pub struct App {
     min_elevation_deg: f64,
     status: Option<String>,
     tracking: Option<Tracking>,
-    nudge_hz: i64,
     /// Commands queued by keys, sent on the next tick.
     pending: Vec<RigCommand>,
     /// `None` when there is no callsign: logging is off.
@@ -85,10 +84,6 @@ pub struct App {
     rig_live: bool,
     /// The latest time the event loop has told us, for stamping Contacts.
     clock: DateTime<Utc>,
-    form: Option<ContactForm>,
-    session: Vec<LoggedContact>,
-    /// `Some(n)` while the session list is open, scrolled `n` lines back from the newest.
-    session_scroll: Option<usize>,
 }
 
 impl App {
@@ -146,14 +141,10 @@ impl App {
             min_elevation_deg: settings.min_elevation_deg,
             status: None,
             tracking: None,
-            nudge_hz: 0,
             pending: Vec::new(),
             logging: None,
             rig_live: false,
             clock: now,
-            form: None,
-            session: Vec::new(),
-            session_scroll: None,
         }
     }
 
@@ -195,20 +186,28 @@ impl App {
     }
 
     pub fn handle_key(&mut self, key: KeyEvent) -> Option<Command> {
-        if self.form.is_some() {
-            self.handle_form_key(key);
-            return None;
-        }
-        if self.session_scroll.is_some() {
-            match key.code {
-                KeyCode::Char('q') => return Some(Command::Quit),
-                _ => self.handle_session_key(key),
+        if let Some(logging) = &mut self.logging {
+            if logging.form().is_some() {
+                if let Some(status) = logging.handle_form_key(key, self.clock) {
+                    self.status = Some(status);
+                }
+                return None;
             }
-            return None;
+            if logging.session_open() {
+                if key.code == KeyCode::Char('q') {
+                    return Some(Command::Quit);
+                }
+                logging.handle_session_key(key);
+                return None;
+            }
         }
         match key.code {
             KeyCode::Char('l') => self.open_form(),
-            KeyCode::Char('L') => self.session_scroll = Some(0),
+            KeyCode::Char('L') => {
+                if let Some(logging) = &mut self.logging {
+                    logging.open_session();
+                }
+            }
             KeyCode::Char('q') | KeyCode::Esc => return Some(Command::Quit),
             KeyCode::Char('r') => return Some(Command::Refresh),
             KeyCode::Tab => {
@@ -221,13 +220,15 @@ impl App {
             KeyCode::Up | KeyCode::Char('k') => self.move_cursor(-1),
             KeyCode::Char('t') => self.toggle_tracking(),
             KeyCode::Char('s') => self.pending.push(RigCommand::SatMode(false)),
-            KeyCode::Char(c @ ('[' | ']' | '{' | '}')) if self.tracking.is_some() => {
-                self.nudge_hz += match c {
-                    ']' => 1_000,
-                    '[' => -1_000,
-                    '}' => 100,
-                    _ => -100,
-                };
+            KeyCode::Char(c @ ('[' | ']' | '{' | '}')) => {
+                if let Some(tracking) = &mut self.tracking {
+                    tracking.nudge_hz += match c {
+                        ']' => 1_000,
+                        '[' => -1_000,
+                        '}' => 100,
+                        _ => -100,
+                    };
+                }
             }
             KeyCode::Char('m') => {
                 self.show_unsupported = !self.show_unsupported;
@@ -263,6 +264,58 @@ struct Tracking {
     satellite: String,
     /// Index into `entries`, to find this satellite's passes.
     sat_index: usize,
+    /// Offset from the passband centre in Hz, set by the operator.
+    nudge_hz: i64,
+}
+
+impl Tracking {
+    /// What the radio should be on now, nudge included.
+    fn plan(&self) -> Option<Plan> {
+        self.transmitter.plan(self.nudge_hz)
+    }
+
+    /// The receive frequency last sent to the radio.
+    fn sent_rx_hz(&self) -> Option<u64> {
+        self.tracker.sent_rx_hz()
+    }
+
+    /// How far the operator has turned the dial from what was last sent, if by a step or more.
+    /// Only transponders with a passband have anything to nudge.
+    fn dial_turn(&self, rx_hz: u64) -> Option<i64> {
+        self.transmitter.downlink.high_hz?;
+        let turned = rx_hz as i64 - self.sent_rx_hz()? as i64;
+        (turned.unsigned_abs() as f64 >= STEP_HZ).then_some(turned)
+    }
+
+    /// A Contact form for what is on the air now, or why there is nothing to log.
+    fn contact_form(
+        &self,
+        own_grid: Grid,
+        started: DateTime<Utc>,
+    ) -> Result<ContactForm, &'static str> {
+        let (Some(rx_hz), Some(tx_hz), Some(plan)) =
+            (self.sent_rx_hz(), self.tracker.sent_tx_hz(), self.plan())
+        else {
+            return Err("no frequencies sent to the radio yet: wait a tick");
+        };
+        let Some(tx_mode) = plan.tx_mode else {
+            return Err("this transmitter has no uplink: nothing to log");
+        };
+        Ok(ContactForm::new(
+            self.satellite.clone(),
+            self.transmitter.description.clone(),
+            started,
+            own_grid,
+            Link {
+                hz: rx_hz,
+                mode: plan.rx_mode,
+            },
+            Link {
+                hz: tx_hz,
+                mode: tx_mode,
+            },
+        ))
+    }
 }
 
 /// What is being tracked, for the display.
@@ -295,18 +348,10 @@ impl App {
     /// moved the dial (the FT-847 moves its transmit VFO with it), so tracking carries on from
     /// there instead of overwriting it. Only transponders with a passband have anything to nudge.
     pub fn follow_dial(&mut self, rx_hz: u64) {
-        let Some(tracking) = &self.tracking else {
-            return;
-        };
-        let Some(sent) = tracking.tracker.sent_rx_hz() else {
-            return;
-        };
-        if tracking.transmitter.downlink.high_hz.is_none() {
-            return;
-        }
-        let turned = rx_hz as i64 - sent as i64;
-        if turned.unsigned_abs() as f64 >= STEP_HZ {
-            self.nudge_hz += turned;
+        if let Some(tracking) = &mut self.tracking
+            && let Some(turned) = tracking.dial_turn(rx_hz)
+        {
+            tracking.nudge_hz += turned;
         }
     }
 
@@ -314,7 +359,7 @@ impl App {
         self.tracking.as_ref().map(|t| TrackingView {
             satellite: t.satellite.clone(),
             transmitter: t.transmitter.description.clone(),
-            nudge_hz: self.nudge_hz,
+            nudge_hz: t.nudge_hz,
         })
     }
 
@@ -342,9 +387,9 @@ impl App {
             transmitter: transmitter.clone(),
             satellite: entry.name.clone(),
             sat_index,
+            nudge_hz: 0,
         };
         self.status = Some(format!("tracking {}", tracking.transmitter.description));
-        self.nudge_hz = 0;
         self.tracking = Some(tracking);
     }
 
@@ -354,7 +399,7 @@ impl App {
         self.clock = now;
         let mut commands = std::mem::take(&mut self.pending);
         if let Some(tracking) = &mut self.tracking
-            && let Some(plan) = tracking.transmitter.plan(self.nudge_hz)
+            && let Some(plan) = tracking.plan()
         {
             commands.extend(tracking.tracker.step(&plan, now)?);
         }
@@ -385,7 +430,7 @@ impl App {
         let entry = &self.entries[row.sat_index];
         let look = entry.sat.look_angle(&self.observer, now).ok()?;
         let plan = match &self.tracking {
-            Some(t) => t.transmitter.plan(self.nudge_hz),
+            Some(t) => t.plan(),
             None => self.chosen_transmitter().and_then(|(_, t)| t.plan(0)),
         };
         let step = |hz: f64| ((hz / 10.0).round() * 10.0) as u64;
@@ -446,47 +491,44 @@ impl App {
     }
 
     pub fn form(&self) -> Option<&ContactForm> {
-        self.form.as_ref()
+        self.logging.as_ref()?.form()
     }
 
     /// This session's Contacts, oldest first.
     pub fn session(&self) -> &[LoggedContact] {
-        &self.session
+        self.logging.as_ref().map_or(&[], Logging::session)
     }
 
     /// Hand the session list over, so it can survive the app being rebuilt.
     pub fn take_session(&mut self) -> Vec<LoggedContact> {
-        std::mem::take(&mut self.session)
+        self.logging
+            .as_mut()
+            .map(Logging::take_session)
+            .unwrap_or_default()
     }
 
     pub fn restore_session(&mut self, session: Vec<LoggedContact>) {
-        self.session = session;
+        if let Some(logging) = &mut self.logging {
+            logging.restore_session(session);
+        }
     }
 
     pub fn session_open(&self) -> bool {
-        self.session_scroll.is_some()
+        self.logging.as_ref().is_some_and(Logging::session_open)
     }
 
     /// Lines the session list is scrolled back from the newest Contact.
     pub fn session_scroll(&self) -> usize {
-        self.session_scroll.unwrap_or(0)
+        self.logging.as_ref().map_or(0, Logging::session_scroll)
     }
 
     /// The receive frequency the tracker last sent to the radio.
     pub fn radio_now_rx_hz(&self) -> Option<u64> {
-        self.tracking.as_ref()?.tracker.sent_rx_hz()
-    }
-
-    /// The operator's own locator for the Contact: the config override, else the observer's.
-    pub fn own_grid(&self) -> Grid {
-        self.logging
-            .as_ref()
-            .and_then(|l| l.grid_override.clone())
-            .unwrap_or_else(|| Grid::at(self.observer.lat_deg, self.observer.lon_deg))
+        self.tracking.as_ref()?.sent_rx_hz()
     }
 
     fn open_form(&mut self) {
-        let Some(logging) = &self.logging else {
+        let Some(logging) = &mut self.logging else {
             self.status = Some(NO_LOGGING.to_string());
             return;
         };
@@ -498,93 +540,12 @@ impl App {
             self.status = Some("no rig connected: cannot log a Contact".to_string());
             return;
         }
-        let (Some(rx_hz), Some(tx_hz), Some(plan)) = (
-            tracking.tracker.sent_rx_hz(),
-            tracking.tracker.sent_tx_hz(),
-            tracking.transmitter.plan(self.nudge_hz),
-        ) else {
-            self.status = Some("no frequencies sent to the radio yet: wait a tick".to_string());
-            return;
-        };
-        let Some(tx_mode) = plan.tx_mode else {
-            self.status = Some("this transmitter has no uplink: nothing to log".to_string());
-            return;
-        };
-        if let Err(e) = logging.log.check() {
-            self.status = Some(format!("log: {e}"));
-            return;
-        }
-        self.form = Some(ContactForm::new(
-            tracking.satellite.clone(),
-            tracking.transmitter.description.clone(),
-            self.clock,
-            Link {
-                hz: rx_hz,
-                mode: plan.rx_mode,
-            },
-            Link {
-                hz: tx_hz,
-                mode: tx_mode,
-            },
-        ));
-    }
-
-    fn handle_form_key(&mut self, key: KeyEvent) {
-        let Some(form) = &mut self.form else {
-            return;
-        };
-        match form.handle_key(key) {
-            FormEvent::Edited => {}
-            FormEvent::Cancel => self.form = None,
-            FormEvent::Save => self.save_form(),
-        }
-    }
-
-    fn save_form(&mut self) {
-        let own_grid = self.own_grid();
-        let (Some(form), Some(logging)) = (&mut self.form, &self.logging) else {
-            return;
-        };
-        let sat_name = logging.sat_name(&form.satellite).to_string();
-        let contact = match form.contact(self.clock, own_grid, &sat_name) {
-            Ok(contact) => contact,
-            Err(message) => {
-                form.error = Some(message);
-                return;
-            }
-        };
-        if let Err(e) = logging.log.append(&contact) {
-            form.error = None;
-            self.status = Some(format!("not logged: {e}"));
-            return;
-        }
-        let entry = LoggedContact {
-            time_on: contact.start(),
-            call: contact.call().to_string(),
-            grid: contact.grid().unwrap_or_default().to_string(),
-            rst_sent: contact.rst_sent().unwrap_or_default().to_string(),
-            rst_rcvd: contact.rst_rcvd().unwrap_or_default().to_string(),
-            satellite: sat_name,
-        };
-        self.status = Some(format!("logged {}", entry.call));
-        self.session.push(entry);
-        self.form = None;
-    }
-
-    fn handle_session_key(&mut self, key: KeyEvent) {
-        let Some(scroll) = self.session_scroll else {
-            return;
-        };
-        let oldest = self.session.len().saturating_sub(1);
-        match key.code {
-            KeyCode::Char('L') | KeyCode::Esc => self.session_scroll = None,
-            KeyCode::Up | KeyCode::Char('k') => {
-                self.session_scroll = Some((scroll + 1).min(oldest))
-            }
-            KeyCode::Down | KeyCode::Char('j') => {
-                self.session_scroll = Some(scroll.saturating_sub(1));
-            }
-            _ => {}
+        let opened = tracking
+            .contact_form(logging.own_grid(&self.observer), self.clock)
+            .map_err(String::from)
+            .and_then(|form| logging.open_form(form));
+        if let Err(message) = opened {
+            self.status = Some(message);
         }
     }
 }

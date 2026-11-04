@@ -5,6 +5,7 @@ use std::collections::BTreeMap;
 
 use chrono::{DateTime, Utc};
 use logbook::{Contact, ContactInput, Grid, Log, Mode, Sideband, satellite};
+use orbit::Observer;
 use ratatui::crossterm::event::{KeyCode, KeyEvent};
 
 use crate::satnogs::RigMode;
@@ -16,6 +17,10 @@ pub struct Logging {
     pub grid_override: Option<Grid>,
     /// Satellite name as shown in the UI, to the name written as `SAT_NAME`.
     pub sat_names: BTreeMap<String, String>,
+    form: Option<ContactForm>,
+    session: Vec<LoggedContact>,
+    /// `Some(n)` while the session list is open, scrolled `n` lines back from the newest.
+    session_scroll: Option<usize>,
 }
 
 impl Logging {
@@ -24,11 +29,106 @@ impl Logging {
             log,
             grid_override: None,
             sat_names: BTreeMap::new(),
+            form: None,
+            session: Vec::new(),
+            session_scroll: None,
         }
     }
 
-    pub(crate) fn sat_name<'a>(&'a self, shown: &'a str) -> &'a str {
-        self.sat_names.get(shown).map_or(shown, String::as_str)
+    /// The operator's own locator for a Contact: the config override, else the observer's.
+    pub(crate) fn own_grid(&self, observer: &Observer) -> Grid {
+        (self.grid_override.clone()).unwrap_or_else(|| Grid::at(observer.lat_deg, observer.lon_deg))
+    }
+
+    pub fn form(&self) -> Option<&ContactForm> {
+        self.form.as_ref()
+    }
+
+    /// Show `form`, unless the Log cannot be written to.
+    pub(crate) fn open_form(&mut self, form: ContactForm) -> Result<(), String> {
+        self.log.check().map_err(|e| format!("log: {e}"))?;
+        self.form = Some(form);
+        Ok(())
+    }
+
+    /// Feed a key to the open form. Returns a status message when the key finished the form
+    /// with news for the operator.
+    pub(crate) fn handle_form_key(&mut self, key: KeyEvent, now: DateTime<Utc>) -> Option<String> {
+        match self.form.as_mut()?.handle_key(key) {
+            FormEvent::Edited => None,
+            FormEvent::Cancel => {
+                self.form = None;
+                None
+            }
+            FormEvent::Save => self.save_form(now),
+        }
+    }
+
+    fn save_form(&mut self, now: DateTime<Utc>) -> Option<String> {
+        let form = self.form.as_mut()?;
+        let sat_name = (self.sat_names.get(&form.satellite))
+            .unwrap_or(&form.satellite)
+            .clone();
+        let contact = match form.contact(now, &sat_name) {
+            Ok(contact) => contact,
+            Err(message) => {
+                form.error = Some(message);
+                return None;
+            }
+        };
+        if let Err(e) = self.log.append(&contact) {
+            form.error = None;
+            return Some(format!("not logged: {e}"));
+        }
+        let logged = LoggedContact::new(&contact, sat_name);
+        let status = format!("logged {}", logged.call);
+        self.session.push(logged);
+        self.form = None;
+        Some(status)
+    }
+
+    /// This session's Contacts, oldest first.
+    pub fn session(&self) -> &[LoggedContact] {
+        &self.session
+    }
+
+    /// Hand the session list over, so it can survive the app being rebuilt.
+    pub fn take_session(&mut self) -> Vec<LoggedContact> {
+        std::mem::take(&mut self.session)
+    }
+
+    pub fn restore_session(&mut self, session: Vec<LoggedContact>) {
+        self.session = session;
+    }
+
+    pub fn session_open(&self) -> bool {
+        self.session_scroll.is_some()
+    }
+
+    /// Lines the session list is scrolled back from the newest Contact.
+    pub fn session_scroll(&self) -> usize {
+        self.session_scroll.unwrap_or(0)
+    }
+
+    pub(crate) fn open_session(&mut self) {
+        self.session_scroll = Some(0);
+    }
+
+    pub(crate) fn handle_session_key(&mut self, key: KeyEvent) {
+        let Some(scroll) = self.session_scroll else {
+            return;
+        };
+        let oldest = self.session.len().saturating_sub(1);
+        match key.code {
+            KeyCode::Char('L') | KeyCode::Esc => self.session_scroll = None,
+            KeyCode::Up | KeyCode::Char('k') => {
+                self.session_scroll = Some((scroll + 1).min(oldest))
+            }
+            KeyCode::Down | KeyCode::Char('j') => {
+                self.session_scroll = Some(scroll.saturating_sub(1));
+            }
+            _ => {}
+        }
     }
 }
 
@@ -64,6 +164,8 @@ pub struct ContactForm {
     pub satellite: String,
     pub transmitter: String,
     pub started: DateTime<Utc>,
+    /// The operator's own locator for this Contact.
+    pub own_grid: Grid,
     /// The frequencies last sent to the radio when the form was opened.
     pub rx: Link,
     pub tx: Link,
@@ -90,6 +192,7 @@ impl ContactForm {
         satellite: String,
         transmitter: String,
         started: DateTime<Utc>,
+        own_grid: Grid,
         rx: Link,
         tx: Link,
     ) -> Self {
@@ -99,6 +202,7 @@ impl ContactForm {
             satellite,
             transmitter,
             started,
+            own_grid,
             rx,
             tx,
             call: String::new(),
@@ -163,12 +267,7 @@ impl ContactForm {
 
     /// Build the Contact ended at `end`. `Call is required` is checked here so the wording is
     /// the form's, not the field name's.
-    pub(crate) fn contact(
-        &self,
-        end: DateTime<Utc>,
-        own_grid: Grid,
-        sat_name: &str,
-    ) -> Result<Contact, String> {
+    pub(crate) fn contact(&self, end: DateTime<Utc>, sat_name: &str) -> Result<Contact, String> {
         if self.call.trim().is_empty() {
             return Err("Call is required".to_string());
         }
@@ -185,7 +284,7 @@ impl ContactForm {
             end,
             freq_hz: self.tx.hz,
             mode: logbook_mode(self.tx.mode),
-            own_grid: Some(own_grid),
+            own_grid: Some(self.own_grid.clone()),
             station_callsign: None,
             extras,
         })
@@ -215,6 +314,19 @@ pub struct LoggedContact {
     pub satellite: String,
 }
 
+impl LoggedContact {
+    fn new(contact: &Contact, satellite: String) -> Self {
+        Self {
+            time_on: contact.start(),
+            call: contact.call().to_string(),
+            grid: contact.grid().unwrap_or_default().to_string(),
+            rst_sent: contact.rst_sent().unwrap_or_default().to_string(),
+            rst_rcvd: contact.rst_rcvd().unwrap_or_default().to_string(),
+            satellite,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use chrono::TimeZone;
@@ -227,6 +339,7 @@ mod tests {
             "AO-7".to_string(),
             "Mode B".to_string(),
             started,
+            Grid::new("EN71DQ").unwrap(),
             Link {
                 hz: 435_000_000,
                 mode: rx,
