@@ -3,6 +3,7 @@
 
 use std::fmt;
 
+use logbook::Grid;
 use orbit::Observer;
 
 /// Town-level Middlebury, IN (never a street address).
@@ -89,10 +90,18 @@ impl Spec {
     }
 }
 
-/// Choose the observer: position from the command line, else the config, else the default;
-/// altitude chosen the same way independently of position.
-pub fn resolve(cli: &Spec, config: &Spec) -> Result<Observer, ObserverError> {
-    let (lat_deg, lon_deg) = match cli.position()?.or(config.position()?) {
+/// Choose the observer: position from the command line, else sat-tui's own `[observer]`, else
+/// the shared config's Locator, else the default; altitude chosen from the first two
+/// independently of position.
+pub fn resolve(
+    cli: &Spec,
+    config: &Spec,
+    shared_locator: Option<&Grid>,
+) -> Result<Observer, ObserverError> {
+    let shared = shared_locator
+        .map(|locator| grid_centre(locator.as_str()))
+        .transpose()?;
+    let (lat_deg, lon_deg) = match cli.position()?.or(config.position()?).or(shared) {
         Some(position) => position,
         None => (DEFAULT.lat_deg, DEFAULT.lon_deg),
     };

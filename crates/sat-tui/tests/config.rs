@@ -4,6 +4,13 @@ use sat_tui::config::{Config, config_path};
 use sat_tui::observer::Spec;
 
 #[test]
+fn an_old_logbook_path_is_rejected_naming_the_key() {
+    let err = Config::parse("[logbook]\npath = \"/old.adi\"").unwrap_err();
+
+    assert!(err.to_string().contains("path"), "{err}");
+}
+
+#[test]
 fn an_empty_file_gives_the_defaults() {
     let config = Config::parse("").unwrap();
 

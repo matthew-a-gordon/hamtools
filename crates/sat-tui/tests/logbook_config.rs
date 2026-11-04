@@ -1,13 +1,12 @@
 use std::path::{Path, PathBuf};
 
 use logbook::Grid;
-use sat_tui::config::{Config, log_path, logging_callsign, shared_callsign, shared_config_path};
+use sat_tui::config::{Config, Shared, load_shared, log_path, shared_config_path};
 
 #[test]
 fn the_logbook_section_defaults_to_nothing_set() {
     let config = Config::parse("").unwrap();
 
-    assert_eq!(config.logbook.path, None);
     assert_eq!(config.logbook.grid, None);
     assert!(config.logbook.satellites.is_empty());
 }
@@ -17,7 +16,6 @@ fn reads_the_logbook_keys_and_per_satellite_names() {
     let config = Config::parse(
         r#"
         [logbook]
-        path = "/data/my.adi"
         grid = "en71dq"
 
         [logbook.satellites]
@@ -27,7 +25,6 @@ fn reads_the_logbook_keys_and_per_satellite_names() {
     )
     .unwrap();
 
-    assert_eq!(config.logbook.path, Some(PathBuf::from("/data/my.adi")));
     assert_eq!(
         config.logbook.grid.as_ref().map(Grid::as_str),
         Some("EN71DQ")
@@ -79,10 +76,18 @@ mod shared_config {
     use super::*;
 
     #[test]
-    fn only_the_callsign_is_read_and_other_sections_are_ignored() {
-        let call = shared_callsign(
+    fn callsign_locator_and_log_path_are_read_and_other_sections_ignored() {
+        let dir = std::env::temp_dir().join(format!("sat-tui-shared-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("full.toml");
+        std::fs::write(
+            &path,
             r#"
             callsign = "w1aw"
+            [station]
+            locator = "en71dq"
+            [logbook]
+            path = "/data/shared.adi"
             [kx3]
             addr = "127.0.0.1:4532"
             [macros]
@@ -91,58 +96,35 @@ mod shared_config {
         )
         .unwrap();
 
-        assert_eq!(call.unwrap().as_str(), "W1AW");
-    }
+        let (shared, note) = load_shared(Some(&path));
 
-    #[test]
-    fn no_callsign_is_none_and_a_bad_one_is_an_error() {
-        assert!(shared_callsign("[kx3]\nx = 1").unwrap().is_none());
-        assert!(shared_callsign("callsign = \"no way!\"").is_err());
-    }
-
-    #[test]
-    fn a_toml_error_in_an_unrelated_section_does_not_hide_the_callsign() {
-        let call = shared_callsign("callsign = \"w1aw\"\n[kx3]\naddr = = broken\n").unwrap();
-        assert_eq!(call.unwrap().as_str(), "W1AW");
-        // No callsign above the broken part: nothing to say about it, and no error either.
-        assert!(
-            shared_callsign("[kx3]\naddr = = broken\n")
-                .unwrap()
-                .is_none()
-        );
+        assert_eq!(shared.callsign.unwrap().as_str(), "W1AW");
+        assert_eq!(shared.locator.unwrap().as_str(), "EN71DQ");
+        assert_eq!(shared.log_path, Some(PathBuf::from("/data/shared.adi")));
+        assert_eq!(note, None);
     }
 
     #[test]
     fn startup_never_fails_on_the_shared_file_it_only_reports_why_logging_is_off() {
-        let dir = std::env::temp_dir().join(format!("sat-tui-shared-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("sat-tui-shared-bad-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
-        let write = |name: &str, text: &str| {
-            let path = dir.join(name);
-            std::fs::write(&path, text).unwrap();
-            path
-        };
+        let bad = dir.join("bad.toml");
+        std::fs::write(&bad, "callsign = \"no way!\"").unwrap();
 
-        let (call, note) = logging_callsign(Some(&write(
-            "ok.toml",
-            "callsign = \"w1aw\"\n[kx3]\nx = = 1\n",
-        )));
-        assert_eq!(call.unwrap().as_str(), "W1AW");
-        assert_eq!(note, None);
-
-        let (call, note) = logging_callsign(Some(&write("bad.toml", "callsign = \"no way!\"")));
-        assert!(call.is_none());
-        assert!(note.unwrap().contains("bad.toml"));
+        let (shared, note) = load_shared(Some(&bad));
+        assert_eq!(shared, Shared::default());
+        assert!(note.unwrap().contains("callsign"));
 
         // Unreadable (a directory) is reported, not fatal.
-        let (call, note) = logging_callsign(Some(&dir));
-        assert!(call.is_none());
+        let (shared, note) = load_shared(Some(&dir));
+        assert_eq!(shared, Shared::default());
         assert!(note.is_some());
 
         assert_eq!(
-            logging_callsign(Some(&dir.join("missing.toml"))),
-            (None, None)
+            load_shared(Some(&dir.join("missing.toml"))),
+            (Shared::default(), None)
         );
-        assert_eq!(logging_callsign(None), (None, None));
+        assert_eq!(load_shared(None), (Shared::default(), None));
     }
 
     #[test]

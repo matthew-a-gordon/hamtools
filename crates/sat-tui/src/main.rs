@@ -13,7 +13,7 @@ use ratatui::crossterm::event::{self, Event, KeyEventKind};
 use rigctld_client::Client;
 use sat_tui::app::{App, Command, Logging, Settings};
 use sat_tui::cache::{Cache, Dataset, Decision, decide, tles_stale};
-use sat_tui::config::{Config, config_path, log_path, logging_callsign, shared_config_path};
+use sat_tui::config::{Config, config_path, load_shared, log_path, shared_config_path};
 use sat_tui::fetch::Fetcher;
 use sat_tui::observer::{Spec, resolve};
 use sat_tui::rig::apply;
@@ -25,10 +25,12 @@ const USAGE: &str =
     "usage: sat-tui [--config PATH] [--rig ADDR] [--grid GRID | --lat DEG --lon DEG] [--alt METRES]
                 [--log PATH]
 
-Needs no rig: without one it is a pass predictor. Position: command line, then the config file,
-then a town-level default. Config defaults to $XDG_CONFIG_HOME/hamtools/sat-tui.toml.
-Contacts are logged (l) to --log, else [logbook] path, else $XDG_DATA_HOME/hamtools/log.adi;
-the callsign comes from the shared $XDG_CONFIG_HOME/hamtools/config.toml.";
+Needs no rig: without one it is a pass predictor. Position: command line, then the config file's
+[observer], then the shared station.locator, then a town-level default. Config defaults to
+$XDG_CONFIG_HOME/hamtools/sat-tui.toml.
+Contacts are logged (l) to --log, else the shared [logbook] path, else
+$XDG_DATA_HOME/hamtools/log.adi; the callsign, station.locator and [logbook] path come from the
+shared $XDG_CONFIG_HOME/hamtools/config.toml.";
 
 const TICK: Duration = Duration::from_secs(1);
 const RIG_TIMEOUT: Duration = Duration::from_secs(2);
@@ -189,24 +191,25 @@ fn try_main() -> Result<(), Box<dyn Error>> {
         std::env::var("HOME").ok().as_deref(),
     );
     let config = Config::load(args.config.as_deref(), default_path.as_deref())?;
-    let observer = resolve(&args.observer, &config.observer)?;
-    let cache_dir =
-        cache_dir().ok_or("cannot find a cache directory (set HOME or XDG_CACHE_HOME)")?;
-    let rig_addr = args.rig.clone().unwrap_or_else(|| config.rig_addr.clone());
-    let (callsign, logging_note) = logging_callsign(
+    let (shared, logging_note) = load_shared(
         shared_config_path(
             std::env::var("XDG_CONFIG_HOME").ok().as_deref(),
             std::env::var("HOME").ok().as_deref(),
         )
         .as_deref(),
     );
+    let observer = resolve(&args.observer, &config.observer, shared.locator.as_ref())?;
+    let cache_dir =
+        cache_dir().ok_or("cannot find a cache directory (set HOME or XDG_CACHE_HOME)")?;
+    let rig_addr = args.rig.clone().unwrap_or_else(|| config.rig_addr.clone());
     let path = log_path(
         args.log.as_deref(),
-        config.logbook.path.as_deref(),
+        shared.log_path.as_deref(),
         std::env::var("XDG_DATA_HOME").ok().as_deref(),
         std::env::var("HOME").ok().as_deref(),
     );
-    let logging = callsign
+    let logging = shared
+        .callsign
         .zip(path)
         .map(|(callsign, path)| LoggingSetup { path, callsign });
     let ctx = Context {
