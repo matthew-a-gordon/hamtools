@@ -112,7 +112,11 @@ macro_rules! ctx {
             callsign: $self.callsign.as_deref(),
             soft_keys: &$self.soft_keys,
             rig_mode: $self.mode.as_ref().map(|r| &r.value.0),
-            fresh_mode: $self.rig_mode(),
+            fresh_mode: $self
+                .mode
+                .as_ref()
+                .filter(|r| $self.now.saturating_duration_since(r.at) <= STALE_AFTER)
+                .map(|r| &r.value.0),
             recent: $recent,
         }
     };
