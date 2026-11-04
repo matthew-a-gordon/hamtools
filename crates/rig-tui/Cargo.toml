@@ -1,5 +1,5 @@
 [package]
-name = "kx3-cw"
+name = "rig-tui"
 version.workspace = true
 edition.workspace = true
 license.workspace = true

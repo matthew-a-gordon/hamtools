@@ -1,4 +1,4 @@
-use kx3_cw::{App, Command, Line, Source};
+use rig_tui::{App, Command, Line, Source};
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 fn key(code: KeyCode) -> KeyEvent {

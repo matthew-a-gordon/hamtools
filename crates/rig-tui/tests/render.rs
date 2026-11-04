@@ -1,4 +1,4 @@
-use kx3_cw::{App, render};
+use rig_tui::{App, render};
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};

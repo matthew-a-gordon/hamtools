@@ -1,4 +1,4 @@
-use kx3_cw::Config;
+use rig_tui::Config;
 
 #[test]
 fn defaults_when_the_file_is_empty() {
@@ -49,10 +49,10 @@ fn rejects_unknown_keys_so_typos_are_not_silently_ignored() {
 mod loading {
     use std::path::{Path, PathBuf};
 
-    use kx3_cw::{Config, config_path};
+    use rig_tui::{Config, config_path};
 
     fn scratch(name: &str) -> PathBuf {
-        let dir = std::env::temp_dir().join(format!("kx3-cw-test-{}-{name}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("rig-tui-test-{}-{name}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         dir
     }
@@ -111,7 +111,7 @@ mod loading {
 }
 
 mod macros {
-    use kx3_cw::Config;
+    use rig_tui::Config;
 
     #[test]
     fn none_by_default() {

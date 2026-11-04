@@ -1,7 +1,7 @@
 mod common;
 
 use common::FakeRigctld;
-use kx3_cw::Session;
+use rig_tui::Session;
 use rigctld_client::Client;
 
 async fn session(rig: &FakeRigctld) -> Session {
@@ -47,5 +47,5 @@ async fn poll_reports_a_malformed_tb_reply_as_an_error() {
 
     let err = session.poll().await.unwrap_err();
 
-    assert!(matches!(err, kx3_cw::SessionError::Tb(_)), "got {err:?}");
+    assert!(matches!(err, rig_tui::SessionError::Tb(_)), "got {err:?}");
 }

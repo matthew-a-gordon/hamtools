@@ -4,7 +4,7 @@ use std::path::PathBuf;
 use std::process::ExitCode;
 use std::time::Duration;
 
-use kx3_cw::{App, Command, Config, Session, config_path, render};
+use rig_tui::{App, Command, Config, Session, config_path, render};
 use ratatui::DefaultTerminal;
 use ratatui::crossterm::event::{self, Event, KeyEventKind};
 use rigctld_client::Client;
@@ -15,7 +15,7 @@ const POLL_INTERVAL: Duration = Duration::from_millis(100);
 /// A stalled rigctld must not freeze the screen.
 const RIG_TIMEOUT: Duration = Duration::from_secs(2);
 
-const USAGE: &str = "usage: kx3-cw [--config PATH] [ADDR]
+const USAGE: &str = "usage: rig-tui [--config PATH] [ADDR]
 
 ADDR is the KX3's rigctld; it overrides the config file (default 127.0.0.1:4532).
 Config defaults to $XDG_CONFIG_HOME/hamtools/config.toml (see config.example.toml).";
@@ -24,7 +24,7 @@ fn main() -> ExitCode {
     match try_main() {
         Ok(()) => ExitCode::SUCCESS,
         Err(e) => {
-            eprintln!("kx3-cw: {e}");
+            eprintln!("rig-tui: {e}");
             ExitCode::FAILURE
         }
     }
