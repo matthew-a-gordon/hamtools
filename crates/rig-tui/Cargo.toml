@@ -13,7 +13,11 @@ workspace = true
 ratatui = "0.30.2"
 hamtools-config = { path = "../hamtools-config" }
 rigctld-client = { path = "../rigctld-client" }
+hamtools-tui = { path = "../hamtools-tui" }
+logbook = { path = "../logbook" }
+serde_json = "1"
 tokio = { version = "1", features = ["rt", "net", "time"] }
+ureq = "3.5.0"
 
 [dev-dependencies]
 tokio = { version = "1", features = ["rt", "macros", "net", "io-util", "sync"] }

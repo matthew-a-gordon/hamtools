@@ -73,6 +73,21 @@ impl Form {
         self.fields[index].error = Some(message.into());
     }
 
+    pub fn clear_error(&mut self, index: usize) {
+        self.fields[index].error = None;
+    }
+
+    /// Replace a field's text, as when a lookup proposes a value. Not uppercased: the caller
+    /// passes what it wants shown.
+    pub fn set_value(&mut self, index: usize, value: impl Into<String>) {
+        self.fields[index].value = value.into();
+        self.fields[index].error = None;
+    }
+
+    pub fn set_focus(&mut self, index: usize) {
+        self.focus = index.min(self.fields.len().saturating_sub(1));
+    }
+
     /// The form captures every key: Tab / Shift-Tab move focus, Enter submits, Esc cancels,
     /// characters and Backspace edit the focused field.
     pub fn handle_key(&mut self, key: KeyEvent) -> FormEvent {

@@ -5,7 +5,9 @@
 
 mod app;
 mod config;
+mod config_dialog;
 mod cw;
+pub mod geocode;
 mod panel;
 mod rig;
 mod ui;

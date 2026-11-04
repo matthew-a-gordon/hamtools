@@ -1289,9 +1289,13 @@ name = "rig-tui"
 version = "0.1.0"
 dependencies = [
  "hamtools-config",
+ "hamtools-tui",
+ "logbook",
  "ratatui",
  "rigctld-client",
+ "serde_json",
  "tokio",
+ "ureq",
 ]
 
 [[package]]
