@@ -1,8 +1,5 @@
 //! The Log: one append-only ADI file, written safely.
 
-// File::lock is stable since Rust 1.89, above clippy.toml's msrv; the toolchain is newer.
-#![allow(clippy::incompatible_msrv)]
-
 use std::fmt;
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, Read, Seek, SeekFrom, Write};
