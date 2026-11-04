@@ -24,4 +24,7 @@ tokio = { version = "1", features = ["rt", "net", "time"] }
 ureq = { version = "3.5.0", default-features = false, features = ["rustls"] }
 
 [dev-dependencies]
+sat-tui = { path = "../sat-tui" }
+orbit = { path = "../orbit" }
+chrono = { version = "0.4", default-features = false, features = ["std", "clock"] }
 tokio = { version = "1", features = ["rt", "macros", "net", "io-util", "sync"] }
