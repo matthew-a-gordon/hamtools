@@ -13,7 +13,7 @@ use ratatui::crossterm::event::{self, Event, KeyEventKind};
 use rigctld_client::Client;
 use sat_tui::app::{App, Command, Logging, Settings};
 use sat_tui::cache::{Cache, Dataset, Decision, decide, tles_stale};
-use sat_tui::config::{Config, config_path, load_shared_callsign, log_path, shared_config_path};
+use sat_tui::config::{Config, config_path, log_path, logging_callsign, shared_config_path};
 use sat_tui::fetch::Fetcher;
 use sat_tui::observer::{Spec, resolve};
 use sat_tui::rig::apply;
@@ -171,6 +171,8 @@ struct Context {
     rig_addr: String,
     /// `None` disables logging (no callsign).
     logging: Option<LoggingSetup>,
+    /// Why logging is off when the shared config was unusable; shown on the status line.
+    logging_note: Option<String>,
 }
 
 struct LoggingSetup {
@@ -191,13 +193,13 @@ fn try_main() -> Result<(), Box<dyn Error>> {
     let cache_dir =
         cache_dir().ok_or("cannot find a cache directory (set HOME or XDG_CACHE_HOME)")?;
     let rig_addr = args.rig.clone().unwrap_or_else(|| config.rig_addr.clone());
-    let callsign = load_shared_callsign(
+    let (callsign, logging_note) = logging_callsign(
         shared_config_path(
             std::env::var("XDG_CONFIG_HOME").ok().as_deref(),
             std::env::var("HOME").ok().as_deref(),
         )
         .as_deref(),
-    )?;
+    );
     let path = log_path(
         args.log.as_deref(),
         config.logbook.path.as_deref(),
@@ -214,6 +216,7 @@ fn try_main() -> Result<(), Box<dyn Error>> {
         observer,
         rig_addr,
         logging,
+        logging_note,
     };
 
     let rt = tokio::runtime::Builder::new_current_thread()
@@ -240,6 +243,9 @@ fn run(terminal: &mut DefaultTerminal, rt: &Runtime, ctx: &Context) -> Result<()
         fetching += auto.len();
         app.set_status(Some("downloading satellite data...".to_string()));
         spawn_fetch(ctx.cache_dir.clone(), auto, tx.clone());
+    }
+    if let Some(note) = &ctx.logging_note {
+        app.set_status(Some(note.clone()));
     }
 
     let mut client: Option<Client> = None;

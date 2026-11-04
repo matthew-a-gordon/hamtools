@@ -212,7 +212,18 @@ struct RawShared {
 /// The operator's callsign from the shared config's text. Everything else in it (the KX3 and
 /// macro sections) belongs to other tools and is ignored.
 pub fn shared_callsign(text: &str) -> Result<Option<Callsign>, ConfigError> {
-    let raw: RawShared = toml::from_str(text).map_err(|e| ConfigError(e.to_string()))?;
+    let raw: RawShared = match toml::from_str(text) {
+        Ok(raw) => raw,
+        Err(first) => {
+            // `callsign` is a top-level key, so it lives above the first table header. A TOML
+            // error in another tool's section must not cost the operator logging.
+            let top: String = text
+                .split_inclusive('\n')
+                .take_while(|l| !l.trim_start().starts_with('['))
+                .collect();
+            toml::from_str(&top).map_err(|_| ConfigError(first.to_string()))?
+        }
+    };
     raw.callsign
         .map(|c| Callsign::new(&c).map_err(|e| ConfigError(e.to_string())))
         .transpose()
@@ -229,6 +240,15 @@ pub fn load_shared_callsign(path: Option<&Path>) -> Result<Option<Callsign>, Con
         }
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
         Err(e) => Err(ConfigError(format!("{}: {e}", path.display()))),
+    }
+}
+
+/// The callsign for logging, never an error: a missing file or callsign is `(None, None)`, and
+/// an invalid callsign or unreadable file is `(None, Some(why))` for the status line.
+pub fn logging_callsign(path: Option<&Path>) -> (Option<Callsign>, Option<String>) {
+    match load_shared_callsign(path) {
+        Ok(call) => (call, None),
+        Err(e) => (None, Some(format!("logging off: {}", e.0))),
     }
 }
 

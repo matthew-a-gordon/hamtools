@@ -1,6 +1,6 @@
 use std::path::{Path, PathBuf};
 
-use sat_tui::config::{Config, log_path, shared_callsign, shared_config_path};
+use sat_tui::config::{Config, log_path, logging_callsign, shared_callsign, shared_config_path};
 
 #[test]
 fn the_logbook_section_defaults_to_nothing_set() {
@@ -94,6 +94,46 @@ mod shared_config {
     fn no_callsign_is_none_and_a_bad_one_is_an_error() {
         assert!(shared_callsign("[kx3]\nx = 1").unwrap().is_none());
         assert!(shared_callsign("callsign = \"no way!\"").is_err());
+    }
+
+    #[test]
+    fn a_toml_error_in_an_unrelated_section_does_not_hide_the_callsign() {
+        let call = shared_callsign("callsign = \"w1aw\"\n[kx3]\naddr = = broken\n").unwrap();
+        assert_eq!(call.unwrap().as_str(), "W1AW");
+        // No callsign above the broken part: nothing to say about it, and no error either.
+        assert!(
+            shared_callsign("[kx3]\naddr = = broken\n")
+                .unwrap()
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn startup_never_fails_on_the_shared_file_it_only_reports_why_logging_is_off() {
+        let dir = std::env::temp_dir().join(format!("sat-tui-shared-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let write = |name: &str, text: &str| {
+            let path = dir.join(name);
+            std::fs::write(&path, text).unwrap();
+            path
+        };
+
+        let (call, note) =
+            logging_callsign(Some(&write("ok.toml", "callsign = \"w1aw\"\n[kx3]\nx = = 1\n")));
+        assert_eq!(call.unwrap().as_str(), "W1AW");
+        assert_eq!(note, None);
+
+        let (call, note) = logging_callsign(Some(&write("bad.toml", "callsign = \"no way!\"")));
+        assert!(call.is_none());
+        assert!(note.unwrap().contains("bad.toml"));
+
+        // Unreadable (a directory) is reported, not fatal.
+        let (call, note) = logging_callsign(Some(&dir));
+        assert!(call.is_none());
+        assert!(note.is_some());
+
+        assert_eq!(logging_callsign(Some(&dir.join("missing.toml"))), (None, None));
+        assert_eq!(logging_callsign(None), (None, None));
     }
 
     #[test]
