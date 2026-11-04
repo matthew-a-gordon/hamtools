@@ -21,9 +21,11 @@ use crate::bandplan::{BandAction, BandplanModal, View as BandView};
 use crate::config_dialog::{ConfigDialog, Outcome};
 use crate::general::General;
 use crate::geocode::GeocodeResult;
+use crate::keybindings::KeybindingsModal;
 use crate::keys::{self, Action, Scope};
 use crate::layout::{self, Fit, Panes};
 use crate::logging::{Logging, Snapshot};
+use crate::palette::{Palette, PaletteOutcome, PaletteRow, Target};
 use crate::panel::{LogDefaults, LogMode};
 use crate::rig::{Command, Feature, RigEvent, RigMode};
 use crate::softkeys::{Exchange, Layers, NamedSet, Resolved, resolve};
@@ -143,6 +145,9 @@ pub struct App {
     /// The quit confirmation, with a line for each thing quitting would lose. It sits above
     /// every other overlay, which stay untouched underneath.
     quit_confirm: Option<Vec<String>>,
+    /// The Ctrl-G go-to palette and the Ctrl-K keybindings modal.
+    palette: Option<Palette>,
+    keybindings: Option<KeybindingsModal>,
     connected: bool,
     now: Instant,
     utc: Option<SystemTime>,
@@ -204,6 +209,8 @@ impl App {
             rig_name: DEFAULT_RIG_ADDR.to_string(),
             overlay: None,
             quit_confirm: None,
+            palette: None,
+            keybindings: None,
             connected: false,
             // Only the starting point for staleness; every tick replaces it.
             now: Instant::now(),
@@ -558,6 +565,8 @@ impl App {
             || self.bandplan.is_some()
             || self.logging.modal_open()
             || self.quit_confirm.is_some()
+            || self.palette.is_some()
+            || self.keybindings.is_some()
     }
 
     /// Why tuning from the band plan is refused right now (the foreground Activity is
@@ -656,6 +665,35 @@ impl App {
         }
     }
 
+    /// One palette row per hosted Activity. Rows for upcoming Activation plans go in front.
+    fn palette_rows(&self) -> Vec<PaletteRow> {
+        let ctx = ctx!(self);
+        self.activities
+            .iter()
+            .enumerate()
+            .map(|(i, a)| PaletteRow {
+                target: Target::Activity(i),
+                name: a.name().to_string(),
+                state: a.state_line(&ctx),
+                unavailable: a.unavailable(),
+            })
+            .collect()
+    }
+
+    fn open_palette(&mut self) {
+        self.palette = Some(Palette::new(self.palette_rows()));
+    }
+
+    fn open_keybindings(&mut self) {
+        let activity = &self.activities[self.foreground];
+        let rows = crate::keybindings::rows(
+            activity.name(),
+            &activity.keys(),
+            activity.text_focus(&ctx!(self)),
+        );
+        self.keybindings = Some(KeybindingsModal::new(rows));
+    }
+
     fn open_config(&mut self) {
         self.config = Some(ConfigDialog::open(
             self.config_path.as_deref(),
@@ -668,7 +706,9 @@ impl App {
     /// switcher are not built yet, so those say so.
     fn perform(&mut self, action: Action) -> Vec<Command> {
         match action {
-            Action::GoTo | Action::Keybindings | Action::RigSwitcher => {
+            Action::GoTo => self.open_palette(),
+            Action::Keybindings => self.open_keybindings(),
+            Action::RigSwitcher => {
                 self.status = Some("not available yet".to_string());
             }
             Action::Bandplan => self.bandplan = Some(BandplanModal::open(self.frequency())),
@@ -865,6 +905,23 @@ impl App {
                     commands
                 }
             };
+        }
+        if let Some(palette) = &mut self.palette {
+            match palette.on_key(key) {
+                PaletteOutcome::Keep => {}
+                PaletteOutcome::Close => self.palette = None,
+                PaletteOutcome::Choose(Target::Activity(index)) => {
+                    self.palette = None;
+                    self.set_foreground(index);
+                }
+            }
+            return Vec::new();
+        }
+        if let Some(modal) = &mut self.keybindings {
+            if modal.on_key(key) == OverlayAction::Close {
+                self.keybindings = None;
+            }
+            return Vec::new();
         }
         if let Some(overlay) = &mut self.overlay {
             if overlay.on_key(key) == OverlayAction::Close {
@@ -1229,6 +1286,12 @@ impl App {
                 today: self.clock().date_naive(),
             };
             modal.render(frame, area, &view);
+        }
+        if let Some(palette) = &self.palette {
+            palette.render(frame, area);
+        }
+        if let Some(modal) = &self.keybindings {
+            modal.render(frame, area);
         }
         self.logging.render(frame, area, self.own_grid().is_some());
         if let Some(lines) = &self.quit_confirm {
