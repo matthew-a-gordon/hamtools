@@ -1,24 +1,22 @@
 use std::error::Error;
-use std::future::Future;
 use std::path::PathBuf;
 use std::process::ExitCode;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
-use rig_tui::{App, Command, Config, Session, config_path, render};
 use ratatui::DefaultTerminal;
 use ratatui::crossterm::event::{self, Event, KeyEventKind};
-use rigctld_client::Client;
+use rig_tui::{App, Command, Config, Rig, config_path, render};
 use tokio::runtime::Runtime;
 
-/// The KX3 clears its decode buffer on each `TB;` and holds only 40 characters.
-const POLL_INTERVAL: Duration = Duration::from_millis(100);
-/// A stalled rigctld must not freeze the screen.
-const RIG_TIMEOUT: Duration = Duration::from_secs(2);
+/// One loop pass. The KX3 clears its decode buffer on each `TB;` and holds only 40 characters,
+/// so this is also the CW panel's polling interval.
+const TICK: Duration = Duration::from_millis(100);
 
 const USAGE: &str = "usage: rig-tui [--config PATH] [ADDR]
 
-ADDR is the KX3's rigctld; it overrides the config file (default 127.0.0.1:4532).
-Config defaults to $XDG_CONFIG_HOME/hamtools/config.toml (see config.example.toml).";
+ADDR is the rigctld to use; it overrides the config file (default 127.0.0.1:4532).
+Config defaults to $XDG_CONFIG_HOME/hamtools/config.toml (see config.example.toml).
+The app starts without a rig and keeps retrying the connection.";
 
 fn main() -> ExitCode {
     match try_main() {
@@ -52,70 +50,62 @@ fn try_main() -> Result<(), Box<dyn Error>> {
         std::env::var("HOME").ok().as_deref(),
     );
     let config = Config::load(config_arg.as_deref(), default_path.as_deref())?;
-    let addr = addr_arg.unwrap_or_else(|| config.kx3.addr.clone());
+    for warning in &config.warnings {
+        eprintln!(
+            "rig-tui: config: unknown key {} (line {})",
+            warning.name, warning.line
+        );
+    }
+    let addr = addr_arg.unwrap_or_else(|| config.rig_addr.clone());
 
     let rt = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()?;
-    let client = rt
-        .block_on(Client::connect(&addr))
-        .map_err(|e| format!("cannot reach rigctld at {addr}: {e}"))?;
-    let mut session = Session::new(client);
+    let mut rig = Rig::new(addr);
+    let app = App::with_callsign(config.callsign).with_soft_keys(config.soft_keys);
 
     let mut terminal = ratatui::init();
-    let result = run(&mut terminal, &rt, &mut session, config);
+    let result = run(&mut terminal, &rt, &mut rig, app);
     ratatui::restore();
     result
 }
 
-fn with_timeout<T, E: Error + 'static>(
-    rt: &Runtime,
-    fut: impl Future<Output = Result<T, E>>,
-) -> Result<T, String> {
-    match rt.block_on(async { tokio::time::timeout(RIG_TIMEOUT, fut).await }) {
-        Ok(result) => result.map_err(|e| e.to_string()),
-        Err(_) => Err("rigctld timed out".to_string()),
+/// Run each command against the rig and feed what it reports back to the app. Returns true when
+/// the app asked to quit.
+fn dispatch(rt: &Runtime, rig: &mut Rig, app: &mut App, commands: Vec<Command>) -> bool {
+    for command in commands {
+        if command == Command::Quit {
+            return true;
+        }
+        for event in rt.block_on(rig.execute(command)) {
+            app.on_rig(event);
+        }
     }
+    false
 }
 
 fn run(
     terminal: &mut DefaultTerminal,
     rt: &Runtime,
-    session: &mut Session,
-    config: Config,
+    rig: &mut Rig,
+    mut app: App,
 ) -> Result<(), Box<dyn Error>> {
-    let mut app = App::with_callsign(config.callsign).with_macros(config.macros);
-    let mut poll_failed = false;
     loop {
         terminal.draw(|frame| render(&app, frame))?;
 
-        if event::poll(POLL_INTERVAL)?
+        if event::poll(TICK)?
             && let Event::Key(key) = event::read()?
             && key.kind == KeyEventKind::Press
         {
-            match app.handle_key(key) {
-                Some(Command::Quit) => return Ok(()),
-                Some(Command::Send(text)) => {
-                    if let Err(e) = with_timeout(rt, session.send(&text)) {
-                        app.set_status(Some(format!("send failed: {e}")));
-                    }
-                }
-                None => {}
+            let commands = app.on_key(key);
+            if dispatch(rt, rig, &mut app, commands) {
+                return Ok(());
             }
         }
 
-        match with_timeout(rt, session.poll()) {
-            Ok(polled) => {
-                app.on_rx(&polled.text);
-                if poll_failed {
-                    app.set_status(None);
-                    poll_failed = false;
-                }
-            }
-            Err(e) => {
-                app.set_status(Some(e));
-                poll_failed = true;
-            }
+        let commands = app.tick(Instant::now());
+        if dispatch(rt, rig, &mut app, commands) {
+            return Ok(());
         }
     }
 }

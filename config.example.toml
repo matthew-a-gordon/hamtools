@@ -1,13 +1,14 @@
 # Copy to ~/.config/hamtools/config.toml (or pass --config PATH).
+# Shared by the hamtools apps; keys an app does not know are kept and reported as warnings.
 
-# Your callsign. Typing {call} in kx3-cw expands to it when you send.
+# Your callsign. Typing {call} in rig-tui expands to it when you send.
 callsign = "N0CALL"
 
-[kx3]
-# The KX3's rigctld (see CLAUDE.md for the command).
+[rig]
+# The rigctld to talk to (see CLAUDE.md for the command). `[kx3]` is still read as an alias.
 addr = "127.0.0.1:4532"
 
-# Function-key macros, F1 to F6. Text is sent as CW when you press the key.
+# Soft keys F1 to F6 (CW and CWR only). Text is sent as CW when you press the key.
 # {call} expands to the callsign above.
 [macros]
 F1 = "CQ CQ CQ DE {call} {call} K"

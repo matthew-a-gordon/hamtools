@@ -1288,11 +1288,10 @@ checksum = "d6f6ff9a378485b298a5286656da665ba74413d36db0979633275d2e708145d4"
 name = "rig-tui"
 version = "0.1.0"
 dependencies = [
+ "hamtools-config",
  "ratatui",
  "rigctld-client",
- "serde",
  "tokio",
- "toml",
 ]
 
 [[package]]
