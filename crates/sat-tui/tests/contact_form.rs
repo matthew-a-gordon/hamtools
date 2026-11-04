@@ -215,6 +215,29 @@ mod editing {
     }
 
     #[test]
+    fn non_ascii_in_an_uppercased_field_is_rejected_naming_field_and_character() {
+        let (mut app, _, _) = open("non-ascii");
+        type_text(&mut app, "K9");
+
+        // Uppercasing \u{df} would give "SS", which is ASCII and would slip through.
+        type_text(&mut app, "\u{df}");
+
+        let form = app.form().unwrap();
+        assert_eq!(form.call, "K9");
+        let error = form.error.as_deref().unwrap();
+        assert!(
+            error.contains("Call") && error.contains('\u{df}'),
+            "{error}"
+        );
+
+        press(&mut app, KeyCode::Tab);
+        type_text(&mut app, "\u{e9}");
+        let form = app.form().unwrap();
+        assert_eq!(form.grid, "");
+        assert!(form.error.as_deref().unwrap().contains("Grid"));
+    }
+
+    #[test]
     fn tab_and_shift_tab_cycle_through_every_field() {
         let (mut app, _, _) = open("cycle");
         let mut seen = vec![app.form().unwrap().field];

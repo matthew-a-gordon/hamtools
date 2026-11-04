@@ -88,7 +88,8 @@ impl ContactForm {
         (rx_hz, rx_mode): (u64, RigMode),
         (tx_hz, tx_mode): (u64, RigMode),
     ) -> Self {
-        let rst = if tx_mode == RigMode::Cw { "599" } else { "59" };
+        // RST sent is the report for our uplink, RST received the one for what we hear.
+        let rst = |mode| if mode == RigMode::Cw { "599" } else { "59" };
         Self {
             satellite,
             transmitter,
@@ -100,8 +101,8 @@ impl ContactForm {
             call: String::new(),
             grid: String::new(),
             name: String::new(),
-            rst_sent: rst.to_string(),
-            rst_rcvd: rst.to_string(),
+            rst_sent: rst(tx_mode).to_string(),
+            rst_rcvd: rst(rx_mode).to_string(),
             comment: String::new(),
             field: Field::Call,
             error: None,
@@ -135,12 +136,18 @@ impl ContactForm {
                 self.text_mut().pop();
             }
             KeyCode::Char(c) => {
-                let upper = matches!(self.field, Field::Call | Field::Grid);
-                self.text_mut().extend(if upper {
-                    c.to_uppercase().collect::<Vec<_>>()
+                if matches!(self.field, Field::Call | Field::Grid) {
+                    // Check before uppercasing: `\u{df}` uppercases to the ASCII "SS".
+                    if !c.is_ascii() {
+                        let name = if self.field == Field::Call { "Call" } else { "Grid" };
+                        self.error = Some(format!("{name}: {c:?} is not ASCII"));
+                        return FormEvent::Edited;
+                    }
+                    self.text_mut().push(c.to_ascii_uppercase());
                 } else {
-                    vec![c]
-                });
+                    self.text_mut().push(c);
+                }
+                self.error = None;
             }
             _ => {}
         }
@@ -202,4 +209,32 @@ pub struct LoggedContact {
     pub rst_sent: String,
     pub rst_rcvd: String,
     pub satellite: String,
+}
+
+#[cfg(test)]
+mod tests {
+    use chrono::TimeZone;
+
+    use super::*;
+
+    fn form(rx: RigMode, tx: RigMode) -> ContactForm {
+        let started = Utc.with_ymd_and_hms(2026, 10, 26, 13, 15, 0).unwrap();
+        ContactForm::new(
+            "AO-7".to_string(),
+            "Mode B".to_string(),
+            started,
+            (435_000_000, rx),
+            (145_900_000, tx),
+        )
+    }
+
+    #[test]
+    fn rst_sent_follows_the_uplink_mode_and_rst_received_the_downlink_mode() {
+        let f = form(RigMode::Usb, RigMode::Cw);
+        assert_eq!((f.rst_sent.as_str(), f.rst_rcvd.as_str()), ("599", "59"));
+        let f = form(RigMode::Cw, RigMode::Usb);
+        assert_eq!((f.rst_sent.as_str(), f.rst_rcvd.as_str()), ("59", "599"));
+        let f = form(RigMode::Cw, RigMode::Cw);
+        assert_eq!((f.rst_sent.as_str(), f.rst_rcvd.as_str()), ("599", "599"));
+    }
 }
