@@ -7,6 +7,7 @@ use common::*;
 use ratatui::Frame;
 use ratatui::crossterm::event::{KeyCode, KeyEvent};
 use ratatui::layout::Rect;
+use rig_tui::softkeys::Exchange;
 use rig_tui::{
     App, Command, Focus, Overlay, OverlayAction, RECONNECT_EVERY, RigEvent, STATE_POLL_EVERY,
 };
@@ -56,7 +57,7 @@ mod cw_input {
             App::with_callsign(Some("KD0RHV".to_string())),
             "CW",
         ));
-        type_str(&mut app, "cq cq de {call} {call} k");
+        type_str(&mut app, "cq cq de {mycall} {mycall} k");
 
         let commands = app.on_key(key(KeyCode::Enter));
 
@@ -70,15 +71,15 @@ mod cw_input {
     #[test]
     fn call_placeholder_without_a_callsign_blocks_the_send_and_keeps_the_input() {
         let mut app = cw_app();
-        type_str(&mut app, "de {call}");
+        type_str(&mut app, "de {mycall}");
 
         let commands = app.on_key(key(KeyCode::Enter));
 
         assert_eq!(commands, vec![]);
         let rows = screen(&app, 80, 24);
-        assert!(has(&rows, "> DE {CALL}"), "{rows:#?}");
+        assert!(has(&rows, "> DE {MYCALL}"), "{rows:#?}");
         assert!(
-            app.status().is_some_and(|s| s.contains("callsign")),
+            app.status().is_some_and(|s| s.contains("MYCALL")),
             "{:?}",
             app.status()
         );
@@ -146,7 +147,7 @@ mod soft_keys {
     fn app() -> App {
         focus_input(connected_app_in(
             App::with_callsign(Some("KD0RHV".to_string())).with_soft_keys(BTreeMap::from([
-                (1, "CQ CQ CQ DE {CALL} {CALL} K".to_string()),
+                (1, "CQ CQ CQ DE {MYCALL} {MYCALL} K".to_string()),
                 (2, "73 TU".to_string()),
             ])),
             "CW",
@@ -191,24 +192,144 @@ mod soft_keys {
     }
 
     #[test]
-    fn an_unset_function_key_says_so_and_sends_nothing() {
+    fn a_key_the_user_left_unset_falls_to_the_built_in_default() {
         let mut app = app();
 
-        assert_eq!(app.on_key(f(3)), vec![]);
-
-        assert_eq!(app.status(), Some("F3 is not set"));
+        // F4 is the built-in `{MYCALL}`.
+        assert_eq!(app.on_key(f(4)), vec![Command::Send("KD0RHV".to_string())]);
     }
 
     #[test]
     fn a_message_using_the_callsign_is_blocked_when_none_is_configured() {
         let mut app = focus_input(connected_app_in(
-            App::new().with_soft_keys(BTreeMap::from([(1, "DE {CALL}".to_string())])),
+            App::new().with_soft_keys(BTreeMap::from([(1, "DE {MYCALL}".to_string())])),
             "CW",
         ));
 
         assert_eq!(app.on_key(f(1)), vec![]);
 
-        assert!(app.status().is_some_and(|s| s.contains("callsign")));
+        assert!(app.status().is_some_and(|s| s.contains("MYCALL not set")));
+    }
+
+    #[test]
+    fn any_missing_variable_refuses_the_whole_send_naming_it() {
+        let mut app = app();
+
+        // F3 is the built-in `{THEIRCALL} TU 73 ...`, and no THEIRCALL is known yet.
+        assert_eq!(app.on_key(f(3)), vec![]);
+        assert!(
+            app.status()
+                .is_some_and(|s| s.contains("THEIRCALL not set")),
+            "{:?}",
+            app.status()
+        );
+
+        app.set_exchange(Exchange {
+            their_call: Some("w1aw".to_string()),
+            ..Exchange::default()
+        });
+        assert_eq!(
+            app.on_key(f(3)),
+            vec![Command::Send("W1AW TU 73 DE KD0RHV EE".to_string())]
+        );
+    }
+
+    #[test]
+    fn variables_are_read_at_press_time_not_stored() {
+        let mut app = app();
+        app.set_exchange(Exchange {
+            their_call: Some("W1AW".to_string()),
+            ..Exchange::default()
+        });
+        app.on_key(f(3));
+        app.set_exchange(Exchange {
+            their_call: Some("N0CALL".to_string()),
+            ..Exchange::default()
+        });
+
+        assert_eq!(
+            app.on_key(f(3)),
+            vec![Command::Send("N0CALL TU 73 DE KD0RHV EE".to_string())]
+        );
+    }
+
+    #[test]
+    fn an_invalid_stored_message_loads_and_refuses_to_send() {
+        let mut app = focus_input(connected_app_in(
+            App::with_callsign(Some("KD0RHV".to_string()))
+                .with_soft_keys(BTreeMap::from([(1, "DE {CALL}".to_string())])),
+            "CW",
+        ));
+
+        assert_eq!(app.on_key(f(1)), vec![]);
+
+        assert!(
+            app.status().is_some_and(|s| s.contains("use {MYCALL}")),
+            "{:?}",
+            app.status()
+        );
+    }
+
+    #[test]
+    fn a_missing_plan_set_degrades_and_is_flagged_without_blocking() {
+        let mut app = app();
+
+        app.set_plan_soft_keys(Some("nosuch".to_string()), BTreeMap::new());
+
+        assert!(app.status().is_some_and(|s| s.contains("nosuch")));
+        assert_eq!(app.resolved_soft_keys().keys[&2].text, "73 TU");
+        assert_eq!(app.on_key(f(2)), vec![Command::Send("73 TU".to_string())]);
+    }
+
+    #[test]
+    fn a_plan_override_beats_the_users_set_for_that_key_only() {
+        let mut app = app();
+        app.set_plan_soft_keys(None, BTreeMap::from([(2, "QRZ".to_string())]));
+
+        assert_eq!(app.on_key(f(2)), vec![Command::Send("QRZ".to_string())]);
+        assert_eq!(
+            app.on_key(f(1)),
+            vec![Command::Send("CQ CQ CQ DE KD0RHV KD0RHV K".to_string())]
+        );
+    }
+
+    #[test]
+    fn a_named_user_set_replaces_general_for_the_activity() {
+        let mut app = app().with_softkey_sets(BTreeMap::from([(
+            "pota".to_string(),
+            BTreeMap::from([(1, "CQ POTA DE {MYCALL}".to_string())]),
+        )]));
+        app.set_activity_soft_keys(Some("pota".to_string()));
+
+        assert_eq!(
+            app.on_key(f(1)),
+            vec![Command::Send("CQ POTA DE KD0RHV".to_string())]
+        );
+    }
+
+    #[test]
+    fn templates_never_send_on_their_own() {
+        // Loading, layering, selecting plans and sets, changing the exchange, ticking and
+        // rendering produce no rig command that keys the transmitter; only a key press does.
+        let mut app = app().with_softkey_sets(BTreeMap::from([(
+            "pota".to_string(),
+            BTreeMap::from([(1, "CQ".to_string())]),
+        )]));
+        app.set_activity_soft_keys(Some("pota".to_string()));
+        app.set_plan_soft_keys(Some("pota".to_string()), BTreeMap::from([(2, "X".into())]));
+        app.set_exchange(Exchange {
+            their_call: Some("W1AW".to_string()),
+            ..Exchange::default()
+        });
+        let _ = app.resolved_soft_keys();
+        let _ = screen(&app, 80, 24);
+        let mut commands = app.tick(std::time::Instant::now());
+        commands.extend(app.tick(std::time::Instant::now()));
+
+        assert!(
+            commands.iter().all(|c| !matches!(c, Command::Send(_))),
+            "{commands:?}"
+        );
     }
 
     #[test]

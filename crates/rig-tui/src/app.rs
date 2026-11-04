@@ -21,6 +21,7 @@ use crate::layout::{self, Fit, Panes};
 use crate::logging::{Logging, Snapshot};
 use crate::panel::{LogDefaults, LogMode};
 use crate::rig::{Command, Feature, RigEvent, RigMode};
+use crate::softkeys::{Exchange, Layers, NamedSet, Resolved, resolve};
 
 /// How long to wait between attempts to reach `rigctld`. A starting value, untested on hardware.
 pub const RECONNECT_EVERY: Duration = Duration::from_secs(3);
@@ -113,8 +114,8 @@ macro_rules! ctx {
     ($self:ident, $recent:expr, $panes:expr) => {
         ActivityCtx {
             connected: $self.connected,
-            callsign: $self.callsign.as_deref(),
-            soft_keys: &$self.soft_keys,
+            live: $self.exchange.live($self.callsign.as_deref()),
+            soft_keys: &$self.resolved.keys,
             rig_mode: $self.mode.as_ref().map(|r| &r.value.0),
             fresh_mode: $self
                 .mode
@@ -151,7 +152,16 @@ pub struct App {
     poll_failed: bool,
     callsign: Option<String>,
     logging: Logging,
+    /// The General Soft key set (`[macros]`).
     soft_keys: BTreeMap<u8, String>,
+    softkey_sets: BTreeMap<String, BTreeMap<u8, String>>,
+    /// The user set for the current Activity; `None` is General.
+    activity_soft_keys: Option<String>,
+    plan_soft_keys: Option<String>,
+    plan_soft_overrides: BTreeMap<u8, String>,
+    exchange: Exchange,
+    /// The layered Soft keys, recomputed whenever a layer changes.
+    resolved: Resolved,
     locator: Option<String>,
     log_path: Option<PathBuf>,
     default_log_path: Option<PathBuf>,
@@ -198,6 +208,12 @@ impl App {
             callsign: None,
             logging: Logging::new(),
             soft_keys: BTreeMap::new(),
+            softkey_sets: BTreeMap::new(),
+            activity_soft_keys: None,
+            plan_soft_keys: None,
+            plan_soft_overrides: BTreeMap::new(),
+            exchange: Exchange::default(),
+            resolved: resolve(&Layers::default()),
             locator: None,
             log_path: None,
             default_log_path: None,
@@ -211,7 +227,7 @@ impl App {
         }
     }
 
-    /// An app that expands `{CALL}` in sent text to `callsign`.
+    /// An app whose `{MYCALL}` is `callsign`.
     pub fn with_callsign(callsign: Option<String>) -> Self {
         Self {
             callsign,
@@ -219,10 +235,77 @@ impl App {
         }
     }
 
-    /// Bind F1..F6 to canned messages (text is uppercase; `{CALL}` expands to the callsign).
+    /// Bind F1..F6 to canned messages: the General Soft key set (text is uppercase and may hold
+    /// variables such as `{MYCALL}`).
     pub fn with_soft_keys(mut self, soft_keys: BTreeMap<u8, String>) -> Self {
         self.soft_keys = soft_keys;
+        self.refresh_soft_keys();
         self
+    }
+
+    /// The named user sets from `[softkeys.<name>]`.
+    pub fn with_softkey_sets(mut self, sets: BTreeMap<String, BTreeMap<u8, String>>) -> Self {
+        self.softkey_sets = sets;
+        self.refresh_soft_keys();
+        self
+    }
+
+    /// Use the user set `name` for the Activity (`None`: General, the `[macros]` set). A name
+    /// with no such set falls back to the lower layers and is flagged in the status line.
+    pub fn set_activity_soft_keys(&mut self, name: Option<String>) {
+        self.activity_soft_keys = name;
+        self.flag_missing_soft_key_sets();
+    }
+
+    /// Use a plan's Soft keys: its named set and its single-key overrides. A missing set falls
+    /// back to the lower layers and is flagged in the status line; it never blocks.
+    pub fn set_plan_soft_keys(&mut self, set: Option<String>, overrides: BTreeMap<u8, String>) {
+        self.plan_soft_keys = set;
+        self.plan_soft_overrides = overrides;
+        self.flag_missing_soft_key_sets();
+    }
+
+    /// The values `{THEIRCALL}`, `{MYREF}` and the rest expand from (`{MYCALL}` is the callsign).
+    pub fn set_exchange(&mut self, exchange: Exchange) {
+        self.exchange = exchange;
+    }
+
+    /// The Soft keys after layering, as the bar shows them and a key press sends them.
+    pub fn resolved_soft_keys(&self) -> &Resolved {
+        &self.resolved
+    }
+
+    fn compute_soft_keys(&self) -> Resolved {
+        let lookup = |name: &String| NamedSet {
+            name: name.clone(),
+            keys: self.softkey_sets.get(name).cloned(),
+        };
+        resolve(&Layers {
+            plan_override: self.plan_soft_overrides.clone(),
+            plan_set: self.plan_soft_keys.as_ref().map(lookup),
+            user_set: Some(match &self.activity_soft_keys {
+                Some(name) => lookup(name),
+                None => NamedSet {
+                    name: "General".to_string(),
+                    keys: Some(self.soft_keys.clone()),
+                },
+            }),
+        })
+    }
+
+    fn refresh_soft_keys(&mut self) {
+        self.resolved = self.compute_soft_keys();
+    }
+
+    fn flag_missing_soft_key_sets(&mut self) {
+        self.refresh_soft_keys();
+        let missing = self.resolved.missing_sets.clone();
+        if !missing.is_empty() {
+            self.status = Some(format!(
+                "Soft key set {} not found: using the layers below",
+                missing.join(", ")
+            ));
+        }
     }
 
     /// Where the Log lives when the config sets no `[logbook] path`. `None`: logging is off.
@@ -304,6 +387,7 @@ impl App {
             log_path: self.log_path.clone(),
             rig_addr: Some(self.rig_addr.clone()),
             macros: self.soft_keys.clone(),
+            softkey_sets: self.softkey_sets.clone(),
         }
     }
 
@@ -313,6 +397,8 @@ impl App {
         self.locator = settings.locator.map(|g| g.as_str().to_string());
         self.log_path = settings.log_path;
         self.soft_keys = settings.macros;
+        self.softkey_sets = settings.softkey_sets;
+        self.refresh_soft_keys();
         match settings.rig_addr {
             Some(addr) if addr != self.rig_addr => {
                 self.rig_addr = addr.clone();

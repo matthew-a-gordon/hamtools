@@ -15,6 +15,7 @@ mod logging;
 mod panel;
 pub mod reference;
 mod rig;
+pub mod softkeys;
 mod style;
 mod ui;
 

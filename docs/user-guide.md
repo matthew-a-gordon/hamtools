@@ -108,12 +108,12 @@ Bind messages under `[macros]` in the config. Text is sent as CW when you press 
 
 ```toml
 [macros]
-F1 = "CQ CQ CQ DE {call} {call} K"
-F2 = "{call}"
-F3 = "R R 73 TU DE {call} SK"
+F1 = "CQ CQ CQ DE {MYCALL} {MYCALL} K"
+F2 = "{MYCALL}"
+F3 = "R R 73 TU DE {MYCALL} SK"
 ```
 
-`{call}` expands to your `callsign` setting. Bound keys appear in reverse video under the panel.
+`{MYCALL}` expands to your `callsign` setting (the older `{CALL}` is an error: "use {MYCALL}"). Named sets go under `[softkeys.<name>]` with the same F1 to F6 keys. Keys you leave unset use the built-in defaults. The six keys appear in reverse video under the panel: bold and underlined for a plan's own key, bold for a plan's set, dim for a built-in default, and struck through for a stored message that fails validation (it will not send).
 
 Safety: the only way the app transmits is a CW send you trigger from a key press. Nothing repeats or sends on its own.
 
@@ -158,7 +158,7 @@ path = "/home/you/.local/share/hamtools/log.adi"   # optional
 addr = "127.0.0.1:4532"
 
 [macros]
-F1 = "CQ CQ CQ DE {call} {call} K"
+F1 = "CQ CQ CQ DE {MYCALL} {MYCALL} K"
 ```
 
 The old `[kx3] addr` key is still read as `[rig] addr` today. **It goes away with the unified app** (section 8).

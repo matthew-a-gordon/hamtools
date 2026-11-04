@@ -36,7 +36,7 @@ impl General {
     fn panel_ctx<'a>(&self, ctx: &ActivityCtx<'a>, focused: bool) -> PanelCtx<'a> {
         PanelCtx {
             connected: ctx.connected,
-            callsign: ctx.callsign,
+            live: ctx.live,
             soft_keys: ctx.soft_keys,
             focused,
         }
