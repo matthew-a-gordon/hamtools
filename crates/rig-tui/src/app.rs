@@ -118,6 +118,7 @@ macro_rules! ctx {
                 .filter(|r| $self.now.saturating_duration_since(r.at) <= STALE_AFTER)
                 .map(|r| &r.value.0),
             recent: $recent,
+            form: $self.logging.view(),
         }
     };
 }
@@ -585,10 +586,33 @@ impl App {
             return Vec::new();
         }
         if self.logging.modal_open() {
+            // Soft keys work while the form has the keyboard; the Activity sees what is typed.
+            if self.logging.form_open() && matches!(key.code, KeyCode::F(1..=6)) {
+                let ctx = ctx!(self);
+                return match self.activities[self.foreground].on_key(key, &ctx) {
+                    Some(out) => {
+                        if out.status.is_some() {
+                            self.status = out.status;
+                        }
+                        out.commands
+                    }
+                    None => Vec::new(),
+                };
+            }
             let now = self.clock();
             let (log, grid) = (self.current_log(), self.own_grid());
             if let Some(status) = self.logging.on_key(key, now, log, grid.as_ref()) {
                 self.status = Some(status);
+            }
+            if self.logging.take_reopen() {
+                // Quick entry: the next Contact needs a fresh rig reading, like any other.
+                match self.log_snapshot() {
+                    Ok(snapshot) => self.logging.open_form(snapshot),
+                    Err(why) => {
+                        let saved = self.status.take().unwrap_or_default();
+                        self.status = Some(format!("{saved}; {why}"));
+                    }
+                }
             }
             return Vec::new();
         }

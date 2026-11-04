@@ -14,6 +14,15 @@ use ratatui::layout::Rect;
 use crate::panel::{LogDefaults, LogMode};
 use crate::rig::{Command, RigMode};
 
+/// The Contact form's in-progress values, for Soft key variables.
+#[derive(Debug, Clone, Copy)]
+pub struct ContactView<'a> {
+    pub their_call: &'a str,
+    pub their_ref: &'a str,
+    pub rst_sent: &'a str,
+    pub rst_rcvd: &'a str,
+}
+
 /// What an Activity is told about the app on every call.
 #[derive(Debug, Clone, Copy)]
 pub struct ActivityCtx<'a> {
@@ -27,6 +36,8 @@ pub struct ActivityCtx<'a> {
     pub fresh_mode: Option<&'a RigMode>,
     /// Recent Contacts, newest first (filled for rendering only).
     pub recent: &'a [String],
+    /// The Contact form's in-progress values while it is open.
+    pub form: Option<ContactView<'a>>,
 }
 
 /// What an Activity returns: rig commands from the closed set, and an optional status line.
