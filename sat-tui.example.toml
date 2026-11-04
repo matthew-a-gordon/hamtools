@@ -15,6 +15,8 @@ min_elevation_deg = 10.0
 short_pass_secs = 180
 
 [observer]
+# Position order: --grid/--lat/--lon, then this section, then station.locator in the shared
+# config.toml, then a town-level default.
 # Either a Maidenhead grid (4 or 6 characters) or lat/lon, not both.
 grid = "EN71"
 # lat_deg = 41.67
@@ -22,11 +24,9 @@ grid = "EN71"
 alt_m = 250.0
 
 # Contact logging (untested on hardware). The callsign comes from `callsign` in the shared
-# ~/.config/hamtools/config.toml; without it logging stays off.
+# ~/.config/hamtools/config.toml; without it logging stays off. The Log path is also there
+# (`[logbook] path`, shared with rig-tui); --log PATH wins.
 [logbook]
-# Where the Log lives; --log PATH wins. Default: $XDG_DATA_HOME/hamtools/log.adi,
-# else ~/.local/share/hamtools/log.adi.
-# path = "/home/you/hamtools/log.adi"
 # Your own 6-character grid, used verbatim instead of the one derived from [observer].
 # grid = "EN71DQ"
 
