@@ -5,7 +5,9 @@ Rust TUIs (ratatui) for ham rig control and satellite work. Targets an Elecraft 
 | Crate | Purpose |
 | --- | --- |
 | `rigctld-client` | Async client for the rigctld text protocol |
-| `kx3-cw` | Decode and send CW on the KX3 over CAT |
+| `rig-tui` | Rig control TUI for any rigctld: rig strip, CW panel with Soft keys (F1-F6) |
+| `hamtools-config` | The shared `config.toml`: typed read, field-level write |
+| `hamtools-tui` | Shared modal, text-field and list overlay widgets |
 | `sat-tui` | Pass prediction, Doppler-corrected rig tracking, SatNOGS transmitter data |
 
 Status: scaffolding. Nothing here has been tested on real hardware yet.
@@ -26,8 +28,8 @@ cargo test --workspace
 
 ## Configuration
 
-`kx3-cw` reads `~/.config/hamtools/config.toml` (or `--config PATH`); see `config.example.toml`. Set `callsign` once and type `{call}` in text you send, e.g. `CQ CQ DE {call} K`. The real config stays out of the repo.
-Bind `F1` to `F6` under `[macros]` to send canned messages with one key; the keys and their text are listed above the input line.
+`rig-tui` reads `~/.config/hamtools/config.toml` (or `--config PATH`; `[kx3] addr` is still read as `[rig] addr`); see `config.example.toml`. Set `callsign` once and type `{call}` in text you send, e.g. `CQ CQ DE {call} K`. The real config stays out of the repo. It starts even when `rigctld` is down and retries every few seconds.
+Bind `F1` to `F6` under `[macros]` to send canned messages with one key; they show as a reverse-video Soft key bar under the CW panel (CW and CWR only) and work from either focus. `Tab` moves focus between the strip and the input line, `Esc` returns to the strip, `q` or `Ctrl-C` quits.
 
 ## sat-tui
 

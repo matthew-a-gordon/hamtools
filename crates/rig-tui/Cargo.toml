@@ -1,5 +1,5 @@
 [package]
-name = "kx3-cw"
+name = "rig-tui"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -11,10 +11,9 @@ workspace = true
 
 [dependencies]
 ratatui = "0.30.2"
+hamtools-config = { path = "../hamtools-config" }
 rigctld-client = { path = "../rigctld-client" }
-serde = { version = "1.0.229", features = ["derive"] }
 tokio = { version = "1", features = ["rt", "net", "time"] }
-toml = "1.1.8"
 
 [dev-dependencies]
 tokio = { version = "1", features = ["rt", "macros", "net", "io-util", "sync"] }

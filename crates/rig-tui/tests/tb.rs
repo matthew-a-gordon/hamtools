@@ -1,7 +1,7 @@
 //! `TB` reply format from the Elecraft K3S/K3/KX3 Programmer's Reference (rev F6):
 //! `TBtrrs;` where t = chars still to send (0-9), rr = received char count (00-40), s = text.
 
-use kx3_cw::{TbError, parse_tb};
+use rig_tui::{TbError, parse_tb};
 
 #[test]
 fn empty_buffers() {
