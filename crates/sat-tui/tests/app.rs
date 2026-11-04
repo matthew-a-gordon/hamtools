@@ -296,6 +296,69 @@ mod tracking {
     }
 
     #[test]
+    fn turning_the_dial_moves_the_passband_position_and_tracking_carries_on_from_there() {
+        let mut app = app_on_the_rs44_transponder();
+        press(&mut app, KeyCode::Char('t'));
+        let setup = app.tick(at(19, 44, 0)).unwrap();
+        let (rx0, tx0) = (rx(&setup).unwrap(), tx(&setup).unwrap());
+
+        // Reading back what was sent: the dial has not moved.
+        app.follow_dial(rx0);
+        assert_eq!(app.tracking().unwrap().nudge_hz, 0);
+        // Under one step is below what the radio resolves, so it is ignored.
+        app.follow_dial(rx0 + 9);
+        assert_eq!(app.tracking().unwrap().nudge_hz, 0);
+
+        // The operator turns the dial up 150 Hz.
+        app.follow_dial(rx0 + 150);
+        assert_eq!(app.tracking().unwrap().nudge_hz, 150);
+        let next = app.tick(at(19, 44, 0)).unwrap();
+        assert!((rx(&next).unwrap() as i64 - (rx0 + 150) as i64).abs() <= 25);
+        // Inverting transponder: the uplink goes the other way.
+        assert!((tx(&next).unwrap() as i64 - (tx0 - 150) as i64).abs() <= 25);
+    }
+
+    #[test]
+    fn below_the_horizon_the_dial_is_followed_and_aos_starts_doppler_on_top_of_it() {
+        let mut app = app_on_the_rs44_transponder();
+        press(&mut app, KeyCode::Char('t'));
+        let below = at(19, 0, 0);
+        let setup = app.tick(below).unwrap();
+        let nominal = rx(&setup).unwrap();
+        // The live panel shows what is sent: uncorrected, and flagged as such.
+        let live = app.live(below).unwrap();
+        assert!(!live.doppler_corrected);
+        assert_eq!(live.rx_hz, Some(nominal));
+        // No Doppler below the horizon, so time passing sends nothing.
+        assert_eq!(app.tick(at(19, 0, 30)).unwrap(), []);
+
+        // Hunting for a signal by hand: the dial still moves the nudge.
+        app.follow_dial(nominal + 300);
+        let tuned = app.tick(at(19, 0, 30)).unwrap();
+        assert_eq!(rx(&tuned), Some(nominal + 300));
+        assert_eq!(app.tracking().unwrap().nudge_hz, 300);
+
+        // Once up, Doppler is applied around the tuned position, not back to nominal.
+        let aos = at(19, 44, 0);
+        assert!(app.live(aos).unwrap().doppler_corrected);
+        let up = app.tick(aos).unwrap();
+        assert!((rx(&up).unwrap() as i64 - (435_646_322 + 300)).abs() <= 25);
+    }
+
+    #[test]
+    fn the_dial_is_ignored_with_nothing_tracked_and_on_single_frequency_transmitters() {
+        let mut idle = app();
+        idle.follow_dial(145_825_000);
+        assert!(idle.tracking().is_none());
+
+        let mut fm = app();
+        press(&mut fm, KeyCode::Char('t'));
+        fm.tick(at(13, 15, 0)).unwrap();
+        fm.follow_dial(145_900_000);
+        assert_eq!(fm.tracking().unwrap().nudge_hz, 0);
+    }
+
+    #[test]
     fn t_again_stops_tracking() {
         let mut app = app();
         press(&mut app, KeyCode::Char('t'));

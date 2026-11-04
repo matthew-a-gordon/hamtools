@@ -78,6 +78,7 @@ async fn a_tracker_step_drives_the_rig_end_to_end() {
             lon_deg: -85.71,
             alt_m: 250.0,
         },
+        0.0,
     );
     let plan = parse_transmitters(include_str!("fixtures/satnogs_transmitters.json"))
         .unwrap()

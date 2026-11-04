@@ -302,6 +302,18 @@ fn run(terminal: &mut DefaultTerminal, rt: &Runtime, ctx: &Context) -> Result<()
                     app.resync();
                 }
             }
+            if app.tracking().is_some()
+                && let Some(rig) = &mut client
+            {
+                match with_timeout(rt, rig.get_freq()) {
+                    Ok(hz) => app.follow_dial(hz),
+                    Err(e) => {
+                        app.set_status(Some(format!("rig: {e}")));
+                        rig_status = format!("lost ({e})");
+                        client = None;
+                    }
+                }
+            }
             if let Some(rig) = &mut client {
                 match app.tick(now) {
                     Ok(commands) if !commands.is_empty() => {

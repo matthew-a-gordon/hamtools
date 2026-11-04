@@ -31,7 +31,7 @@ fn tracker(index: usize) -> Tracker {
     let sat = parse_tles(include_str!("fixtures/sample.tle"))
         .unwrap()
         .remove(index);
-    Tracker::new(sat, OBSERVER)
+    Tracker::new(sat, OBSERVER, 0.0)
 }
 
 fn iss_fm() -> Transmitter {
@@ -106,19 +106,6 @@ fn as_the_satellite_moves_only_the_frequencies_are_resent() {
 }
 
 #[test]
-fn below_the_horizon_the_radio_is_set_up_once_then_left_alone() {
-    let mut tracker = tracker(0);
-    let plan = iss_fm().plan(0).unwrap();
-
-    let first = tracker.step(&plan, at(12, 0, 0)).unwrap();
-    let later = tracker.step(&plan, at(12, 0, 30)).unwrap();
-
-    close(rx(&first).unwrap(), 145_797_243.97);
-    assert_eq!(first.len(), 5, "{first:?}");
-    assert_eq!(later, []);
-}
-
-#[test]
 fn updates_resume_when_the_satellite_rises() {
     let mut tracker = tracker(0);
     let plan = iss_fm().plan(0).unwrap();
@@ -181,4 +168,36 @@ fn switching_to_a_different_transmitter_resends_its_modes() {
     assert!(commands.contains(&RigCommand::TxMode(RigMode::Lsb)));
     close(rx(&commands).unwrap(), 435_646_322.71);
     close(tx(&commands).unwrap(), 145_962_881.52);
+}
+
+#[test]
+fn below_the_horizon_the_radio_sits_on_the_plan_frequencies_without_doppler() {
+    let mut tracker = tracker(0);
+    let plan = iss_fm().plan(0).unwrap();
+
+    let first = tracker.step(&plan, at(12, 0, 0)).unwrap();
+    let later = tracker.step(&plan, at(12, 0, 30)).unwrap();
+
+    assert_eq!(rx(&first), Some(145_800_000));
+    assert_eq!(tx(&first), Some(144_490_000));
+    assert_eq!(first.len(), 5, "{first:?}");
+    assert_eq!(later, []);
+}
+
+#[test]
+fn doppler_starts_at_the_minimum_elevation_not_the_horizon() {
+    let sat = parse_tles(include_str!("fixtures/sample.tle"))
+        .unwrap()
+        .remove(0);
+    let plan = iss_fm().plan(0).unwrap();
+
+    // The ISS is up at 13:15, but never as high as 89 degrees from here.
+    let mut picky = Tracker::new(sat.clone(), OBSERVER, 89.0);
+    let commands = picky.step(&plan, at(13, 15, 0)).unwrap();
+    assert_eq!(rx(&commands), Some(145_800_000));
+    assert_eq!(tx(&commands), Some(144_490_000));
+
+    let mut open = Tracker::new(sat, OBSERVER, 0.0);
+    let commands = open.step(&plan, at(13, 15, 0)).unwrap();
+    close(rx(&commands).unwrap(), 145_803_189.04);
 }

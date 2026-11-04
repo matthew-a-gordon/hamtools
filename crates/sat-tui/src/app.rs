@@ -8,7 +8,7 @@ use orbit::{Observer, Pass, PropagationError, Satellite};
 use ratatui::crossterm::event::{KeyCode, KeyEvent};
 
 use crate::satnogs::{Plan, Transmitter};
-use crate::tracker::{RigCommand, Tracker};
+use crate::tracker::{RigCommand, STEP_HZ, Tracker, doppler_range_rate};
 
 /// Tunables that shape the pass list.
 #[derive(Debug, Clone)]
@@ -71,6 +71,7 @@ pub struct App {
     transmitter: usize,
     show_unsupported: bool,
     observer: Observer,
+    min_elevation_deg: f64,
     status: Option<String>,
     tracking: Option<Tracking>,
     nudge_hz: i64,
@@ -130,6 +131,7 @@ impl App {
             transmitter: 0,
             show_unsupported: false,
             observer,
+            min_elevation_deg: settings.min_elevation_deg,
             status: None,
             tracking: None,
             nudge_hz: 0,
@@ -257,6 +259,26 @@ impl App {
         }
     }
 
+    /// Fold a turn of the radio's dial into the nudge. `rx_hz` is the receive frequency read back
+    /// from the rig; anything but a step away from what tracking last sent means the operator
+    /// moved the dial (the FT-847 moves its transmit VFO with it), so tracking carries on from
+    /// there instead of overwriting it. Only transponders with a passband have anything to nudge.
+    pub fn follow_dial(&mut self, rx_hz: u64) {
+        let Some(tracking) = &self.tracking else {
+            return;
+        };
+        let Some(sent) = tracking.tracker.sent_rx_hz() else {
+            return;
+        };
+        if tracking.transmitter.downlink.high_hz.is_none() {
+            return;
+        }
+        let turned = rx_hz as i64 - sent as i64;
+        if turned.unsigned_abs() as f64 >= STEP_HZ {
+            self.nudge_hz += turned;
+        }
+    }
+
     pub fn tracking(&self) -> Option<TrackingView> {
         self.tracking.as_ref().map(|t| TrackingView {
             satellite: t.satellite.clone(),
@@ -285,7 +307,7 @@ impl App {
         };
         let sat_index = self.rows[self.row].sat_index;
         let tracking = Tracking {
-            tracker: Tracker::new(entry.sat.clone(), self.observer),
+            tracker: Tracker::new(entry.sat.clone(), self.observer, self.min_elevation_deg),
             transmitter: transmitter.clone(),
             satellite: entry.name.clone(),
             sat_index,
@@ -316,7 +338,9 @@ pub struct Live {
     pub elevation_deg: f64,
     pub range_km: f64,
     pub range_rate_km_s: f64,
-    /// Doppler-corrected, on the radio's 10 Hz grid; `None` with no usable transmitter in focus.
+    /// Whether rx_hz and tx_hz carry Doppler correction: only from AOS (the minimum elevation).
+    pub doppler_corrected: bool,
+    /// On the radio's 10 Hz grid; `None` with no usable transmitter in focus.
     pub rx_hz: Option<u64>,
     pub tx_hz: Option<u64>,
     pub plan: Option<Plan>,
@@ -333,21 +357,25 @@ impl App {
             None => self.chosen_transmitter().and_then(|(_, t)| t.plan(0)),
         };
         let step = |hz: f64| ((hz / 10.0).round() * 10.0) as u64;
+        let doppler_corrected = look.elevation_deg >= self.min_elevation_deg;
+        let corrected_rate = doppler_range_rate(
+            look.elevation_deg,
+            self.min_elevation_deg,
+            look.range_rate_km_s,
+        );
         Some(Live {
+            doppler_corrected,
             azimuth_deg: look.azimuth_deg,
             elevation_deg: look.elevation_deg,
             range_km: look.range_km,
             range_rate_km_s: look.range_rate_km_s,
-            rx_hz: plan.as_ref().map(|p| {
-                step(orbit::downlink_hz(
-                    p.downlink_hz as f64,
-                    look.range_rate_km_s,
-                ))
-            }),
+            rx_hz: plan
+                .as_ref()
+                .map(|p| step(orbit::downlink_hz(p.downlink_hz as f64, corrected_rate))),
             tx_hz: plan
                 .as_ref()
                 .and_then(|p| p.uplink_hz)
-                .map(|hz| step(orbit::uplink_hz(hz as f64, look.range_rate_km_s))),
+                .map(|hz| step(orbit::uplink_hz(hz as f64, corrected_rate))),
             plan,
         })
     }

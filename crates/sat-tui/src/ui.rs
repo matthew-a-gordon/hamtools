@@ -57,24 +57,34 @@ fn border(active: bool) -> Style {
     }
 }
 
+/// Green while the satellite is above the minimum elevation and the frequencies carry Doppler
+/// correction; yellow below the
+/// minimum elevation, where they are the transponder centre or published frequency.
+fn horizon_style(doppler_corrected: bool) -> Style {
+    Style::default().fg(if doppler_corrected {
+        Color::Green
+    } else {
+        Color::Yellow
+    })
+}
+
 fn frequency_lines(live: &Live) -> Vec<Line<'static>> {
     let Some(plan) = &live.plan else {
         return vec![Line::from("pick a transmitter (Tab)")];
     };
+    let style = horizon_style(live.doppler_corrected);
     let mut lines = Vec::new();
     if let Some(hz) = live.rx_hz {
-        lines.push(Line::from(format!(
-            "RX {:>15} Hz  {}",
-            grouped(hz),
-            plan.rx_mode.name()
+        lines.push(Line::from(Span::styled(
+            format!("RX {:>15} Hz  {}", grouped(hz), plan.rx_mode.name()),
+            style,
         )));
     }
     match (live.tx_hz, plan.tx_mode) {
         (Some(hz), Some(mode)) => {
-            lines.push(Line::from(format!(
-                "TX {:>15} Hz  {}",
-                grouped(hz),
-                mode.name()
+            lines.push(Line::from(Span::styled(
+                format!("TX {:>15} Hz  {}", grouped(hz), mode.name()),
+                style,
             )));
         }
         _ => lines.push(Line::from("TX   (receive only)")),
@@ -302,9 +312,9 @@ fn render_live(app: &App, now: DateTime<Utc>, area: Rect, frame: &mut Frame) {
         } else {
             "pass over".to_string()
         }));
-        lines.push(Line::from(format!(
-            "Az {:.1}°  El {:.1}°",
-            live.azimuth_deg, live.elevation_deg
+        lines.push(Line::from(Span::styled(
+            format!("Az {:.1}°  El {:.1}°", live.azimuth_deg, live.elevation_deg),
+            horizon_style(live.doppler_corrected),
         )));
         lines.push(Line::from(format!(
             "Range {:.0} km  Rate {:+.2} km/s",
@@ -324,13 +334,24 @@ fn render_tracking(app: &App, now: DateTime<Utc>, area: Rect, frame: &mut Frame)
         return;
     };
     let green = Style::default().fg(Color::Green);
-    let mut lines = vec![Line::from(Span::styled(
+    let mut heading = vec![Span::styled(
         format!(
             "TRACKING {}  nudge {:+} Hz",
             tracking.transmitter, tracking.nudge_hz
         ),
         green.add_modifier(Modifier::BOLD),
-    ))];
+    )];
+    if let Some(live) = app.live(now) {
+        heading.push(Span::styled(
+            if live.doppler_corrected {
+                "  Doppler on"
+            } else {
+                "  before AOS: no Doppler"
+            },
+            horizon_style(live.doppler_corrected),
+        ));
+    }
+    let mut lines = vec![Line::from(heading)];
     if let Some(countdown) = app.tracked_countdown(now) {
         let text = match countdown {
             Countdown::Before { aos_in, los_in } => format!(

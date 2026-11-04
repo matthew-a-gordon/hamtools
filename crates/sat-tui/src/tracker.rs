@@ -20,10 +20,20 @@ pub enum RigCommand {
 }
 
 /// The FT-847 tunes in 10 Hz steps.
-const STEP_HZ: f64 = 10.0;
+pub const STEP_HZ: f64 = 10.0;
 
 fn to_radio_step(hz: f64) -> u64 {
     ((hz / STEP_HZ).round() * STEP_HZ) as u64
+}
+
+/// The range rate to correct Doppler for: the real one from AOS (the minimum elevation), none
+/// before it, where the radio sits on the plan's own frequencies and the operator tunes by hand.
+pub fn doppler_range_rate(elevation_deg: f64, min_elevation_deg: f64, range_rate_km_s: f64) -> f64 {
+    if elevation_deg >= min_elevation_deg {
+        range_rate_km_s
+    } else {
+        0.0
+    }
 }
 
 /// What has been sent to the radio so far.
@@ -39,34 +49,33 @@ struct Sent {
 pub struct Tracker {
     sat: Satellite,
     observer: Observer,
+    min_elevation_deg: f64,
     sent: Sent,
-    last_plan: Option<Plan>,
 }
 
 impl Tracker {
-    pub fn new(sat: Satellite, observer: Observer) -> Self {
+    pub fn new(sat: Satellite, observer: Observer, min_elevation_deg: f64) -> Self {
         Self {
             sat,
             observer,
+            min_elevation_deg,
             sent: Sent::default(),
-            last_plan: None,
         }
     }
 
-    /// Commands needed at `now` to follow `plan`, Doppler-corrected. The first step sets up the
-    /// radio whatever the elevation. After that, frequencies are only updated while the satellite
-    /// is above the horizon, though a change of plan (another transmitter, a nudge) is always
-    /// applied.
+    /// Commands needed at `now` to follow `plan`. Before AOS the radio sits on the plan's
+    /// own frequencies; from AOS they are Doppler-corrected (see [`doppler_range_rate`]).
     pub fn step(
         &mut self,
         plan: &Plan,
         now: DateTime<Utc>,
     ) -> Result<Vec<RigCommand>, PropagationError> {
         let look = self.sat.look_angle(&self.observer, now)?;
-        let plan_changed = self.last_plan.as_ref() != Some(plan);
-        if !plan_changed && look.elevation_deg < 0.0 {
-            return Ok(Vec::new());
-        }
+        let range_rate_km_s = doppler_range_rate(
+            look.elevation_deg,
+            self.min_elevation_deg,
+            look.range_rate_km_s,
+        );
 
         let mut commands = Vec::new();
         if plan.uplink_hz.is_some() && !self.sent.sat_mode {
@@ -84,29 +93,32 @@ impl Tracker {
             self.sent.tx_mode = Some(mode);
         }
 
-        let rx = to_radio_step(downlink_hz(plan.downlink_hz as f64, look.range_rate_km_s));
+        let rx = to_radio_step(downlink_hz(plan.downlink_hz as f64, range_rate_km_s));
         if self.sent.rx_hz != Some(rx) {
             commands.push(RigCommand::RxFreq(rx));
             self.sent.rx_hz = Some(rx);
         }
         if let Some(nominal) = plan.uplink_hz {
-            let tx = to_radio_step(uplink_hz(nominal as f64, look.range_rate_km_s));
+            let tx = to_radio_step(uplink_hz(nominal as f64, range_rate_km_s));
             if self.sent.tx_hz != Some(tx) {
                 commands.push(RigCommand::TxFreq(tx));
                 self.sent.tx_hz = Some(tx);
             }
         }
 
-        self.last_plan = Some(plan.clone());
         Ok(commands)
     }
 }
 
 impl Tracker {
+    /// The receive frequency last sent to the radio, if any.
+    pub fn sent_rx_hz(&self) -> Option<u64> {
+        self.sent.rx_hz
+    }
+
     /// Forget what was sent, so the next step sets the radio up from scratch. For use after the
     /// rig connection has been lost and restored.
     pub fn reset(&mut self) {
         self.sent = Sent::default();
-        self.last_plan = None;
     }
 }
