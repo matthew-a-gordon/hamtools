@@ -185,6 +185,8 @@ fn hint(app: &App) -> &'static str {
         Focus::Strip if app.panel_active() => {
             "f freq  </> tune  ^/v step  m/M mode  v VFO  s/S split\nl log  L list  c config  Tab input  q quit"
         }
-        Focus::Strip => "f freq  </> tune  ^/v step  m/M mode  v VFO  s/S split\nl log  L list  c config  q quit",
+        Focus::Strip => {
+            "f freq  </> tune  ^/v step  m/M mode  v VFO  s/S split\nl log  L list  c config  q quit"
+        }
     }
 }
