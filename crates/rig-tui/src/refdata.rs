@@ -360,9 +360,9 @@ impl ReferenceData {
             }
         };
         for key in self.cached_keys(PARK_PREFIX, Some(PARK_LIST_PREFIX)) {
-            if let Some((snap, Ok(p))) =
-                self.parse_snapshot(&key, |t| parse_park_detail(t).map(|e| e.into_iter().collect()))
-            {
+            if let Some((snap, Ok(p))) = self.parse_snapshot(&key, |t| {
+                parse_park_detail(t).map(|e| e.into_iter().collect())
+            }) {
                 push(&p, &snap);
             }
         }

@@ -262,7 +262,10 @@ fn the_summit_list_download_follows_a_redirect_to_another_host() {
     client.sync();
     assert_eq!(
         *t.0.lock().unwrap(),
-        [SUMMIT_LIST_URL, "https://storage.sota.org.uk/summitslist.csv"]
+        [
+            SUMMIT_LIST_URL,
+            "https://storage.sota.org.uk/summitslist.csv"
+        ]
     );
     assert!(matches!(
         data.lookup("W4C/CM-001", clock.unix()),
