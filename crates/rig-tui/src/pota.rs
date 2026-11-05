@@ -22,11 +22,10 @@ use ratatui::widgets::{Block, Borders, Paragraph};
 use crate::activity::{
     Activity, ActivityCtx, ActivityOutput, HostRequest, LogPrefill, TuneRequest, Worked,
 };
-use crate::cw::CwPanel;
+use crate::general::General;
 use crate::geo::distance_km;
 use crate::keys::{Action, Key, KeyEntry, Scope};
-use crate::logging::default_log_mode;
-use crate::panel::{LogDefaults, LogMode, ModePanel, PanelCommand, PanelCtx, Role};
+use crate::panel::{LogDefaults, LogMode, Role};
 use crate::reference::{Feed, Pace, ReferenceClient, SPOTS_EVERY, Submit};
 use crate::rig::{Command, RigMode};
 use crate::spots::{ModeGroup, Spot, mode_group, parse_spots, rig_mode_for};
@@ -91,8 +90,8 @@ pub struct PotaHunter {
     /// candidate.
     my_refs: Vec<String>,
     request: Option<HostRequest>,
-    panels: Vec<Box<dyn ModePanel>>,
-    panel_focus: bool,
+    /// The CW panel and its per-rig state, shared with General and the Chaser.
+    inner: General,
     /// The `/` search line has the keyboard.
     searching: bool,
 }
@@ -114,8 +113,7 @@ impl PotaHunter {
             selected: None,
             my_refs: Vec::new(),
             request: None,
-            panels: vec![Box::new(CwPanel::new())],
-            panel_focus: false,
+            inner: General::new(),
             searching: false,
         }
     }
@@ -123,20 +121,6 @@ impl PotaHunter {
     /// The references of the Activation in progress, if any (marks park-to-park candidates).
     pub fn set_my_refs(&mut self, refs: Vec<String>) {
         self.my_refs = refs;
-    }
-
-    fn active_panel(&self, ctx: &ActivityCtx) -> Option<usize> {
-        let mode = ctx.rig_mode?;
-        self.panels.iter().position(|p| p.applies(mode))
-    }
-
-    fn panel_ctx<'a>(&self, ctx: &ActivityCtx<'a>, focused: bool) -> PanelCtx<'a> {
-        PanelCtx {
-            connected: ctx.connected,
-            live: ctx.live,
-            soft_keys: ctx.soft_keys,
-            focused,
-        }
     }
 
     fn refresh_snapshot(&mut self) {
@@ -425,6 +409,14 @@ impl Activity for PotaHunter {
         true
     }
 
+    fn sending(&self) -> bool {
+        self.inner.sending()
+    }
+
+    fn switch_rig(&mut self, from: usize, to: usize) {
+        self.inner.switch_rig(from, to);
+    }
+
     fn take_request(&mut self) -> Option<HostRequest> {
         self.request.take()
     }
@@ -479,24 +471,8 @@ impl Activity for PotaHunter {
             }
             return Some(ActivityOutput::default());
         }
-        let panel = self.active_panel(ctx);
-        let focused = self.text_focus(ctx);
-        if matches!(key.code, KeyCode::Esc | KeyCode::Tab) && focused {
-            self.panel_focus = false;
-            return Some(ActivityOutput::default());
-        }
-        if let Some(index) = panel
-            && (focused || matches!(key.code, KeyCode::F(1..=6)))
-        {
-            let pctx = self.panel_ctx(ctx, self.panel_focus);
-            let mut out = ActivityOutput::default();
-            for command in self.panels[index].handle_key(key, &pctx) {
-                match command {
-                    PanelCommand::Send(text) => out.commands.push(Command::Send(text)),
-                    PanelCommand::Status(text) => out.status = Some(text),
-                }
-            }
-            return Some(out);
+        if self.inner.text_focus(ctx) || matches!(key.code, KeyCode::F(1..=6)) {
+            return self.inner.on_key(key, ctx);
         }
         if key
             .modifiers
@@ -507,11 +483,10 @@ impl Activity for PotaHunter {
         let mut out = ActivityOutput::default();
         match key.code {
             KeyCode::Tab => {
-                let index = panel?;
-                if !self.panels[index].captures_text() {
+                if !self.inner.has_panel(ctx) {
                     return None;
                 }
-                self.panel_focus = true;
+                return self.inner.on_key(key, ctx);
             }
             KeyCode::Char('j') | KeyCode::Down => self.move_selection(ctx, 1),
             KeyCode::Char('k') | KeyCode::Up => self.move_selection(ctx, -1),
@@ -575,57 +550,30 @@ impl Activity for PotaHunter {
             self.last_check = Some(now);
             self.refresh_snapshot();
         }
-        if !ctx.connected {
-            return Vec::new();
-        }
-        match self.active_panel(ctx) {
-            Some(index) => self.panels[index]
-                .due_requests()
-                .into_iter()
-                .map(Command::Panel)
-                .collect(),
-            None => Vec::new(),
-        }
+        self.inner.on_tick(now, ctx)
     }
 
     fn on_reply(&mut self, request: &str, reply: Result<String, String>) -> Result<(), String> {
-        let mut result = Ok(());
-        for panel in &mut self.panels {
-            if let Err(why) = panel.on_reply(request, reply.clone()) {
-                result = Err(why);
-            }
-        }
-        result
+        self.inner.on_reply(request, reply)
     }
 
     fn on_mode(&mut self, ctx: &ActivityCtx) {
-        if self.active_panel(ctx).is_none() {
-            self.panel_focus = false;
-        }
+        self.inner.on_mode(ctx);
     }
 
     fn text_focus(&self, ctx: &ActivityCtx) -> bool {
         if self.searching {
             return true;
         }
-        match self.active_panel(ctx) {
-            Some(i) => self.panel_focus && self.panels[i].captures_text(),
-            None => false,
-        }
+        self.inner.text_focus(ctx)
     }
 
     fn has_panel(&self, ctx: &ActivityCtx) -> bool {
-        self.active_panel(ctx).is_some()
+        self.inner.has_panel(ctx)
     }
 
     fn log_hints(&self, mode: &RigMode) -> (Option<LogMode>, LogDefaults) {
-        let (log_mode, mut defaults) = match self.panels.iter().find(|p| p.applies(mode)) {
-            Some(panel) => (
-                panel.logbook_mode(mode).or_else(|| default_log_mode(mode)),
-                panel.log_defaults(),
-            ),
-            None => (default_log_mode(mode), LogDefaults::default()),
-        };
+        let (log_mode, mut defaults) = self.inner.log_hints(mode);
         defaults.role = Role::PotaHunter;
         (log_mode, defaults)
     }
@@ -635,11 +583,7 @@ impl Activity for PotaHunter {
     }
 
     fn quit_warnings(&self) -> Vec<String> {
-        if self.panels.iter().any(|p| p.has_unsent_input()) {
-            vec!["Unsent CW input will be lost.".to_string()]
-        } else {
-            Vec::new()
-        }
+        self.inner.quit_warnings()
     }
 
     fn hint(&self, ctx: &ActivityCtx) -> &'static str {
@@ -657,13 +601,11 @@ impl Activity for PotaHunter {
         if let Some(pane) = contacts {
             crate::general::render_todays_contacts(ctx, frame, pane);
         }
-        let panel = self
-            .active_panel(ctx)
-            .filter(|_| area.height >= PANEL_MIN_BODY);
+        let panel = self.inner.has_panel(ctx) && area.height >= PANEL_MIN_BODY;
         let [list_area, detail_area, panel_area, count_area] = Layout::vertical([
             Constraint::Min(4),
             Constraint::Length(1),
-            Constraint::Length(if panel.is_some() { PANEL_HEIGHT } else { 0 }),
+            Constraint::Length(if panel { PANEL_HEIGHT } else { 0 }),
             Constraint::Length(1),
         ])
         .areas(area);
@@ -712,9 +654,8 @@ impl Activity for PotaHunter {
             detail_area,
         );
 
-        if let Some(index) = panel {
-            let pctx = self.panel_ctx(ctx, self.text_focus(ctx));
-            self.panels[index].render(frame, panel_area, &pctx);
+        if panel {
+            self.inner.render_panel(frame, panel_area, ctx);
         }
 
         let total = self.live_spots(ctx.utc.timestamp()).count();
