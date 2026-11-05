@@ -18,6 +18,7 @@ use ratatui::text::Line;
 use ratatui::widgets::{Paragraph, Wrap};
 
 use crate::export::{self, Preview, Request, UNVERIFIED, WriteError};
+use crate::refdata::parse_locations;
 use crate::style::{dim, red, yellow};
 
 enum Stage {
@@ -34,11 +35,36 @@ pub(crate) struct ExportModal {
     locations: BTreeMap<String, String>,
     dir: Option<PathBuf>,
     other_dates: bool,
+    /// The states of the plan's multi-state parks, the primary park's first. Empty when no
+    /// park spans more than one, so nothing is asked.
+    states: Vec<String>,
+    /// Which of `states` is the `MY_STATE` choice.
+    state_idx: usize,
     preview: Preview,
     stage: Stage,
     scroll: usize,
     /// The last result of a write, or why none could be made.
     notice: Option<(String, bool)>,
+}
+
+/// The states to choose from: those of every park spanning more than one, the primary park's
+/// first. A park's cached or snapshot location is `US-IN` or `US-IN,US-MI`.
+fn multi_state_choices(plan: &Plan, locations: &BTreeMap<String, String>) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    for r in &plan.references {
+        let Some(loc) = locations.get(&r.to_ascii_uppercase()) else {
+            continue;
+        };
+        let states = parse_locations(loc);
+        if states.len() > 1 {
+            for s in states {
+                if !out.contains(&s) {
+                    out.push(s);
+                }
+            }
+        }
+    }
+    out
 }
 
 impl ExportModal {
@@ -49,6 +75,7 @@ impl ExportModal {
         locations: BTreeMap<String, String>,
         dir: Option<PathBuf>,
     ) -> Self {
+        let states = multi_state_choices(&plan, &locations);
         let mut modal = Self {
             plan,
             operator,
@@ -56,6 +83,8 @@ impl ExportModal {
             locations,
             dir,
             other_dates: false,
+            states,
+            state_idx: 0,
             preview: Preview::default(),
             stage: Stage::Preview,
             scroll: 0,
@@ -74,7 +103,7 @@ impl ExportModal {
             records: &self.records,
             include_other_dates: self.other_dates,
             location_of: &lookup,
-            my_state: None,
+            my_state: self.states.get(self.state_idx).map(String::as_str),
         });
         self.scroll = 0;
     }
@@ -115,6 +144,12 @@ impl ExportModal {
                 }
                 KeyCode::Char('d') => {
                     self.other_dates = !self.other_dates;
+                    self.notice = None;
+                    self.rebuild();
+                    false
+                }
+                KeyCode::Char('s') if !self.states.is_empty() => {
+                    self.state_idx = (self.state_idx + 1) % self.states.len();
                     self.notice = None;
                     self.rebuild();
                     false
@@ -189,6 +224,9 @@ impl ExportModal {
             Some(d) => out.push(Line::styled(format!("Directory: {}", d.display()), dim())),
             None => out.push(Line::styled("Directory: none (set [export] dir)", red())),
         }
+        if let Some(state) = self.states.get(self.state_idx) {
+            out.push(Line::raw(format!("State: {state}  (s changes MY_STATE)")));
+        }
         for f in &p.files {
             out.push(Line::raw(String::new()));
             out.push(Line::raw(format!(
@@ -261,7 +299,11 @@ impl ExportModal {
                     _ => Line::raw(String::new()),
                 };
                 let keys = Line::styled(
-                    "Enter write   d other dates   ? unverified   Up/Down scroll   Esc close",
+                    if self.states.is_empty() {
+                        "Enter write   d other dates   ? unverified   Up/Down scroll   Esc close"
+                    } else {
+                        "Enter write   s state   d other dates   ? unverified   Esc close"
+                    },
                     dim(),
                 );
                 frame.render_widget(Paragraph::new(vec![first, keys]), foot);
