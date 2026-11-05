@@ -19,12 +19,12 @@ use crate::tracker::{POTA_TARGET, Program, SOTA_TARGET, my_refs};
 /// What the preview help says nobody has checked yet. Shown in the modal and kept in step with
 /// the ticket notes; the first real upload is the test.
 pub const UNVERIFIED: [&str; 6] = [
-    "POTA: whether the uploader accepts the fields written here (no official spec was found)",
-    "POTA: how multi-state parks are filed (one file per state is a guess)",
-    "POTA: whether an n-fer wants one file per park (this writes one per park)",
-    "POTA: its exact duplicate rule (call, band and mode is assumed)",
-    "SOTA: CSV V2 date (DD/MM/YY) and the band name in the frequency column",
-    "SOTA: whether summit-to-summit and quoted notes upload as written",
+    "POTA: whether the uploader accepts the fields written here (the API is undocumented)",
+    "POTA: a multi-state park is one file with MY_STATE; the -US-MI name suffix is documented for email only",
+    "POTA: a slash in a callsign becomes _ in the file name (the docs are silent)",
+    "POTA: its exact duplicate rule (call, band, date and mode or submode is assumed)",
+    "SOTA: the server's acceptance of a frequency such as 7.032MHz for a band outside its list",
+    "SOTA: LF line ends (the page says CR LF; the uploader probably autodetects)",
 ];
 
 /// Everything [`build`] needs from the host.
@@ -37,6 +37,9 @@ pub struct Request<'a> {
     pub include_other_dates: bool,
     /// A park's cached location (`US-IN`, or `US-IN,US-MI`), if known. Used for `MY_STATE`.
     pub location_of: &'a dyn Fn(&str) -> Option<String>,
+    /// Where the operator was for a multi-state park, as a full location (`US-MI`). Ignored
+    /// (with a warning) if the park is not in it; without it, the uploader asks.
+    pub my_state: Option<&'a str>,
 }
 
 /// One file to write.
@@ -241,7 +244,7 @@ fn adi_header() -> String {
     out
 }
 
-/// The state codes of a park location: `US-IN` gives `IN`; `US-IN,US-MI` gives both.
+/// The locations of a park: `US-IN` gives `US-IN`; `US-IN,US-MI` gives both (upper case).
 fn states_of(location: &str) -> Vec<String> {
     location
         .split(',')
@@ -250,7 +253,7 @@ fn states_of(location: &str) -> Vec<String> {
             let ok = country.len() == 2
                 && state.len() == 2
                 && state.bytes().all(|b| b.is_ascii_alphabetic());
-            ok.then(|| state.to_ascii_uppercase())
+            ok.then(|| format!("{country}-{state}").to_ascii_uppercase())
         })
         .collect()
 }
@@ -277,7 +280,11 @@ fn pota_record(r: &Record, operator: &str, park: &str, state: Option<&str>) -> S
     field(&mut out, "MY_SIG", "POTA");
     field(&mut out, "MY_SIG_INFO", park);
     if let Some(state) = state {
-        field(&mut out, "MY_STATE", state);
+        field(
+            &mut out,
+            "MY_STATE",
+            state.rsplit('-').next().unwrap_or(state),
+        );
     }
     if get("SIG").eq_ignore_ascii_case("POTA") && !get("SIG_INFO").is_empty() {
         field(&mut out, "SIG", "POTA");
@@ -318,7 +325,13 @@ fn build_pota(req: &Request<'_>, refs: &[String], selected: &Selected<'_>, previ
         // Duplicates by call, band and mode, and the count that qualifies.
         let mut keys: Vec<(String, String, String, DateTime<Utc>)> = Vec::new();
         for (r, start, _) in &contacts {
-            let key = (upper(r.call()), upper(r.band()), upper(r.mode()));
+            let submode = upper(r.get("SUBMODE"));
+            let mode = if submode.is_empty() {
+                upper(r.mode())
+            } else {
+                submode
+            };
+            let key = (upper(r.call()), upper(r.band()), mode);
             if let Some(first) = keys
                 .iter()
                 .find(|k| (&k.0, &k.1, &k.2) == (&key.0, &key.1, &key.2))
@@ -349,35 +362,49 @@ fn build_pota(req: &Request<'_>, refs: &[String], selected: &Selected<'_>, previ
                 "{park}: no cached state, so MY_STATE is left out (cache the park with a refresh)"
             ));
         }
-        let variants: Vec<Option<String>> = match states.len() {
-            0 => vec![None],
-            _ => states.iter().cloned().map(Some).collect(),
-        };
-        if states.len() > 1 {
-            preview.warnings.push(format!(
-                "{park}: spans {} states; one file per state, state added to the name",
-                states.len()
-            ));
-        }
-        for state in &variants {
-            let mut body = String::new();
-            let mut lines = Vec::new();
-            for (r, _, _) in &contacts {
-                let line = pota_record(r, req.operator, park, state.as_deref());
-                lines.push(line.trim_end().to_string());
-                body.push_str(&line);
+        // One file per park. A Contact is never repeated under another state: it would count
+        // under each. For a multi-state park the operator says where they were, else the
+        // uploader asks.
+        let chosen: Option<String> = match (states.len(), req.my_state) {
+            (1, _) => Some(states[0].clone()),
+            (0, _) => None,
+            (_, Some(want)) => {
+                let want = want.trim().to_ascii_uppercase();
+                if states.contains(&want) {
+                    Some(want)
+                } else {
+                    preview.warnings.push(format!(
+                        "{park}: {want} is not one of its locations ({}); the uploader asks which state",
+                        states.join(", ")
+                    ));
+                    None
+                }
             }
-            let suffix = match (state, states.len() > 1) {
-                (Some(s), true) => format!("-{s}"),
-                _ => String::new(),
-            };
-            preview.files.push(ExportFile {
-                name: format!("{call}@{}-{day}{suffix}.adi", safe(park)),
-                contents: format!("{}{body}", adi_header()),
-                contacts: contacts.len(),
-                head: lines.into_iter().take(3).collect(),
-            });
+            (_, None) => {
+                preview.warnings.push(format!(
+                    "{park}: spans {}; the uploader asks which state (one file, no MY_STATE)",
+                    states.join(", ")
+                ));
+                None
+            }
+        };
+        let mut body = String::new();
+        let mut lines = Vec::new();
+        for (r, _, _) in &contacts {
+            let line = pota_record(r, req.operator, park, chosen.as_deref());
+            lines.push(line.trim_end().to_string());
+            body.push_str(&line);
         }
+        let suffix = match (&chosen, states.len() > 1) {
+            (Some(s), true) => format!("-{s}"),
+            _ => String::new(),
+        };
+        preview.files.push(ExportFile {
+            name: format!("{call}@{}-{day}{suffix}.adi", safe(park)),
+            contents: format!("{}{body}", adi_header()),
+            contacts: contacts.len(),
+            head: lines.into_iter().take(3).collect(),
+        });
     }
 }
 
@@ -394,6 +421,37 @@ pub fn sota_mode(mode: &str) -> &'static str {
         | "DATA" | "HELL" | "THOR" | "CONTESTIA" | "MT63" | "DOMINO" | "FSK441" | "JT4"
         | "WSPR" => "Data",
         _ => "Other",
+    }
+}
+
+/// SOTA's band names (the frequency column): its list, else the actual frequency in MHz.
+fn sota_band(band: &str, freq: &str) -> String {
+    let listed = match band.trim().to_ascii_lowercase().as_str() {
+        "160m" => "1.8MHz",
+        "80m" => "3.5MHz",
+        "60m" => "5MHz",
+        "40m" => "7MHz",
+        "30m" => "10MHz",
+        "20m" => "14MHz",
+        "17m" => "18MHz",
+        "15m" => "21MHz",
+        "12m" => "24MHz",
+        "10m" => "28MHz",
+        "6m" => "50MHz",
+        "2m" => "144MHz",
+        "70cm" => "432MHz",
+        "23cm" => "1240MHz",
+        _ => "",
+    };
+    if !listed.is_empty() {
+        return listed.to_string();
+    }
+    match freq.trim().parse::<f64>() {
+        Ok(mhz) if mhz > 0.0 => {
+            let text = format!("{mhz:.6}");
+            format!("{}MHz", text.trim_end_matches('0').trim_end_matches('.'))
+        }
+        _ => band.trim().to_ascii_lowercase(),
     }
 }
 
@@ -416,7 +474,7 @@ fn sota_line(r: &Record, start: DateTime<Utc>, operator: &str, summit: &str) -> 
         start.year() % 100,
         start.hour(),
         start.minute(),
-        get("BAND").to_ascii_lowercase(),
+        sota_band(get("BAND"), get("FREQ")),
         sota_mode(get("MODE")),
         get("CALL").to_ascii_uppercase(),
         get("SOTA_REF").to_ascii_uppercase(),
@@ -454,22 +512,28 @@ fn build_sota(req: &Request<'_>, summit: &str, selected: &Selected<'_>, preview:
             calls.len()
         ));
     }
-    let lines: Vec<String> = selected
-        .iter()
-        .map(|(r, start, _)| sota_line(r, *start, req.operator, summit))
-        .collect();
-    let contents = lines.iter().map(|l| format!("{l}\n")).collect::<String>();
-    preview.files.push(ExportFile {
-        name: format!(
-            "{}@{}-{}.csv",
-            safe(req.operator),
-            safe(summit),
-            compact(&req.plan.date)
-        ),
-        contents,
-        contacts: lines.len(),
-        head: lines.into_iter().take(3).collect(),
-    });
+    // An activation ends when the summit changes, and several days at one summit must be
+    // separate files: one file per UTC day.
+    let days: BTreeSet<NaiveDate> = selected.iter().map(|(_, s, _)| s.date_naive()).collect();
+    for date in days {
+        let lines: Vec<String> = selected
+            .iter()
+            .filter(|(_, start, _)| start.date_naive() == date)
+            .map(|(r, start, _)| sota_line(r, *start, req.operator, summit))
+            .collect();
+        let contents = lines.iter().map(|l| format!("{l}\n")).collect::<String>();
+        preview.files.push(ExportFile {
+            name: format!(
+                "{}@{}-{}.csv",
+                safe(req.operator),
+                safe(summit),
+                date.format("%Y%m%d")
+            ),
+            contents,
+            contacts: lines.len(),
+            head: lines.into_iter().take(3).collect(),
+        });
+    }
 }
 
 // ---- writing -------------------------------------------------------------------------------
