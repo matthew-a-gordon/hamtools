@@ -168,6 +168,63 @@ fn an_nfer_export_takes_every_park_state_from_the_plan_with_no_cache() {
     assert!(mi.contains("<MY_STATE:2>MI"), "{mi}");
 }
 
+fn multi_state(fx: &Fx) {
+    std::fs::write(
+        fx.dir.join("plans.toml"),
+        PLANS.replace("location = \"US-IN\"", "location = \"US-IN,US-MI\""),
+    )
+    .unwrap();
+}
+
+fn out_files(fx: &Fx) -> Vec<String> {
+    let mut names: Vec<String> = std::fs::read_dir(fx.dir.join("out"))
+        .unwrap()
+        .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+        .collect();
+    names.sort();
+    names
+}
+
+#[test]
+fn a_multi_state_park_defaults_to_its_primary_state() {
+    let fx = Fx::new("ms-default");
+    multi_state(&fx);
+    let mut app = fx.app();
+    open_preview(&mut app);
+    let rows = screen(&app, 100, 30);
+    assert!(has(&rows, "K9TST@US-1234-20261105-US-IN.adi"), "{rows:#?}");
+    assert!(has(&rows, "State: US-IN"), "{rows:#?}");
+    app.on_key(key(KeyCode::Enter));
+    assert_eq!(out_files(&fx), ["K9TST@US-1234-20261105-US-IN.adi"]);
+}
+
+#[test]
+fn s_picks_another_state_and_the_file_gets_it() {
+    let fx = Fx::new("ms-pick");
+    multi_state(&fx);
+    let mut app = fx.app();
+    open_preview(&mut app);
+    app.on_key(key(KeyCode::Char('s')));
+    let rows = screen(&app, 100, 30);
+    assert!(has(&rows, "State: US-MI"), "{rows:#?}");
+    app.on_key(key(KeyCode::Enter));
+    let names = out_files(&fx);
+    assert_eq!(names, ["K9TST@US-1234-20261105-US-MI.adi"]);
+    let body = std::fs::read_to_string(fx.dir.join("out").join(&names[0])).unwrap();
+    assert!(body.contains("<MY_STATE:2>MI"), "{body}");
+}
+
+#[test]
+fn a_single_state_park_asks_nothing() {
+    let fx = Fx::new("ss-none");
+    let mut app = fx.app();
+    open_preview(&mut app);
+    let before = screen(&app, 100, 30);
+    assert!(!has(&before, "State:"), "{before:#?}");
+    app.on_key(key(KeyCode::Char('s')));
+    assert_eq!(screen(&app, 100, 30), before);
+}
+
 #[test]
 fn with_no_export_directory_the_write_is_refused() {
     let fx = Fx::new("nodir");
