@@ -28,6 +28,8 @@
 
       devShells = forAllSystems (pkgs: {
         default = pkgs.mkShell {
+          # Stdlib sources for rust-analyzer and IDEs (see .envrc).
+          RUST_SRC_PATH = "${pkgs.rustPlatform.rustLibSrc}";
           packages = with pkgs; [
             cargo
             clippy
