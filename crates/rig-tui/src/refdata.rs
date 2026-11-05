@@ -11,8 +11,12 @@
 //! (a data file, not the SOTA API). There is no code path to the SOTA API: it needs the owner's
 //! approval of this software first.
 //!
-//! The POTA JSON has no official documentation, so it is parsed defensively (numbers may be
-//! strings, optional fields may be absent). The summit list's two header lines are checked on
+//! The POTA JSON has no official documentation (UNVERIFIED as a stable contract: the shapes are
+//! those observed live on 2026-11-04, see `docs/research/missing-data.md`), so it is parsed
+//! defensively (numbers may be strings, optional fields may be absent, `/park/<ref>` may answer
+//! `200` with `null`, `locationDesc` may list up to 16 comma-separated states). The summit list
+//! download is a `302` to another host, followed by the client; it now has 17 columns and only
+//! the first 14 are checked. The summit list's two header lines are checked on
 //! parse and the load fails closed with a clear message if they differ.
 
 use std::collections::HashMap;
@@ -117,9 +121,14 @@ pub fn parse_park_list(json: &str) -> Result<Vec<RefEntry>, String> {
     Ok(arr.iter().filter_map(park_from_json).collect())
 }
 
-/// POTA park detail (`/park/<ref>`): one object (a one-element array is accepted too).
-pub fn parse_park_detail(json: &str) -> Result<RefEntry, String> {
+/// POTA park detail (`/park/<ref>`): one object (a one-element array is accepted too). A body of
+/// `null` (HTTP 200 for a reference POTA does not know, e.g. `K-0001`) is `Ok(None)`: unknown, not
+/// an error.
+pub fn parse_park_detail(json: &str) -> Result<Option<RefEntry>, String> {
     let v: serde_json::Value = serde_json::from_str(json).map_err(|e| format!("park: {e}"))?;
+    if v.is_null() {
+        return Ok(None);
+    }
     let obj = match &v {
         serde_json::Value::Array(a) if a.len() == 1 => &a[0],
         other => other,
@@ -127,7 +136,9 @@ pub fn parse_park_detail(json: &str) -> Result<RefEntry, String> {
     if !obj.is_object() {
         return Err("park: expected a JSON object".into());
     }
-    park_from_json(obj).ok_or_else(|| "park: no reference or name".to_string())
+    park_from_json(obj)
+        .map(Some)
+        .ok_or_else(|| "park: no reference or name".to_string())
 }
 
 /// Split one CSV line, honouring double-quoted fields and `""` escapes.
@@ -354,9 +365,9 @@ impl ReferenceData {
             }
         };
         for key in self.cached_keys(PARK_PREFIX, Some(PARK_LIST_PREFIX)) {
-            if let Some((snap, Ok(p))) =
-                self.parse_snapshot(&key, |t| parse_park_detail(t).map(|e| vec![e]))
-            {
+            if let Some((snap, Ok(p))) = self.parse_snapshot(&key, |t| {
+                parse_park_detail(t).map(|e| e.into_iter().collect())
+            }) {
                 push(&p, &snap);
             }
         }

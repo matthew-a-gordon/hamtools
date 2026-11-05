@@ -115,7 +115,10 @@ fn parse_one(item: &serde_json::Value, fetched_at: i64) -> Option<Spot> {
         hz: (khz * 1000.0).round() as u64,
         mode: text("mode").to_ascii_uppercase(),
         reference,
-        park_name: text("parkName"),
+        // Live spots carry the name in `name`; `parkName` is null (research note, 2026-11-04).
+        park_name: Some(text("name"))
+            .filter(|n| !n.is_empty())
+            .unwrap_or_else(|| text("parkName")),
         location: text("locationDesc"),
         spotter: text("spotter"),
         comment: text("comments"),
@@ -203,6 +206,21 @@ mod tests {
         // The 12:03 repeat wins (2026-11-04T12:03:00Z = 1_793_793_780).
         assert_eq!(k.spotted_at, Some(1_793_793_780));
         assert_eq!(k.expires_at, 1_000 + 300);
+    }
+
+    #[test]
+    fn the_park_name_is_read_from_name_because_park_name_is_null_live() {
+        // Shape observed live on 2026-11-04 (docs/research/missing-data.md section 3).
+        let live = r#"[{"spotId":9,"activator":"W7XYZ","frequency":"7248","mode":"SSB",
+          "reference":"US-0001","parkName":null,"name":"Acadia National Park",
+          "locationDesc":"US-ME","spotTime":"2026-11-05T01:07:38","expire":873,
+          "invalid":null,"grid6":"FN54wk","latitude":44.35,"longitude":-68.21}]"#;
+        let spots = parse_spots(live, 0).unwrap();
+        assert_eq!(spots[0].park_name, "Acadia National Park");
+        // A feed that still sends parkName is read when name is absent.
+        let old = r#"[{"activator":"K1ABC","frequency":"7030","mode":"CW","reference":"US-0002",
+          "parkName":"Beta SP"}]"#;
+        assert_eq!(parse_spots(old, 0).unwrap()[0].park_name, "Beta SP");
     }
 
     #[test]

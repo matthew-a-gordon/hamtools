@@ -33,6 +33,8 @@ pub const BACKOFF_START: Duration = Duration::from_secs(60);
 pub const BACKOFF_MAX: Duration = Duration::from_secs(60 * 60);
 pub const CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
 pub const TOTAL_TIMEOUT: Duration = Duration::from_secs(15);
+/// Redirect hops the client follows for one feed.
+pub const MAX_REDIRECTS: u32 = 3;
 /// Reference data older than this is shown in a warning color (still usable).
 pub const STALE_AFTER_SECS: u64 = 30 * 24 * 60 * 60;
 const MAX_BODY_BYTES: u64 = 64 * 1024 * 1024;
@@ -95,6 +97,9 @@ pub struct HttpResponse {
     pub etag: Option<String>,
     pub last_modified: Option<String>,
     pub retry_after: Option<Duration>,
+    /// The `Location` header of a 3xx reply. The transport does not follow redirects; the client
+    /// does, so every hop is paced and logged in one place (ADR 0003).
+    pub location: Option<String>,
 }
 
 /// The HTTP layer. Implementations must not retry or sleep; the client owns all pacing.
@@ -416,7 +421,29 @@ impl Inner {
             connect_timeout: CONNECT_TIMEOUT,
             total_timeout: TOTAL_TIMEOUT,
         };
-        let result = self.transport.get(&req);
+        let mut result = self.transport.get(&req);
+        // Follow redirects here (the SOTA summit list answers 302 to another host). Each hop is a
+        // request in its own right, so it waits out the global gap; it carries no validators.
+        let mut hops = 0;
+        while let Ok(r) = &result
+            && matches!(r.status, 301 | 302 | 303 | 307 | 308)
+            && let Some(next) = r.location.clone()
+        {
+            hops += 1;
+            if hops > MAX_REDIRECTS || !next.starts_with("https://") {
+                result = Err(format!("redirect to {next:?} refused"));
+                break;
+            }
+            self.clock.sleep(self.limits.gap);
+            self.lock().last_start_any = Some(self.clock.now());
+            let hop = HttpRequest {
+                url: next,
+                if_none_match: None,
+                if_modified_since: None,
+                ..req.clone()
+            };
+            result = self.transport.get(&hop);
+        }
         self.finish(feed, result);
     }
 
@@ -527,6 +554,7 @@ impl Transport for UreqTransport {
             .timeout_connect(Some(req.connect_timeout))
             .timeout_global(Some(req.total_timeout))
             .http_status_as_error(false)
+            .max_redirects(0)
             .build()
             .into();
         let mut r = agent.get(&req.url).header("User-Agent", &req.user_agent);
@@ -548,6 +576,7 @@ impl Transport for UreqTransport {
         let retry_after = header("retry-after")
             .and_then(|v| v.trim().parse::<u64>().ok())
             .map(Duration::from_secs);
+        let location = header("location");
         let status = resp.status().as_u16();
         let body = resp
             .body_mut()
@@ -561,6 +590,7 @@ impl Transport for UreqTransport {
             etag,
             last_modified,
             retry_after,
+            location,
         })
     }
 }
