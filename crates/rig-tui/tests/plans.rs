@@ -21,6 +21,8 @@ use rig_tui::{App, render};
 
 const DETAIL: &str = r#"{"reference":"US-4571","name":"Potato Creek State Park","latitude":41.5546,"longitude":-86.3697,"grid6":"EN61uo","locationDesc":"US-IN"}"#;
 
+const DETAIL2: &str = r#"{"reference":"US-4572","name":"Second Creek State Park","latitude":41.6,"longitude":-86.1,"grid6":"EN61vo","locationDesc":"US-MI"}"#;
+
 const PARK_LIST: &str = r#"[{"reference":"US-4571","name":"Potato Creek State Park","latitude":41.5546,"longitude":-86.3697,"grid":"EN61","locationDesc":"US-IN"},{"reference":"US-1234","name":"Pigeon River Fish and Wildlife Area","latitude":41.65,"longitude":-85.4,"grid":"EN71","locationDesc":"US-IN"}]"#;
 
 /// 2027-01-15 08:00 UTC.
@@ -52,6 +54,8 @@ impl Transport for Routes {
             PARK_LIST
         } else if req.url.contains("/park/US-4571") {
             DETAIL
+        } else if req.url.contains("/park/US-4572") {
+            DETAIL2
         } else {
             return Err("offline".into());
         };
@@ -355,6 +359,30 @@ mod references {
         assert!(has(&rows, "Potato Creek State Park"), "{rows:#?}");
         assert!(fx.stored().contains("name = \"Potato Creek State Park\""));
         assert_eq!(fx.routes.calls.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn saving_an_nfer_plan_stores_a_snapshot_of_every_reference() {
+        let fx = Fx::new("nfer", false);
+        let mut app = fx.app();
+        open_manager(&mut app);
+        new_plan(&mut app, "us-4571, us-4572", "2027-02-01", "", "");
+        // One request per reference, through the client.
+        fx.client.sync();
+        assert_eq!(fx.routes.calls.load(Ordering::SeqCst), 2);
+        app.tick(Instant::now() + Duration::from_secs(10));
+        let stored = fx.stored();
+        assert!(stored.contains("Potato Creek State Park"), "{stored}");
+        assert!(stored.contains("Second Creek State Park"), "{stored}");
+        assert!(stored.contains("US-MI"), "{stored}");
+
+        // Wipe the cache: a fresh App still has both from the file, and asks for nothing.
+        std::fs::remove_dir_all(&fx.cache).unwrap();
+        let calls = fx.routes.calls.load(Ordering::SeqCst);
+        let mut app = fx.app();
+        app.tick(Instant::now() + Duration::from_secs(10));
+        fx.client.sync();
+        assert_eq!(fx.routes.calls.load(Ordering::SeqCst), calls);
     }
 
     #[test]

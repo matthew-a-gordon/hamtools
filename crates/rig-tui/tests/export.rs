@@ -52,6 +52,7 @@ fn plan(activity: PlanActivity, refs: &[&str], date: &str) -> Plan {
         notes: None,
         done: false,
         snapshot: None,
+        other_snapshots: vec![],
     }
 }
 

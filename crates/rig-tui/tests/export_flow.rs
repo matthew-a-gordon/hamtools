@@ -126,6 +126,32 @@ fn export_changes_neither_the_log_nor_the_plan() {
 }
 
 #[test]
+fn an_nfer_export_takes_every_park_state_from_the_plan_with_no_cache() {
+    let fx = Fx::new("nfer");
+    let nfer = PLANS
+        .replace(
+            "references = [\"US-1234\"]",
+            "references = [\"US-1234\", \"US-5678\"]\n\
+             other_snapshots = [{ reference = \"US-5678\", name = \"Other Park\", location = \"US-MI\" }]",
+        );
+    std::fs::write(fx.dir.join("plans.toml"), nfer).unwrap();
+    std::fs::write(
+        fx.dir.join("log.adi"),
+        "test\n<EOH>\n<CALL:5>W1ABC<QSO_DATE:8>20261105<TIME_ON:6>150000<BAND:3>40m<MODE:2>CW<MY_SIG:4>POTA<MY_SIG_INFO:15>US-1234,US-5678<EOR>\n",
+    )
+    .unwrap();
+    let mut app = fx.app();
+    open_preview(&mut app);
+    app.on_key(key(KeyCode::Enter));
+    let mi = std::fs::read_dir(fx.dir.join("out"))
+        .unwrap()
+        .map(|e| std::fs::read_to_string(e.unwrap().path()).unwrap())
+        .find(|c| c.contains("US-5678"))
+        .expect("a file for the second park");
+    assert!(mi.contains("<MY_STATE:2>MI"), "{mi}");
+}
+
+#[test]
 fn with_no_export_directory_the_write_is_refused() {
     let fx = Fx::new("nodir");
     let mut app = App::with_callsign(Some("K9TST".into()))

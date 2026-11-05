@@ -20,6 +20,8 @@
 //! [plan.pota-us-4571-20261105.snapshot]   # the reference as last looked up, kept with the plan
 //! reference = "US-4571"
 //! name = "Potato Creek State Park"
+//! # the other references of an n-fer, one entry each, kept the same way
+//! # other_snapshots = [{ reference = "US-4572", name = "...", location = "US-MI" }]
 //! ```
 //!
 //! The lifecycle is planned, active, done. Active lives only in the running app, so the file
@@ -93,9 +95,20 @@ pub struct Plan {
     pub done: bool,
     /// The primary reference as last resolved; `None` is unresolved.
     pub snapshot: Option<RefSnapshot>,
+    /// The other (n-fer) references as last resolved, in no particular order. A reference with
+    /// no entry is unresolved.
+    pub other_snapshots: Vec<RefSnapshot>,
 }
 
 impl Plan {
+    /// The snapshot kept for `reference` (primary or not), if it has been resolved.
+    pub fn snapshot_of(&self, reference: &str) -> Option<&RefSnapshot> {
+        self.snapshot
+            .iter()
+            .chain(&self.other_snapshots)
+            .find(|s| s.reference.eq_ignore_ascii_case(reference))
+    }
+
     pub fn primary(&self) -> Option<&str> {
         self.references.first().map(String::as_str)
     }
@@ -127,7 +140,8 @@ pub fn valid_date(s: &str) -> bool {
 /// `plan.<id>.<field>` style names for one stored field, to value text.
 type Fields = BTreeMap<(String, String), String>;
 
-const KNOWN: [&str; 8] = [
+const KNOWN: [&str; 9] = [
+    "other_snapshots",
     "activity",
     "references",
     "date",
@@ -172,6 +186,13 @@ fn fields(plans: &[Plan]) -> Fields {
         for (n, msg) in &p.softkeys {
             put(&format!("softkeys.F{n}"), text(msg));
         }
+        if !p.other_snapshots.is_empty() {
+            let mut arr = toml_edit::Array::new();
+            for s in &p.other_snapshots {
+                arr.push(Value::InlineTable(snapshot_inline(s)));
+            }
+            put("other_snapshots", Value::from(arr).to_string());
+        }
         if let Some(s) = &p.snapshot {
             put("snapshot.reference", text(&s.reference));
             put("snapshot.name", text(&s.name));
@@ -210,6 +231,31 @@ fn string_list(item: &Item, key: &str) -> Result<Vec<String>, ConfigError> {
                 .ok_or_else(|| invalid(key, "expected a list of non-empty strings"))
         })
         .collect()
+}
+
+fn snapshot_inline(s: &RefSnapshot) -> toml_edit::InlineTable {
+    let mut t = toml_edit::InlineTable::new();
+    t.insert("reference", s.reference.as_str().into());
+    t.insert("name", s.name.as_str().into());
+    if let Some(v) = &s.location {
+        t.insert("location", v.as_str().into());
+    }
+    if let Some(v) = &s.grid {
+        t.insert("grid", v.as_str().into());
+    }
+    if let Some(v) = s.lat {
+        t.insert("lat", v.into());
+    }
+    if let Some(v) = s.lon {
+        t.insert("lon", v.into());
+    }
+    if let Some(v) = s.alt_m {
+        t.insert("alt_m", i64::from(v).into());
+    }
+    if let Some(v) = s.points {
+        t.insert("points", i64::from(v).into());
+    }
+    t
 }
 
 fn read_snapshot(t: &Table, prefix: &str) -> Result<RefSnapshot, ConfigError> {
@@ -323,6 +369,22 @@ fn read_plan(id: &str, t: &Table) -> Result<Plan, ConfigError> {
             Some(read_snapshot(sub, &key("snapshot"))?)
         }
     };
+    let other_snapshots = match t.get("other_snapshots") {
+        None => vec![],
+        Some(item) => {
+            let arr = item
+                .as_array()
+                .ok_or_else(|| invalid(&key("other_snapshots"), "expected a list of tables"))?;
+            arr.iter()
+                .map(|v| {
+                    let inline = v.as_inline_table().ok_or_else(|| {
+                        invalid(&key("other_snapshots"), "expected a list of tables")
+                    })?;
+                    read_snapshot(&inline.clone().into_table(), &key("other_snapshots"))
+                })
+                .collect::<Result<Vec<_>, _>>()?
+        }
+    };
     Ok(Plan {
         id: id.to_string(),
         activity,
@@ -337,6 +399,7 @@ fn read_plan(id: &str, t: &Table) -> Result<Plan, ConfigError> {
         notes: opt_str("notes")?,
         done,
         snapshot,
+        other_snapshots,
     })
 }
 

@@ -50,6 +50,7 @@ fn new_plan(id: &str) -> Plan {
             alt_m: Some(300),
             ..Default::default()
         }),
+        other_snapshots: vec![],
     }
 }
 
@@ -183,6 +184,37 @@ fn bad_values_name_the_key_and_a_broken_file_is_never_saved_over() {
         Err(SaveError::Unparseable { .. })
     ));
     assert_eq!(read(&path), "[plan");
+}
+
+#[test]
+fn snapshots_of_the_other_references_round_trip() {
+    let dir = TempDir::new();
+    let path = dir.write("plans.toml", HAND_WRITTEN);
+    let mut file = PlansFile::load(&path).unwrap();
+    let mut plans = file.plans().to_vec();
+    let mut plan = new_plan("pota-nfer");
+    plan.references.push("US-5678".into());
+    plan.other_snapshots = vec![RefSnapshot {
+        reference: "US-5678".into(),
+        name: "Second Park".into(),
+        location: Some("US-MI".into()),
+        lat: Some(42.5),
+        points: Some(3),
+        ..Default::default()
+    }];
+    plans.push(plan.clone());
+    file.save(&plans).unwrap();
+    let back = PlansFile::load(&path).unwrap();
+    assert_eq!(back.plans()[2], plan);
+    assert_eq!(
+        plan.snapshot_of("us-5678").map(|s| s.name.as_str()),
+        Some("Second Park")
+    );
+    assert_eq!(
+        plan.snapshot_of("US-1234").map(|s| s.name.as_str()),
+        Some("Pigeon River")
+    );
+    assert!(plan.snapshot_of("US-0000").is_none());
 }
 
 #[test]
