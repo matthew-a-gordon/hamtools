@@ -408,6 +408,10 @@ impl Logging {
         }
     }
 
+    pub fn close_list(&mut self) {
+        self.list = None;
+    }
+
     pub fn open_form(&mut self, snapshot: Snapshot) {
         self.list = None;
         self.form = Some(ContactForm::new(snapshot));

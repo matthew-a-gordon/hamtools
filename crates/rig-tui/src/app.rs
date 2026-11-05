@@ -584,6 +584,21 @@ impl App {
         self.logging.form_open() && !self.embedded()
     }
 
+    /// At least one modal is open, and every open one holds nothing to lose: the go-to palette,
+    /// keybindings, bandplan, rig switcher and session list.
+    fn only_no_loss_modals_open(&self) -> bool {
+        let any = self.palette.is_some()
+            || self.keybindings.is_some()
+            || self.bandplan.is_some()
+            || self.switcher_open()
+            || self.logging.list_open();
+        any && self.config.is_none()
+            && self.export_modal.is_none()
+            && self.plans_modal.is_none()
+            && self.overlay.is_none()
+            && !self.form_modal_open()
+    }
+
     /// A Logging modal has the keyboard: the form as a modal, or the session list.
     fn logging_modal_open(&self) -> bool {
         self.form_modal_open() || self.logging.list_open()
@@ -1465,6 +1480,22 @@ impl App {
         if self.too_small() {
             // Nothing is on screen to act on; only the quit Chord works.
             return Vec::new();
+        }
+        // Modals that hold nothing to lose give way to a Chord; the rest keep every key.
+        // The palette and keybindings modal still close on their own Chord.
+        let toggles_itself = (chord == Some(Action::GoTo) && self.palette.is_some())
+            || (chord == Some(Action::Keybindings) && self.keybindings.is_some());
+        if let Some(action) = chord
+            && !toggles_itself
+            && self.only_no_loss_modals_open()
+        {
+            self.palette = None;
+            self.keybindings = None;
+            self.bandplan = None;
+            self.switcher = None;
+            self.logging.close_list();
+            self.entry = None;
+            return self.perform(action);
         }
         if let Some(dialog) = &mut self.config {
             return match dialog.on_key(key) {
