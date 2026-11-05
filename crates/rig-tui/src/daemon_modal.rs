@@ -97,9 +97,11 @@ impl DaemonModal {
     }
 
     pub(crate) fn render(&self, frame: &mut Frame, area: Rect) {
-        let rows = self.ports.len() as u16;
+        // Two lines per port: the path (it can be long), then the rig it would start.
+        let rows = self.ports.len() as u16 * 2;
         let inner =
             Modal::new("rigctld is not running: start one?", 78, rows + 8).render(frame, area);
+        let room = usize::from(inner.width).saturating_sub(2);
         let mut lines = vec![
             Line::styled("Serial ports found (listed, not opened):", yellow()),
             Line::raw(""),
@@ -108,17 +110,18 @@ impl DaemonModal {
             let target = &self.targets[self.choice[i]];
             let (model, baud) = model_and_baud(target.kind).unwrap_or_default();
             let mark = if i == self.selected { ">" } else { " " };
-            let text = format!(
-                "{mark} {}  ->  {} (model {model}, {baud} baud, TCP {})",
-                port.path.display(),
-                target.name,
-                target.tcp
+            let path = shorten(&port.path.display().to_string(), room);
+            let rig = format!(
+                "    -> {} (model {model}, {baud} baud, TCP {})",
+                target.name, target.tcp
             );
-            lines.push(if i == self.selected {
-                Line::raw(text)
-            } else {
-                Line::styled(text, dim())
-            });
+            for text in [format!("{mark} {path}"), rig] {
+                lines.push(if i == self.selected {
+                    Line::raw(text)
+                } else {
+                    Line::styled(text, dim())
+                });
+            }
         }
         lines.push(Line::raw(""));
         lines.push(Line::styled(
@@ -131,6 +134,16 @@ impl DaemonModal {
         ));
         frame.render_widget(Paragraph::new(lines), inner);
     }
+}
+
+/// `text` cut to `max` characters, keeping the end (the device name) and marking the cut.
+fn shorten(text: &str, max: usize) -> String {
+    let n = text.chars().count();
+    if n <= max || max < 2 {
+        return text.to_string();
+    }
+    let tail: String = text.chars().skip(n - (max - 1)).collect();
+    format!("…{tail}")
 }
 
 #[cfg(test)]
@@ -189,6 +202,15 @@ mod tests {
             panic!("expected a launch");
         };
         assert_eq!(l.name, "kx3");
+    }
+
+    #[test]
+    fn a_long_path_keeps_its_end_and_fits() {
+        assert_eq!(shorten("/dev/ttyUSB0", 20), "/dev/ttyUSB0");
+        let long = "/dev/serial/by-id/usb-FTDI_FT232R_USB_UART_AL05YPJL-if00-port0";
+        let cut = shorten(long, 30);
+        assert_eq!(cut.chars().count(), 30);
+        assert!(cut.starts_with('…') && cut.ends_with("if00-port0"));
     }
 
     #[test]
