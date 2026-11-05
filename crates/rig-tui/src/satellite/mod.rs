@@ -127,7 +127,9 @@ impl Satellite {
     }
 
     fn rebuild(&mut self, now: DateTime<Utc>) {
+        let resume = self.state.take_resume();
         self.state = Self::build(&self.data, self.observer, &self.settings, now);
+        self.state.put_resume(resume);
         self.built_at = Instant::now();
     }
 
@@ -367,6 +369,11 @@ impl Activity for Satellite {
     fn on_enter(&mut self) {
         // Every entry checks whether the downloaded data is stale (a stale-only download).
         self.want_refresh = true;
+    }
+
+    fn enter_note(&self) -> Option<String> {
+        // It never retunes by itself: say what `t` picks up again.
+        self.state.resume_hint()
     }
 
     fn on_leave(&mut self) -> Option<String> {

@@ -99,8 +99,13 @@ fn row_one(app: &App) -> String {
     } else {
         "disconnected"
     };
+    let stopped = if app.doppler_stopped() {
+        "  Doppler stopped"
+    } else {
+        ""
+    };
     format!(
-        "{freq}  {mode}  step {}  {connection}",
+        "{freq}  {mode}  step {}  {connection}{stopped}",
         format_step(app.tuning_step())
     )
 }

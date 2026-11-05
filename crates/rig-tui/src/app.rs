@@ -211,6 +211,8 @@ pub struct App {
     unsupported: BTreeSet<Feature>,
     step: usize,
     entry: Option<Entry>,
+    /// Leaving an Activity stopped Doppler tracking; the strip says so until Satellite is back.
+    doppler_stopped: bool,
     status: Option<String>,
     /// The status came from a failing poll, so the next good poll clears it.
     poll_failed: bool,
@@ -297,6 +299,7 @@ impl App {
             unsupported: BTreeSet::new(),
             step: DEFAULT_STEP,
             entry: None,
+            doppler_stopped: false,
             status: None,
             poll_failed: false,
             callsign: None,
@@ -531,10 +534,20 @@ impl App {
         let left = (index != self.foreground).then(|| self.activities[self.foreground].on_leave());
         self.foreground = index;
         self.entry = None;
-        if let Some(note) = dropped.or(left.flatten()) {
+        let left = left.flatten();
+        if left.is_some() {
+            self.doppler_stopped = true;
+        }
+        if self.activities[index].name() == "Satellite" {
+            self.doppler_stopped = false;
+        }
+        if let Some(note) = dropped.or(left) {
             self.status = Some(note);
         }
         self.activities[index].on_enter();
+        if let Some(note) = self.activities[index].enter_note() {
+            self.status = Some(note);
+        }
         self.activation_stale = true;
         self.sync_embedded();
     }
@@ -676,6 +689,11 @@ impl App {
     }
 
     /// The foreground Activity's name, as the shared strip shows it.
+    /// Whether tracking was stopped by leaving Satellite and has not been resumed (the strip says so).
+    pub fn doppler_stopped(&self) -> bool {
+        self.doppler_stopped
+    }
+
     pub fn activity_name(&self) -> &'static str {
         self.activities[self.foreground].name()
     }

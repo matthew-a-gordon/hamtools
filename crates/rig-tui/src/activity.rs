@@ -239,6 +239,12 @@ pub trait Activity {
     /// The Activity has just come to the foreground.
     fn on_enter(&mut self) {}
 
+    /// A line for the status after [`on_enter`](Self::on_enter), when coming back finds something
+    /// to say (Satellite: what `t` picks up again).
+    fn enter_note(&self) -> Option<String> {
+        None
+    }
+
     /// Whether the Activity wants [`ActivityCtx::worked`] filled (it reads the Log).
     fn uses_log(&self) -> bool {
         false

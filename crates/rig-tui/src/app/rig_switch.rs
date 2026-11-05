@@ -189,6 +189,7 @@ impl App {
         self.status = Some(format!("rig: {}", self.rig_name()));
         if let Some(why) = self.activity_unavailable(self.foreground) {
             let stopped = self.activities[self.foreground].on_leave();
+            self.doppler_stopped |= stopped.is_some();
             self.foreground = 0;
             self.status = Some(match stopped {
                 Some(note) => format!("{why}; back to General. {note}"),

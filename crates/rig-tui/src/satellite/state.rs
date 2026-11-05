@@ -62,6 +62,8 @@ pub struct SatState {
     min_elevation_deg: f64,
     status: Option<String>,
     tracking: Option<Tracking>,
+    /// What tracking was doing when it was stopped by leaving, so `t` on return picks it up again.
+    resume: Option<Resume>,
     /// Commands queued by keys, sent on the next tick.
     pending: Vec<RigCommand>,
 }
@@ -121,6 +123,7 @@ impl SatState {
             min_elevation_deg: settings.min_elevation_deg,
             status: None,
             tracking: None,
+            resume: None,
             pending: Vec::new(),
         }
     }
@@ -216,6 +219,12 @@ impl SatState {
     }
 }
 
+pub(super) struct Resume {
+    sat_index: usize,
+    transmitter: String,
+    nudge_hz: i64,
+}
+
 struct Tracking {
     tracker: Tracker,
     transmitter: Transmitter,
@@ -297,6 +306,14 @@ pub struct TrackingView {
 }
 
 impl SatState {
+    pub(super) fn take_resume(&mut self) -> Option<Resume> {
+        self.resume.take()
+    }
+
+    pub(super) fn put_resume(&mut self, resume: Option<Resume>) {
+        self.resume = resume;
+    }
+
     pub fn status(&self) -> Option<&str> {
         self.status.as_deref()
     }
@@ -336,7 +353,22 @@ impl SatState {
     /// Stop tracking (if it is running) and drop commands not yet sent. Does not touch the radio.
     pub fn stop_tracking(&mut self) -> bool {
         self.pending.clear();
-        self.tracking.take().is_some()
+        let stopped = self.tracking.take();
+        if let Some(t) = &stopped {
+            self.resume = Some(Resume {
+                sat_index: t.sat_index,
+                transmitter: t.transmitter.description.clone(),
+                nudge_hz: t.nudge_hz,
+            });
+        }
+        stopped.is_some()
+    }
+
+    /// A line saying what `t` will pick up again, after tracking was stopped by leaving.
+    pub fn resume_hint(&self) -> Option<String> {
+        let r = self.resume.as_ref()?;
+        let name = &self.entries.get(r.sat_index)?.name;
+        Some(format!("t resumes {name} {}", r.transmitter))
     }
 
     /// The transmitter the cursor is on, if the radio can use it.
@@ -358,14 +390,21 @@ impl SatState {
             return;
         };
         let sat_index = self.rows[self.row].sat_index;
+        // The same transmitter on the same satellite carries on from the operator's nudge.
+        let resumed_nudge = self
+            .resume
+            .as_ref()
+            .filter(|r| r.sat_index == sat_index && r.transmitter == transmitter.description)
+            .map_or(0, |r| r.nudge_hz);
         let tracking = Tracking {
             tracker: Tracker::new(entry.sat.clone(), self.observer, self.min_elevation_deg),
             transmitter: transmitter.clone(),
             satellite: entry.name.clone(),
             sat_index,
-            nudge_hz: 0,
+            nudge_hz: resumed_nudge,
         };
         self.status = Some(format!("tracking {}", tracking.transmitter.description));
+        self.resume = None;
         self.tracking = Some(tracking);
     }
 

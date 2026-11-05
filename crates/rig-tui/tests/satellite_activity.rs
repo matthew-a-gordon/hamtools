@@ -228,6 +228,33 @@ fn leaving_satellite_stops_tracking_says_so_and_does_not_retune() {
 }
 
 #[test]
+fn the_strip_keeps_saying_tracking_stopped_until_satellite_is_back_and_t_resumes() {
+    let start = Instant::now();
+    let mut app = connected(app("ft847"));
+    app.set_foreground(SATELLITE);
+    app.on_key(key(KeyCode::Char('t')));
+    app.tick(start);
+    assert!(!has(&screen(&app, 100, 30), "Doppler stopped"));
+
+    app.set_foreground(0);
+    // The one-shot status goes; the strip still says it.
+    app.set_status(None);
+    assert!(has(&screen(&app, 100, 30), "Doppler stopped"));
+
+    // Back in Satellite: the strip is clear and the status says what `t` picks up.
+    app.set_foreground(SATELLITE);
+    app.tick(start + Duration::from_secs(1));
+    assert!(!has(&screen(&app, 100, 30), "Doppler stopped"));
+    assert!(
+        app.status().is_some_and(|s| s.contains("t resumes ISS")),
+        "{:?}",
+        app.status()
+    );
+    // Still nothing is sent until the operator asks.
+    assert_eq!(doppler(&app.tick(start + Duration::from_secs(2))), []);
+}
+
+#[test]
 fn switching_to_a_rig_without_sat_mode_drops_to_general_and_stops_tracking() {
     let start = Instant::now();
     let mut app = connected(app("ft847"));
