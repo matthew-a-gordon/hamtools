@@ -51,7 +51,10 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::SystemTime;
 
+mod plans;
+
 pub use logbook::{Callsign, Grid};
+pub use plans::{Plan, PlanActivity, PlansFile, RefSnapshot, valid_date};
 use toml_edit::{Document, DocumentMut, Item, Table, Value};
 
 /// The operator's US license class. Runtime config with no default: the app never guesses it.

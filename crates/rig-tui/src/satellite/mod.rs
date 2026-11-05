@@ -364,9 +364,13 @@ impl Activity for Satellite {
         }
     }
 
+    fn on_enter(&mut self) {
+        // Every entry checks whether the downloaded data is stale (a stale-only download).
+        self.want_refresh = true;
+    }
+
     fn on_leave(&mut self) -> Option<String> {
         self.last_step = None;
-        self.want_refresh = true;
         self.state.stop_tracking().then(|| {
             "Doppler tracking stopped: left Satellite (the radio keeps its settings)".to_string()
         })

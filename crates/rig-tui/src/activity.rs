@@ -8,13 +8,14 @@ use std::collections::BTreeMap;
 use std::time::Instant;
 
 use chrono::{DateTime, Utc};
+use hamtools_config::LicenseClass;
 use ratatui::Frame;
 use ratatui::crossterm::event::KeyEvent;
 use ratatui::layout::Rect;
 
 use crate::keys::KeyEntry;
 use crate::layout::Panes;
-use crate::panel::{LogDefaults, LogMode};
+use crate::panel::{LogDefaults, LogMode, Role};
 use crate::rig::{Command, RigMode};
 use crate::rigs::Capability;
 use crate::softkeys::{Live, ResolvedKey};
@@ -35,10 +36,53 @@ pub struct ActivityCtx<'a> {
     pub recent: &'a [String],
     /// The panes the window has room for (see [`crate::layout`]).
     pub panes: Panes,
-    /// The UTC wall clock: the same time the strip shows and Contacts are stamped with.
+    /// The UTC time the strip shows.
     pub utc: DateTime<Utc>,
+    /// The Observer position (latitude, longitude in degrees) from the Locator, if one is set.
+    pub observer: Option<(f64, f64)>,
+    pub license_class: Option<LicenseClass>,
+    /// Contacts in the Log dated today (UTC), read each time. Empty unless the Activity says
+    /// [`Activity::uses_log`].
+    pub worked: &'a [Worked],
+    /// Contacts logged this run.
+    pub logged: usize,
     /// The receive frequency in Hz, only if the rig reported it within the last two seconds.
     pub freq: Option<u64>,
+}
+
+/// One Contact from today's Log, as much as "worked today" needs.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Worked {
+    /// Uppercase.
+    pub call: String,
+    /// ADIF band name, e.g. `20m`.
+    pub band: String,
+    /// ADIF mode, e.g. `CW`, `SSB`, `FT8`.
+    pub mode: String,
+}
+
+/// Open the Contact form on this Call (and Their ref). Never tunes.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LogPrefill {
+    pub call: String,
+    pub their_ref: Option<String>,
+}
+
+/// Tune the receive frequency to `hz`, and the mode when one is mapped. The host applies its
+/// gates (not connected, Doppler tracking). Never touches split.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TuneRequest {
+    pub hz: u64,
+    pub mode: Option<RigMode>,
+    /// The name the source gave the mode, for the note when none is mapped.
+    pub mode_name: String,
+}
+
+/// A request an Activity makes of the host after a key, fetched with [`Activity::take_request`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum HostRequest {
+    OpenLog(LogPrefill),
+    Tune(TuneRequest),
 }
 
 /// News from outside the rig and the keyboard that an Activity may care about. A closed set;
@@ -113,6 +157,19 @@ pub trait Activity {
         None
     }
 
+    /// The Activity has just come to the foreground.
+    fn on_enter(&mut self) {}
+
+    /// Whether the Activity wants [`ActivityCtx::worked`] filled (it reads the Log).
+    fn uses_log(&self) -> bool {
+        false
+    }
+
+    /// A request the last key made of the host (open the Contact form, tune). Taking it clears it.
+    fn take_request(&mut self) -> Option<HostRequest> {
+        None
+    }
+
     /// The Activity's own plain keys, checked against the reserved table when it is hosted.
     fn keys(&self) -> Vec<KeyEntry> {
         Vec::new()
@@ -148,6 +205,11 @@ pub trait Activity {
     fn log_blocked(&self) -> Option<String> {
         None
     }
+
+    /// The active Activation plan changed. `role` is the Activator Role of the plan's Activity
+    /// (`Role::General` when no plan is active) and `my_refs` its references, first primary.
+    /// The Contact form's own references (`LogDefaults::my_refs`) come from here.
+    fn set_plan(&mut self, _role: Role, _my_refs: &[String]) {}
 
     /// One line for each thing quitting now would lose (unsent CW input, active Doppler
     /// tracking). Empty when nothing would be lost.

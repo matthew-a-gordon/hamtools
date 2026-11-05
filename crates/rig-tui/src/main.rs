@@ -1,6 +1,7 @@
 use std::error::Error;
 use std::path::PathBuf;
 use std::process::ExitCode;
+use std::sync::Arc;
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::time::{Duration, Instant, SystemTime};
 
@@ -9,8 +10,14 @@ use hamtools_config::Grid;
 use ratatui::DefaultTerminal;
 use ratatui::crossterm::event::{self, Event, KeyEventKind};
 use rig_tui::geocode::{GeocodeResult, Geocoder};
+use rig_tui::refdata::ReferenceData;
+use rig_tui::reference::{
+    Limits, ReferenceClient, SystemClock, UreqTransport, default_cache_dir, user_agent,
+};
 use rig_tui::satellite::{Satellite, load_data};
-use rig_tui::{App, Command, Config, HostEvent, Rig, config_path, default_log_path, render};
+use rig_tui::{
+    App, Command, Config, HostEvent, PotaHunter, Rig, config_path, default_log_path, render,
+};
 use sat_tui::cache::{Cache, Dataset, Decision, decide};
 use sat_tui::fetch::Fetcher;
 use sat_tui::observer::{Spec, resolve};
@@ -22,6 +29,7 @@ const TICK: Duration = Duration::from_millis(100);
 
 const USAGE: &str = "usage: rig-tui [--config PATH] [--grid GRID | --lat DEG --lon DEG] [--alt METRES] [ADDR]
 
+--offline never asks the network (POTA spots show only what is cached; satellite data is not downloaded).
 ADDR is the rigctld of the Active rig; it overrides that profile's address (with no profiles: 127.0.0.1:4532).
 Config defaults to $XDG_CONFIG_HOME/hamtools/config.toml (see config.example.toml).
 The app starts without a rig and keeps retrying the connection.
@@ -39,21 +47,11 @@ fn main() -> ExitCode {
     }
 }
 
-fn cache_dir() -> Option<PathBuf> {
-    let base = match std::env::var("XDG_CACHE_HOME")
-        .ok()
-        .filter(|d| !d.is_empty())
-    {
-        Some(dir) => PathBuf::from(dir),
-        None => PathBuf::from(std::env::var("HOME").ok()?).join(".cache"),
-    };
-    Some(base.join("hamtools"))
-}
-
 fn try_main() -> Result<(), Box<dyn Error>> {
     let mut config_arg: Option<PathBuf> = None;
     let mut addr_arg: Option<String> = None;
     let mut position = Spec::default();
+    let mut offline = false;
     let mut args = std::env::args().skip(1);
     while let Some(arg) = args.next() {
         let mut value = |name: &str| args.next().ok_or(format!("{name} needs a value"));
@@ -62,6 +60,7 @@ fn try_main() -> Result<(), Box<dyn Error>> {
                 println!("{USAGE}");
                 return Ok(());
             }
+            "--offline" => offline = true,
             "--config" => config_arg = Some(value("--config")?.into()),
             "--grid" => position.grid = Some(value("--grid")?),
             "--lat" => position.lat_deg = Some(value("--lat")?.parse()?),
@@ -96,7 +95,7 @@ fn try_main() -> Result<(), Box<dyn Error>> {
     let rt = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()?;
-    let mut app = App::with_callsign(config.callsign)
+    let mut app = App::with_callsign(config.callsign.clone())
         .with_soft_keys(config.soft_keys)
         .with_softkey_sets(config.softkey_sets)
         .with_locator(config.locator)
@@ -108,12 +107,25 @@ fn try_main() -> Result<(), Box<dyn Error>> {
         ))
         .with_rigs(&config.rigs, config.rig_default.as_deref())
         .with_config_path(config_arg.or(default_path));
+    // Every reference request goes through this one client; it runs its own network thread.
+    // Starting it makes no request: spots are asked for only while the POTA Hunter is in the
+    // foreground (ADR 0003).
+    let cache_dir = default_cache_dir().unwrap_or_else(|| std::env::temp_dir().join("hamtools"));
+    let client = Arc::new(ReferenceClient::start(
+        Arc::new(UreqTransport),
+        Arc::new(SystemClock::new()),
+        Limits::default(),
+        user_agent(config.callsign.as_deref()),
+        cache_dir.clone(),
+    ));
+    app = app.with_reference_data(Arc::new(ReferenceData::new(Arc::clone(&client), cache_dir)));
+    app.host_activity(Box::new(PotaHunter::new(client, !offline)));
     if let Some(addr) = addr_arg {
         app = app.with_rig_addr(addr);
     }
     // The Satellite Activity is built from whatever the cache holds (nothing is fine). It stays
     // in the background until chosen from the go-to palette. Untested on hardware.
-    let mut downloads = Downloads::new(cache_dir());
+    let mut downloads = Downloads::new(default_cache_dir(), offline);
     let data = downloads
         .cache()
         .map(|cache| load_data(&cache))
@@ -151,10 +163,11 @@ struct Downloads {
     rx: Receiver<Outcome>,
     in_flight: usize,
     fetched: bool,
+    offline: bool,
 }
 
 impl Downloads {
-    fn new(dir: Option<PathBuf>) -> Self {
+    fn new(dir: Option<PathBuf>, offline: bool) -> Self {
         let (tx, rx) = mpsc::channel();
         Self {
             dir,
@@ -162,6 +175,7 @@ impl Downloads {
             rx,
             in_flight: 0,
             fetched: false,
+            offline,
         }
     }
 
@@ -171,6 +185,14 @@ impl Downloads {
 
     /// Start whatever is due. `force`: the operator asked, so only the CelesTrak pause applies.
     fn refresh(&mut self, app: &mut App, force: bool) {
+        if self.offline {
+            if force {
+                app.set_status(Some(
+                    "offline: satellite data is not downloaded".to_string(),
+                ));
+            }
+            return;
+        }
         let Some(cache) = self.cache() else {
             if force {
                 app.set_status(Some(

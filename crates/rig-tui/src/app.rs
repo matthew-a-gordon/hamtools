@@ -4,10 +4,11 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime};
 
-use chrono::{DateTime, Utc};
-use hamtools_config::{Callsign, Grid, LicenseClass, RigKind, RigProfile};
+use chrono::{DateTime, Datelike, Utc};
+use hamtools_config::{Callsign, Grid, LicenseClass, Plan, PlanActivity, RigKind, RigProfile};
 use hamtools_tui::modal::Modal;
 use logbook::{Log, band_for_hz};
 use ratatui::Frame;
@@ -16,7 +17,9 @@ use ratatui::layout::Rect;
 use ratatui::text::Line;
 use ratatui::widgets::Paragraph;
 
-use crate::activity::{Activity, ActivityCtx, HostEvent};
+use crate::activity::{
+    Activity, ActivityCtx, HostEvent, HostRequest, LogPrefill, TuneRequest, Worked,
+};
 use crate::bandplan::{BandAction, BandplanModal, View as BandView};
 use crate::config_dialog::{ConfigDialog, Outcome};
 use crate::general::General;
@@ -26,7 +29,9 @@ use crate::keys::{self, Action, Scope};
 use crate::layout::{self, Fit, Panes};
 use crate::logging::{Logging, Snapshot};
 use crate::palette::{Palette, PaletteOutcome, PaletteRow, Target};
-use crate::panel::{LogDefaults, LogMode};
+use crate::panel::{LogDefaults, LogMode, Role};
+use crate::plans::{self, PlanRow, Plans, PlansModal, PlansOutcome};
+use crate::refdata::ReferenceData;
 use crate::rig::{Command, Feature, RigEvent, RigMode};
 use crate::rigs::{Capability, RigSlot, Switcher};
 use crate::softkeys::{Exchange, Layers, NamedSet, Resolved, resolve};
@@ -123,6 +128,9 @@ macro_rules! ctx {
         ctx!($self, $recent, crate::layout::Panes::MINIMAL)
     };
     ($self:ident, $recent:expr, $panes:expr) => {
+        ctx!($self, $recent, $panes, &[])
+    };
+    ($self:ident, $recent:expr, $panes:expr, $worked:expr) => {
         ActivityCtx {
             connected: $self.connected,
             live: $self.exchange.live($self.callsign.as_deref()),
@@ -135,7 +143,11 @@ macro_rules! ctx {
                 .map(|r| &r.value.0),
             recent: $recent,
             panes: $panes,
-            utc: $self.utc.unwrap_or_else(SystemTime::now).into(),
+            utc: $self.clock(),
+            observer: $self.locator.as_deref().and_then(crate::spots::grid_center),
+            license_class: $self.license_class,
+            worked: $worked,
+            logged: $self.logging.count(),
             freq: $self
                 .freq
                 .as_ref()
@@ -164,6 +176,11 @@ pub struct App {
     /// The Ctrl-G go-to palette and the Ctrl-K keybindings modal.
     palette: Option<Palette>,
     keybindings: Option<KeybindingsModal>,
+    /// The Activation plans: stored list, the one active this session, and their modal.
+    plans: Plans,
+    plans_modal: Option<PlansModal>,
+    refdata: Option<Arc<ReferenceData>>,
+    last_resolve: Option<Instant>,
     connected: bool,
     now: Instant,
     utc: Option<SystemTime>,
@@ -240,6 +257,10 @@ impl App {
             quit_confirm: None,
             palette: None,
             keybindings: None,
+            plans: Plans::none(),
+            plans_modal: None,
+            refdata: None,
+            last_resolve: None,
             connected: false,
             // Only the starting point for staleness; every tick replaces it.
             now: Instant::now(),
@@ -374,8 +395,28 @@ impl App {
 
     /// The config file the dialog edits (`None`: no location, so the dialog is read-only).
     pub fn with_config_path(mut self, path: Option<PathBuf>) -> Self {
+        self.plans = path
+            .as_deref()
+            .map_or_else(Plans::none, |p| Plans::load(&plans::plans_path(p)));
         self.config_path = path;
         self
+    }
+
+    /// The park and summit data plans snapshot from. Without it plans still save, unresolved.
+    pub fn with_reference_data(mut self, data: Arc<ReferenceData>) -> Self {
+        self.refdata = Some(data);
+        self
+    }
+
+    /// The plan launched from the palette this session, if any (never stored; a restart returns
+    /// it to planned).
+    pub fn active_plan(&self) -> Option<&Plan> {
+        self.plans.active()
+    }
+
+    /// Why plans cannot be stored (no config directory, or `plans.toml` does not parse).
+    pub fn plans_error(&self) -> Option<&str> {
+        self.plans.error()
     }
 
     /// The Locator in use (6 characters, uppercase), if any.
@@ -455,6 +496,7 @@ impl App {
         if let Some(Some(note)) = left {
             self.status = Some(note);
         }
+        self.activities[index].on_enter();
     }
 
     /// Hand a piece of outside news (a finished download) to every hosted Activity.
@@ -594,6 +636,7 @@ impl App {
             || self.logging.modal_open()
             || self.quit_confirm.is_some()
             || self.palette.is_some()
+            || self.plans_modal.is_some()
             || self.keybindings.is_some()
     }
 
@@ -693,19 +736,241 @@ impl App {
         }
     }
 
-    /// One palette row per hosted Activity. Rows for upcoming Activation plans go in front.
+    /// The palette: upcoming Activation plans first (soonest first, overdue ones flagged), then
+    /// one row per hosted Activity, then the way into the plan manager.
     fn palette_rows(&self) -> Vec<PaletteRow> {
         let ctx = ctx!(self);
-        self.activities
-            .iter()
-            .enumerate()
-            .map(|(i, a)| PaletteRow {
-                target: Target::Activity(i),
-                name: a.name().to_string(),
-                state: a.state_line(&ctx),
-                unavailable: a.unavailable().or_else(|| self.activity_unavailable(i)),
+        let today = self.today();
+        let now_unix = self.now_unix();
+        let mut rows: Vec<PaletteRow> = self
+            .plans
+            .sorted()
+            .into_iter()
+            .filter(|p| !p.done)
+            .filter_map(|p| {
+                let index = self.plans.list().iter().position(|q| q.id == p.id)?;
+                let name = plans::display_name(p, self.refdata.as_deref(), now_unix);
+                Some(PaletteRow {
+                    target: Target::Plan(index),
+                    name: format!(
+                        "{} {}",
+                        plans::activity_label(p.activity),
+                        plans::refs_label(p)
+                    ),
+                    state: format!(
+                        "{} {}{}",
+                        p.date,
+                        self.plans.status(p, &today).label(),
+                        name.map(|n| format!(" {n}")).unwrap_or_default()
+                    ),
+                    unavailable: None,
+                })
+            })
+            .collect();
+        rows.extend(self.activities.iter().enumerate().map(|(i, a)| PaletteRow {
+            target: Target::Activity(i),
+            name: a.name().to_string(),
+            state: a.state_line(&ctx),
+            unavailable: a.unavailable().or_else(|| self.activity_unavailable(i)),
+        }));
+        rows.push(PaletteRow {
+            target: Target::ManagePlans,
+            name: "Plans".to_string(),
+            state: format!(
+                "{} stored: new, edit, duplicate, delete",
+                self.plans.list().len()
+            ),
+            unavailable: None,
+        });
+        rows
+    }
+
+    /// Today's UTC date as `YYYY-MM-DD`.
+    fn today(&self) -> String {
+        let d = self.clock();
+        format!("{:04}-{:02}-{:02}", d.year(), d.month(), d.day())
+    }
+
+    fn now_unix(&self) -> u64 {
+        u64::try_from(self.clock().timestamp()).unwrap_or(0)
+    }
+
+    fn plan_rows(&self) -> Vec<PlanRow> {
+        let today = self.today();
+        let now_unix = self.now_unix();
+        self.plans
+            .sorted()
+            .into_iter()
+            .map(|p| PlanRow {
+                plan: p.clone(),
+                status: self.plans.status(p, &today),
+                name: plans::display_name(p, self.refdata.as_deref(), now_unix),
             })
             .collect()
+    }
+
+    fn open_plans(&mut self) {
+        self.plans_modal = Some(PlansModal::new(
+            self.plan_rows(),
+            self.plans.error().map(str::to_string),
+            self.today(),
+        ));
+    }
+
+    fn refresh_plans_modal(&mut self) {
+        let (rows, blocked) = (self.plan_rows(), self.plans.error().map(str::to_string));
+        if let Some(modal) = &mut self.plans_modal {
+            modal.set_rows(rows, blocked);
+        }
+    }
+
+    /// Stop using the active plan's reference and Soft keys (it was finished or deleted).
+    fn deactivate_plan(&mut self) {
+        self.exchange.my_ref = None;
+        self.set_plan_soft_keys(None, BTreeMap::new());
+        self.tell_activities_plan(None);
+    }
+
+    fn tell_activities_plan(&mut self, plan: Option<&Plan>) {
+        let (role, refs) = match plan {
+            Some(p) => (
+                match p.activity {
+                    PlanActivity::Sota => Role::SotaActivator,
+                    PlanActivity::Pota => Role::PotaActivator,
+                },
+                p.references.clone(),
+            ),
+            None => (Role::General, Vec::new()),
+        };
+        for a in &mut self.activities {
+            a.set_plan(role, &refs);
+        }
+    }
+
+    /// Start the plan at `index` of the stored list: it becomes the active plan, its reference is
+    /// my reference, its Soft key set loads, and its Activity comes to the foreground in the
+    /// Activator Role. A missing Soft key set is flagged and never stops this.
+    fn launch_plan(&mut self, index: usize) {
+        let Some(plan) = self.plans.list().get(index).cloned() else {
+            return;
+        };
+        self.launch_plan_quietly(index);
+        let name = plans::activity_label(plan.activity);
+        let primary = plan.primary().unwrap_or("");
+        let position = self.activities.iter().position(|a| a.name() == name);
+        if let Some(position) = position {
+            self.set_foreground(position);
+        }
+        // A flag about a missing Soft key set stays on the status line.
+        if self.resolved.missing_sets.is_empty() {
+            self.status = Some(match position {
+                Some(_) => format!("Plan {name} {primary} launched"),
+                None => format!(
+                    "Plan {name} {primary} is active; the {name} Activity is not available yet"
+                ),
+            });
+        }
+    }
+
+    fn on_plans_key(&mut self, key: KeyEvent) {
+        let Some(modal) = &mut self.plans_modal else {
+            return;
+        };
+        match modal.on_key(key) {
+            PlansOutcome::Stay => {}
+            PlansOutcome::Close => self.plans_modal = None,
+            PlansOutcome::Save(plan) => {
+                let mut plan = *plan;
+                plan.snapshot =
+                    plans::snapshot_for(&plan, self.refdata.as_deref(), self.now_unix());
+                let id = plan.id.clone();
+                let was_active = self.plans.active().is_some_and(|a| a.id == id);
+                match self.plans.upsert(plan) {
+                    Ok(()) => {
+                        if was_active {
+                            self.deactivate_plan();
+                            if let Some(i) = self.plans.list().iter().position(|p| p.id == id) {
+                                self.launch_plan_quietly(i);
+                            }
+                        }
+                        self.refresh_plans_modal();
+                        if let Some(modal) = &mut self.plans_modal {
+                            modal.show_list();
+                            modal.select(&id);
+                        }
+                    }
+                    Err(why) => self.plans_notice(why),
+                }
+            }
+            PlansOutcome::Delete(id) => {
+                let was_active = self.plans.active().is_some_and(|a| a.id == id);
+                match self.plans.delete(&id) {
+                    Ok(()) => {
+                        if was_active {
+                            self.deactivate_plan();
+                        }
+                        self.refresh_plans_modal();
+                    }
+                    Err(why) => self.plans_notice(why),
+                }
+            }
+            PlansOutcome::ToggleDone(id, done) => {
+                let was_active = self.plans.active().is_some_and(|a| a.id == id);
+                match self.plans.set_done(&id, done) {
+                    Ok(()) => {
+                        if was_active && done {
+                            self.deactivate_plan();
+                        }
+                        self.refresh_plans_modal();
+                    }
+                    Err(why) => self.plans_notice(why),
+                }
+            }
+            PlansOutcome::Reload => {
+                let path = self.config_path.as_deref().map(plans::plans_path);
+                self.plans.reload(path.as_deref());
+                self.refresh_plans_modal();
+                if let Some(modal) = &mut self.plans_modal {
+                    modal.show_list();
+                }
+            }
+        }
+    }
+
+    /// Re-apply an edited active plan's reference and Soft keys without moving the screen.
+    fn launch_plan_quietly(&mut self, index: usize) {
+        let Some(plan) = self.plans.list().get(index).cloned() else {
+            return;
+        };
+        self.plans.set_active(Some(plan.id.clone()));
+        self.exchange.my_ref = plan.primary().map(str::to_string);
+        self.set_plan_soft_keys(plan.softkey_set.clone(), plan.softkeys.clone());
+        self.tell_activities_plan(Some(&plan));
+    }
+
+    fn plans_notice(&mut self, why: String) {
+        if let Some(modal) = &mut self.plans_modal {
+            modal.set_notice(Some(why));
+        }
+    }
+
+    /// Plans saved offline get their snapshot once the reference turns up in the cache. Cheap
+    /// when nothing is pending, and never fetches.
+    fn tick_plans(&mut self, now: Instant) {
+        const EVERY: Duration = Duration::from_secs(5);
+        if !self.plans.has_unresolved()
+            || self
+                .last_resolve
+                .is_some_and(|at| now.duration_since(at) < EVERY)
+        {
+            return;
+        }
+        self.last_resolve = Some(now);
+        if let Some(data) = self.refdata.clone()
+            && self.plans.resolve_pending(&data, self.now_unix())
+        {
+            self.refresh_plans_modal();
+        }
     }
 
     fn open_palette(&mut self) {
@@ -784,10 +1049,21 @@ impl App {
     /// The `l` gate. Opens the form with a snapshot of the rig, or says in the status line which
     /// condition failed.
     fn open_log_form(&mut self) {
+        self.open_log_form_with(None);
+    }
+
+    /// `open_log_form`, with the Call (and Their ref) an Activity chose, such as a spot.
+    fn open_log_form_with(&mut self, prefill: Option<LogPrefill>) {
         match self.log_snapshot() {
-            Ok(snapshot) => {
+            Ok(mut snapshot) => {
                 self.entry = None;
+                if let Some(their_ref) = prefill.as_ref().and_then(|p| p.their_ref.clone()) {
+                    snapshot.defaults.their_ref = Some(their_ref);
+                }
                 self.logging.open_form(snapshot);
+                if let Some(p) = &prefill {
+                    self.logging.prefill_call(&p.call);
+                }
                 self.sync_form_exchange();
             }
             Err(why) => self.status = Some(why),
@@ -946,11 +1222,19 @@ impl App {
             match palette.on_key(key) {
                 PaletteOutcome::Keep => {}
                 PaletteOutcome::Close => self.palette = None,
-                PaletteOutcome::Choose(Target::Activity(index)) => {
+                PaletteOutcome::Choose(target) => {
                     self.palette = None;
-                    self.set_foreground(index);
+                    match target {
+                        Target::Activity(index) => self.set_foreground(index),
+                        Target::Plan(index) => self.launch_plan(index),
+                        Target::ManagePlans => self.open_plans(),
+                    }
                 }
             }
+            return Vec::new();
+        }
+        if self.plans_modal.is_some() {
+            self.on_plans_key(key);
             return Vec::new();
         }
         if let Some(modal) = &mut self.keybindings {
@@ -1013,14 +1297,74 @@ impl App {
         if self.entry.is_some() {
             return self.on_entry_key(key);
         }
-        let ctx = ctx!(self);
+        let worked = self.worked_today();
+        let ctx = ctx!(self, &[], crate::layout::Panes::MINIMAL, &worked);
         if let Some(out) = self.activities[self.foreground].on_key(key, &ctx) {
             if out.status.is_some() {
                 self.status = out.status;
             }
-            return out.commands;
+            let mut commands = out.commands;
+            match self.activities[self.foreground].take_request() {
+                Some(HostRequest::OpenLog(prefill)) => self.open_log_form_with(Some(prefill)),
+                Some(HostRequest::Tune(tune)) => commands.extend(self.apply_tune(tune)),
+                None => {}
+            }
+            return commands;
         }
         self.on_strip_key(key)
+    }
+
+    /// Today's Contacts from the Log, for an Activity that marks "worked today". Derived afresh
+    /// each time so there is no state to drift; empty for any other Activity.
+    fn worked_today(&self) -> Vec<Worked> {
+        if !self.activities[self.foreground].uses_log() {
+            return Vec::new();
+        }
+        let Ok(records) = self
+            .current_log()
+            .and_then(|log| log.read().map_err(|e| e.to_string()))
+        else {
+            return Vec::new();
+        };
+        let today = self.clock().date_naive();
+        records
+            .iter()
+            .filter(|r| r.start().is_some_and(|s| s.date_naive() == today))
+            .filter_map(|r| {
+                Some(Worked {
+                    call: r.call()?.to_ascii_uppercase(),
+                    band: r.band()?.to_string(),
+                    mode: r.mode()?.to_ascii_uppercase(),
+                })
+            })
+            .collect()
+    }
+
+    /// Tune the receive frequency (and the mode when one is mapped) for an Activity. Refused
+    /// while any hosted Activity is correcting the dial itself. Never touches split, and none of
+    /// these commands can key the transmitter.
+    fn apply_tune(&mut self, tune: TuneRequest) -> Vec<Command> {
+        if let Some(why) = self.activities.iter().find_map(|a| a.tuning_blocked()) {
+            self.status = Some(format!("not while {why}"));
+            return Vec::new();
+        }
+        if !self.ready() {
+            return Vec::new();
+        }
+        let mut commands = Vec::new();
+        match tune.mode {
+            Some(mode) => {
+                self.status = None;
+                if self.last_mode() != Some(&mode) {
+                    commands.push(Command::SetMode { mode, passband: 0 });
+                }
+            }
+            None => {
+                self.status = Some(format!("mode {} not set: frequency only", tune.mode_name));
+            }
+        }
+        commands.push(Command::SetFreq(tune.hz));
+        commands
     }
 
     /// The plain keys and aliases of the shared table. Only reached when no text-entering area
@@ -1261,6 +1605,7 @@ impl App {
     /// poll, the S-meter poll and the active panel's requests (the CW panel's `TB;` every tick).
     pub fn tick(&mut self, now: Instant) -> Vec<Command> {
         self.now = now;
+        self.tick_plans(now);
         if !self.connected {
             let due = self
                 .last_connect
@@ -1308,7 +1653,8 @@ impl App {
     pub(crate) fn render_body(&self, frame: &mut Frame, area: Rect, panes: Panes) {
         // Room inside the border, less the heading line.
         let recent = self.recent_contacts(usize::from(area.height.saturating_sub(3)));
-        let ctx = ctx!(self, &recent, panes);
+        let worked = self.worked_today();
+        let ctx = ctx!(self, &recent, panes, &worked);
         self.activities[self.foreground].render(frame, area, &ctx);
     }
 
@@ -1334,6 +1680,9 @@ impl App {
         }
         if let Some(palette) = &self.palette {
             palette.render(frame, area);
+        }
+        if let Some(modal) = &self.plans_modal {
+            modal.render(frame, area);
         }
         if let Some(modal) = &self.keybindings {
             modal.render(frame, area);
