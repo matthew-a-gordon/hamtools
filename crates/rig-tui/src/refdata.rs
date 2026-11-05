@@ -211,12 +211,22 @@ pub struct ReferenceData {
     cache_dir: PathBuf,
     /// Parsed snapshots by feed key, valid while `fetched_at` is unchanged.
     parsed: Mutex<HashMap<String, (u64, Parsed)>>,
+    /// `--offline`: no refresh or first lookup asks the client for anything.
+    offline: bool,
 }
 
 fn clean(s: &str) -> String {
     s.chars()
         .filter(|c| c.is_ascii_alphanumeric() || *c == '-')
         .collect::<String>()
+}
+
+fn hit(entry: &RefEntry, snap: &Snapshot, now_unix: u64) -> Hit {
+    Hit {
+        entry: entry.clone(),
+        age_secs: snap.age_secs(now_unix),
+        stale: snap.is_stale(now_unix),
+    }
 }
 
 fn today_key(now_unix: u64) -> u32 {
@@ -232,7 +242,14 @@ impl ReferenceData {
             client,
             cache_dir,
             parsed: Mutex::new(HashMap::new()),
+            offline: false,
         }
+    }
+
+    /// With `offline` set every refresh and first lookup is a no-op: the cache is all there is.
+    pub fn with_offline(mut self, offline: bool) -> Self {
+        self.offline = offline;
+        self
     }
 
     fn summits_feed() -> Feed {
@@ -259,16 +276,25 @@ impl ReferenceData {
 
     /// Explicit refresh of the SOTA summit list (at most daily, conditional requests).
     pub fn refresh_summits(&self) {
+        if self.offline {
+            return;
+        }
         self.client.request(&Self::summits_feed());
     }
 
     /// Explicit refresh of one POTA location's park list, e.g. `US-IN`.
     pub fn refresh_park_list(&self, location: &str) {
+        if self.offline {
+            return;
+        }
         self.client.request(&Self::park_list_feed(location));
     }
 
     /// Fetch one park's detail (plan save, explicit refresh), unless cached within 24 hours.
     pub fn refresh_park(&self, reference: &str, now_unix: u64) {
+        if self.offline {
+            return;
+        }
         let feed = Self::park_feed(reference);
         if let Some(s) = self.client.snapshot(&feed.key)
             && s.age_secs(now_unix) < PARK_DETAIL_FRESH.as_secs()
@@ -311,20 +337,15 @@ impl ReferenceData {
         keys
     }
 
-    /// Every cached entry with the age of its source, retired summits excluded.
-    fn all(&self, now_unix: u64) -> Vec<Hit> {
-        let mut out = vec![];
+    /// Visit every cached entry with the snapshot it came from, retired summits excluded. Nothing
+    /// is cloned: callers copy only what they keep.
+    fn scan(&self, now_unix: u64, mut visit: impl FnMut(&RefEntry, &Snapshot)) {
         let today = today_key(now_unix);
         let mut push = |entries: &[RefEntry], snap: &Snapshot| {
             for e in entries {
-                if e.valid_to.is_some_and(|v| v < today) {
-                    continue;
+                if e.valid_to.is_none_or(|v| v >= today) {
+                    visit(e, snap);
                 }
-                out.push(Hit {
-                    entry: e.clone(),
-                    age_secs: snap.age_secs(now_unix),
-                    stale: snap.is_stale(now_unix),
-                });
             }
         };
         for key in self.cached_keys(PARK_PREFIX, Some(PARK_LIST_PREFIX)) {
@@ -342,7 +363,6 @@ impl ReferenceData {
         if let Some((snap, Ok(p))) = self.parse_snapshot(SUMMITS_KEY, parse_summit_list) {
             push(&p, &snap);
         }
-        out
     }
 
     /// Why the cached summit list could not be used (a failed header check), if so.
@@ -363,10 +383,13 @@ impl ReferenceData {
     /// Cache only. A reference that is in no cache is [`Lookup::NotCached`]; nothing is fetched.
     pub fn lookup(&self, reference: &str, now_unix: u64) -> Lookup {
         let want = reference.trim().to_ascii_uppercase();
-        self.all(now_unix)
-            .into_iter()
-            .find(|h| h.entry.reference == want)
-            .map_or(Lookup::NotCached, Lookup::Found)
+        let mut found = None;
+        self.scan(now_unix, |e, snap| {
+            if found.is_none() && e.reference == want {
+                found = Some(hit(e, snap, now_unix));
+            }
+        });
+        found.map_or(Lookup::NotCached, Lookup::Found)
     }
 
     /// The first lookup of a reference: like [`lookup`](Self::lookup), but when nothing at all is
@@ -399,30 +422,26 @@ impl ReferenceData {
             return vec![];
         }
         let mut seen = std::collections::HashSet::new();
-        let mut hits: Vec<(u8, Hit)> = self
-            .all(now_unix)
-            .into_iter()
-            .filter(|h| seen.insert(h.entry.reference.clone()))
-            .filter_map(|h| {
-                let r = h.entry.reference.to_ascii_lowercase();
-                let n = h.entry.name.to_ascii_lowercase();
-                words
-                    .iter()
-                    .all(|w| r.contains(w) || n.contains(w))
-                    .then(|| {
-                        let rank = if words.len() == 1 && r == words[0] {
-                            0
-                        } else if words.iter().all(|w| r.starts_with(w)) {
-                            1
-                        } else if words.iter().all(|w| r.contains(w)) {
-                            2
-                        } else {
-                            3
-                        };
-                        (rank, h)
-                    })
-            })
-            .collect();
+        let mut hits: Vec<(u8, Hit)> = vec![];
+        self.scan(now_unix, |e, snap| {
+            let r = e.reference.to_ascii_lowercase();
+            let n = e.name.to_ascii_lowercase();
+            if !words.iter().all(|w| r.contains(w) || n.contains(w))
+                || !seen.insert(e.reference.clone())
+            {
+                return;
+            }
+            let rank = if words.len() == 1 && r == words[0] {
+                0
+            } else if words.iter().all(|w| r.starts_with(w)) {
+                1
+            } else if words.iter().all(|w| r.contains(w)) {
+                2
+            } else {
+                3
+            };
+            hits.push((rank, hit(e, snap, now_unix)));
+        });
         hits.sort_by(|a, b| {
             a.0.cmp(&b.0)
                 .then_with(|| a.1.entry.reference.cmp(&b.1.entry.reference))

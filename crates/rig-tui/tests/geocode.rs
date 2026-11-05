@@ -180,3 +180,15 @@ fn errors_are_not_cached() {
 
     assert_eq!(stub.count(), 2);
 }
+
+#[test]
+fn offline_makes_no_request() {
+    let stub = Stub::start(200, MIDDLEBURY);
+    let geocoder = Geocoder::with_base_url(format!("http://{}", stub.addr)).with_offline(true);
+
+    assert!(matches!(
+        geocoder.lookup("Middlebury, IN"),
+        Err(GeocodeError::Offline(_))
+    ));
+    assert_eq!(stub.count(), 0);
+}

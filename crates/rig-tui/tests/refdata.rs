@@ -274,3 +274,17 @@ fn only_the_summit_list_and_pota_urls_are_ever_requested() {
     }
     let _ = std::fs::remove_dir_all(&f.dir);
 }
+
+#[test]
+fn offline_data_never_asks_the_client_for_anything() {
+    let mut f = fx("offline");
+    f.data = ReferenceData::new(f.client.clone(), f.dir.clone()).with_offline(true);
+    f.data.refresh_summits();
+    f.data.refresh_park_list("US-IN");
+    f.data.refresh_park("US-4571", f.now());
+    let _ = f.data.lookup_or_fetch("US-4571", f.now());
+    let _ = f.data.lookup_or_fetch("W4C/CM-001", f.now());
+    f.client.sync();
+    assert_eq!(f.calls(), 0);
+    let _ = std::fs::remove_dir_all(&f.dir);
+}

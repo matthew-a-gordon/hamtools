@@ -81,6 +81,7 @@ pub struct Geocoder {
     min_interval: Duration,
     agent: ureq::Agent,
     state: Arc<Mutex<State>>,
+    offline: bool,
 }
 
 impl Default for Geocoder {
@@ -107,7 +108,14 @@ impl Geocoder {
             min_interval: MIN_INTERVAL,
             agent,
             state: Arc::default(),
+            offline: false,
         }
+    }
+
+    /// `--offline`: every lookup fails at once with [`GeocodeError::Offline`], no request made.
+    pub fn with_offline(mut self, offline: bool) -> Self {
+        self.offline = offline;
+        self
     }
 
     pub fn with_min_interval(mut self, min_interval: Duration) -> Self {
@@ -123,6 +131,9 @@ impl Geocoder {
     /// Look the address up, waiting first if the last request was less than the minimum interval
     /// ago. An address seen before in this session is answered from the cache.
     pub fn lookup(&self, address: &str) -> GeocodeResult {
+        if self.offline {
+            return Err(GeocodeError::Offline("started with --offline".to_string()));
+        }
         let key = address.split_whitespace().collect::<Vec<_>>().join(" ");
         let key = key.to_lowercase();
         let wait = {

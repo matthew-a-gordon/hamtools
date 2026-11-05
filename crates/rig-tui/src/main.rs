@@ -122,7 +122,8 @@ fn try_main() -> Result<(), Box<dyn Error>> {
         user_agent(config.callsign.as_deref()),
         cache_dir.clone(),
     ));
-    let refdata = Arc::new(ReferenceData::new(Arc::clone(&client), cache_dir));
+    let refdata =
+        Arc::new(ReferenceData::new(Arc::clone(&client), cache_dir).with_offline(offline));
     app = app.with_reference_data(Arc::clone(&refdata));
     app.host_activity(Box::new(PotaHunter::new(Arc::clone(&client), !offline)));
     // The SOTA Chaser reads the cached summit list only and makes no SOTA API call.
@@ -153,7 +154,7 @@ fn try_main() -> Result<(), Box<dyn Error>> {
     )));
     // One connection per configured rig; both stay up.
     let mut rigs: Vec<Rig> = app.rig_addrs().into_iter().map(Rig::new).collect();
-    let geocoder = Geocoder::new();
+    let geocoder = Geocoder::new().with_offline(offline);
 
     let mut terminal = ratatui::init();
     let result = run(
