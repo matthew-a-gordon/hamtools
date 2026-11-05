@@ -71,9 +71,7 @@ fn upper(s: Option<&str>) -> String {
 }
 
 fn describe(r: &Record) -> String {
-    let when = r
-        .start()
-        .map_or_else(|| "no start time".to_string(), |t| stamp(t));
+    let when = r.start().map_or_else(|| "no start time".to_string(), stamp);
     format!(
         "{} {} {} {}",
         or_dash(r.call()),
