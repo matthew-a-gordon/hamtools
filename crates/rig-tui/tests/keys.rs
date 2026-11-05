@@ -191,6 +191,55 @@ mod chords {
     }
 
     #[test]
+    fn chords_open_over_every_modal_that_holds_nothing_to_lose() {
+        // (opening chord, text the modal shows)
+        for (opener, shown) in [
+            ('g', "Go to"),
+            ('k', "Keybindings"),
+            ('b', "Band"),
+            ('r', "Rigs"),
+            ('j', "Session"),
+        ] {
+            for (chord, wanted) in [('o', "Config"), ('r', "Rigs")] {
+                let mut app = connected_app_in(App::new(), "CW");
+                quiet(&mut app, ctrl(opener));
+                assert!(
+                    has(&screen(&app, 80, 24), shown),
+                    "Ctrl-{opener} did not open {shown}"
+                );
+                quiet(&mut app, ctrl(chord));
+                assert!(
+                    has(&screen(&app, 80, 24), wanted),
+                    "Ctrl-{chord} over {shown}"
+                );
+                // The first modal is gone, not hidden underneath.
+                if opener != chord {
+                    app.on_key(key(KeyCode::Esc));
+                    assert!(!app.has_overlay(), "{shown} was left under Ctrl-{chord}");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn chords_stay_blocked_over_modals_with_unsaved_input() {
+        let mut app = App::new();
+        quiet(&mut app, ctrl('o'));
+        quiet(&mut app, ctrl('r'));
+        assert!(has(&screen(&app, 80, 24), "Config"));
+        assert!(!has(&screen(&app, 80, 24), "Rigs"));
+
+        let mut app = App::new();
+        quiet(&mut app, ctrl('g'));
+        type_str(&mut app, "plans");
+        quiet(&mut app, key(KeyCode::Enter));
+        assert!(has(&screen(&app, 100, 30), "Activation plans"));
+        quiet(&mut app, ctrl('r'));
+        assert!(has(&screen(&app, 100, 30), "Activation plans"));
+        assert!(!has(&screen(&app, 100, 30), "Rigs"));
+    }
+
+    #[test]
     fn plain_aliases_work_on_the_strip_and_are_text_in_the_input() {
         let mut app = connected_app_in(App::new(), "CW");
         quiet(&mut app, key(KeyCode::Char('L')));
