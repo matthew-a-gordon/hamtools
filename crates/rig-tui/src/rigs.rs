@@ -95,11 +95,13 @@ pub fn table(kind: RigKind) -> Capabilities {
             ],
             bands_verified: false,
         },
-        // Nothing on the FT-847 is verified. hamlib's ft847 backend is not known to send
-        // Morse or to expose split outside sat mode, so those are off until proven.
+        // Split is verified on the FT-847 (2026-11-04, CLAUDE.md: `s` reads `1 Sub`, `i`/`x`
+        // return the transmit side, tracking set and read back both frequencies). SAT mode has
+        // no recorded hardware check and no hamlib read-back, so it stays unverified; CW is not
+        // known to work through hamlib's ft847 backend, so it stays off and unverified.
         RigKind::Ft847 => Capabilities {
             cw: no(false),
-            split: no(false),
+            split: yes(true),
             sat_mode: yes(false),
             bands: &[
                 "160m", "80m", "40m", "30m", "20m", "17m", "15m", "12m", "10m", "6m", "2m", "70cm",
