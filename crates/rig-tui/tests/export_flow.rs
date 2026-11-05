@@ -57,6 +57,19 @@ impl Drop for Fx {
     }
 }
 
+/// Width and height of the test screen.
+const SCREEN: (u16, u16) = (100, 30);
+
+fn view(app: &App) -> Vec<String> {
+    screen(app, SCREEN.0, SCREEN.1)
+}
+
+/// `src` with `from` replaced by `to`, failing the test if `from` is not there.
+fn replaced(src: &str, from: &str, to: &str) -> String {
+    assert!(src.contains(from), "fixture text not found: {from}");
+    src.replace(from, to)
+}
+
 fn has(rows: &[String], needle: &str) -> bool {
     rows.iter().any(|r| r.contains(needle))
 }
@@ -73,10 +86,10 @@ fn chords_stay_blocked_over_the_export_modal() {
     let fx = Fx::new("blocked");
     let mut app = fx.app();
     open_preview(&mut app);
-    assert!(has(&screen(&app, 100, 30), "K9TST@US-1234-20261105.adi"));
+    assert!(has(&view(&app), "K9TST@US-1234-20261105.adi"));
     for c in ['o', 'r', 'g', 'k', 'j'] {
         app.on_key(ctrl(c));
-        let rows = screen(&app, 100, 30);
+        let rows = view(&app);
         assert!(
             has(&rows, "K9TST@US-1234-20261105.adi"),
             "Ctrl-{c} closed the export modal"
@@ -90,7 +103,7 @@ fn the_preview_shows_files_exclusions_and_help_before_anything_is_written() {
     let fx = Fx::new("preview");
     let mut app = fx.app();
     open_preview(&mut app);
-    let rows = screen(&app, 100, 30);
+    let rows = view(&app);
     assert!(has(&rows, "K9TST@US-1234-20261105.adi"), "{rows:#?}");
     assert!(has(&rows, "1 Contact(s) selected"), "{rows:#?}");
     assert!(
@@ -99,7 +112,7 @@ fn the_preview_shows_files_exclusions_and_help_before_anything_is_written() {
     );
     assert!(!fx.out().exists(), "opening the preview writes nothing");
     app.on_key(key(KeyCode::Char('?')));
-    assert!(has(&screen(&app, 100, 30), "multi-state"));
+    assert!(has(&view(&app), "multi-state"));
 }
 
 #[test]
@@ -108,14 +121,14 @@ fn enter_writes_and_an_existing_file_asks_before_overwriting() {
     let mut app = fx.app();
     open_preview(&mut app);
     app.on_key(key(KeyCode::Enter));
-    assert!(has(&screen(&app, 100, 30), "Wrote 1 file(s)"));
+    assert!(has(&view(&app), "Wrote 1 file(s)"));
     let first = std::fs::read_to_string(fx.out()).unwrap();
     assert!(first.contains("<MY_STATE:2>IN"));
     assert!(!first.contains("K1XYZ"));
 
     std::fs::write(fx.out(), "mine").unwrap();
     app.on_key(key(KeyCode::Enter));
-    assert!(has(&screen(&app, 100, 30), "Overwrite"));
+    assert!(has(&view(&app), "Overwrite"));
     app.on_key(key(KeyCode::Char('n')));
     assert_eq!(std::fs::read_to_string(fx.out()).unwrap(), "mine");
     app.on_key(key(KeyCode::Enter));
@@ -139,26 +152,50 @@ fn export_changes_neither_the_log_nor_the_plan() {
         PLANS
     );
     // Esc closed the preview; the plan manager is still there under it.
-    assert!(has(&screen(&app, 100, 30), "Activation plans"));
+    assert!(has(&view(&app), "Activation plans"));
 }
 
-#[test]
-fn an_nfer_export_takes_every_park_state_from_the_plan_with_no_cache() {
-    let fx = Fx::new("nfer");
-    let nfer = PLANS
-        .replace(
-            "references = [\"US-1234\"]",
+/// Two parks (US-1234, US-5678) in the plan, each with the given snapshot location, and one
+/// Contact credited to both.
+fn two_parks(fx: &Fx, first: &str, second: &str) {
+    let plans = replaced(
+        PLANS,
+        "references = [\"US-1234\"]",
+        &format!(
             "references = [\"US-1234\", \"US-5678\"]\n\
-             other_snapshots = [{ reference = \"US-5678\", name = \"Other Park\", location = \"US-MI\" }]",
-        );
-    std::fs::write(fx.dir.join("plans.toml"), nfer).unwrap();
+             other_snapshots = [{{ reference = \"US-5678\", name = \"Other Park\", location = \"{second}\" }}]"
+        ),
+    );
+    let plans = replaced(
+        &plans,
+        "location = \"US-IN\"",
+        &format!("location = \"{first}\""),
+    );
+    std::fs::write(fx.dir.join("plans.toml"), plans).unwrap();
     std::fs::write(
         fx.dir.join("log.adi"),
         "test\n<EOH>\n<CALL:5>W1ABC<QSO_DATE:8>20261105<TIME_ON:6>150000<BAND:3>40m<MODE:2>CW<MY_SIG:4>POTA<MY_SIG_INFO:15>US-1234,US-5678<EOR>\n",
     )
     .unwrap();
+}
+
+/// A fixture whose plan and Log are as `setup` leaves them, with the export preview open.
+fn preview_of(name: &str, setup: impl FnOnce(&Fx)) -> (Fx, App) {
+    let fx = Fx::new(name);
+    setup(&fx);
     let mut app = fx.app();
     open_preview(&mut app);
+    (fx, app)
+}
+
+fn multi_state(fx: &Fx) {
+    let plans = replaced(PLANS, "location = \"US-IN\"", "location = \"US-IN,US-MI\"");
+    std::fs::write(fx.dir.join("plans.toml"), plans).unwrap();
+}
+
+#[test]
+fn an_nfer_export_takes_every_park_state_from_the_plan_with_no_cache() {
+    let (fx, mut app) = preview_of("nfer", |fx| two_parks(fx, "US-IN", "US-MI"));
     app.on_key(key(KeyCode::Enter));
     let mi = std::fs::read_dir(fx.dir.join("out"))
         .unwrap()
@@ -168,12 +205,61 @@ fn an_nfer_export_takes_every_park_state_from_the_plan_with_no_cache() {
     assert!(mi.contains("<MY_STATE:2>MI"), "{mi}");
 }
 
-fn multi_state(fx: &Fx) {
-    std::fs::write(
-        fx.dir.join("plans.toml"),
-        PLANS.replace("location = \"US-IN\"", "location = \"US-IN,US-MI\""),
-    )
-    .unwrap();
+#[test]
+fn a_single_state_primary_park_gives_the_default_when_a_later_park_spans_it() {
+    let (_fx, app) = preview_of("ms-primary-single", |fx| {
+        two_parks(fx, "US-MI", "US-IN,US-MI")
+    });
+    let rows = view(&app);
+    assert!(has(&rows, "State: US-MI"), "{rows:#?}");
+    assert!(has(&rows, "K9TST@US-5678-20261105-US-MI.adi"), "{rows:#?}");
+}
+
+#[test]
+fn a_single_state_primary_park_outside_the_later_park_falls_back_to_its_first_state() {
+    let (_fx, app) = preview_of("ms-primary-outside", |fx| {
+        two_parks(fx, "US-OH", "US-IN,US-MI")
+    });
+    let rows = view(&app);
+    assert!(has(&rows, "State: US-IN"), "{rows:#?}");
+}
+
+#[test]
+fn a_multi_state_primary_park_leads_even_when_a_later_park_lists_other_states_first() {
+    let (_fx, app) = preview_of("ms-two-multi", |fx| {
+        two_parks(fx, "US-IN,US-MI", "US-OH,US-MI")
+    });
+    let rows = view(&app);
+    assert!(has(&rows, "State: US-IN"), "{rows:#?}");
+}
+
+#[test]
+fn a_state_chosen_that_another_multi_state_park_lacks_warns_and_leaves_it_unset() {
+    let (_fx, mut app) = preview_of("ms-lacks", |fx| two_parks(fx, "US-IN,US-MI", "US-MI,US-OH"));
+    // Pool is IN, MI, OH with MI shared; step to OH, which US-1234 lacks.
+    app.on_key(key(KeyCode::Char('s')));
+    app.on_key(key(KeyCode::Char('s')));
+    let rows = view(&app);
+    assert!(has(&rows, "State: US-OH"), "{rows:#?}");
+    assert!(
+        has(&rows, "US-1234: US-OH is not one of its locations"),
+        "{rows:#?}"
+    );
+    // Shared states appear once in the pool: three presses return to the start.
+    app.on_key(key(KeyCode::Char('s')));
+    assert!(has(&view(&app), "State: US-IN"));
+}
+
+#[test]
+fn the_keys_footer_keeps_scroll_whether_or_not_states_are_offered() {
+    let (_fx, app) = preview_of("footer-single", |_| {});
+    let rows = view(&app);
+    assert!(has(&rows, "Up/Down scroll"), "{rows:#?}");
+    assert!(!has(&rows, "s state"), "{rows:#?}");
+    let (_fx, app) = preview_of("footer-multi", multi_state);
+    let rows = view(&app);
+    assert!(has(&rows, "s state"), "{rows:#?}");
+    assert!(has(&rows, "Up/Down scroll"), "{rows:#?}");
 }
 
 fn out_files(fx: &Fx) -> Vec<String> {
@@ -191,7 +277,7 @@ fn a_multi_state_park_defaults_to_its_primary_state() {
     multi_state(&fx);
     let mut app = fx.app();
     open_preview(&mut app);
-    let rows = screen(&app, 100, 30);
+    let rows = view(&app);
     assert!(has(&rows, "K9TST@US-1234-20261105-US-IN.adi"), "{rows:#?}");
     assert!(has(&rows, "State: US-IN"), "{rows:#?}");
     app.on_key(key(KeyCode::Enter));
@@ -205,7 +291,7 @@ fn s_picks_another_state_and_the_file_gets_it() {
     let mut app = fx.app();
     open_preview(&mut app);
     app.on_key(key(KeyCode::Char('s')));
-    let rows = screen(&app, 100, 30);
+    let rows = view(&app);
     assert!(has(&rows, "State: US-MI"), "{rows:#?}");
     app.on_key(key(KeyCode::Enter));
     let names = out_files(&fx);
@@ -219,10 +305,10 @@ fn a_single_state_park_asks_nothing() {
     let fx = Fx::new("ss-none");
     let mut app = fx.app();
     open_preview(&mut app);
-    let before = screen(&app, 100, 30);
+    let before = view(&app);
     assert!(!has(&before, "State:"), "{before:#?}");
     app.on_key(key(KeyCode::Char('s')));
-    assert_eq!(screen(&app, 100, 30), before);
+    assert_eq!(view(&app), before);
 }
 
 #[test]
@@ -233,5 +319,5 @@ fn with_no_export_directory_the_write_is_refused() {
         .with_log_path(Some(fx.dir.join("log.adi")));
     open_preview(&mut app);
     app.on_key(key(KeyCode::Enter));
-    assert!(has(&screen(&app, 100, 30), "No export directory"));
+    assert!(has(&view(&app), "No export directory"));
 }
