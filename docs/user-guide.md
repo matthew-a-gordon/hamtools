@@ -109,12 +109,15 @@ Bind messages under `[macros]` in the config. Text is sent as CW when you press 
 
 ```toml
 [macros]
-F1 = "CQ CQ CQ DE {MYCALL} {MYCALL} K"
-F2 = "{MYCALL}"
-F3 = "TU 73 DE {MYCALL} EE"
+F1 = "CQ CQ DE {MYCALL} {MYCALL} K"
+F2 = "{THEIRCALL} DE {MYCALL} UR {MYRST} {MYRST} K"
+F3 = "{THEIRCALL} TU 73 DE {MYCALL} EE"
+F4 = "QRZ? DE {MYCALL}"
+F5 = "PSE UR CALL AGN K"
+F6 = "QRL?"
 ```
 
-`{MYCALL}` expands to your `callsign` setting (the older `{CALL}` is an error: "use {MYCALL}"). Named sets go under `[softkeys.<name>]` with the same F1 to F6 keys. Keys you leave unset use the built-in defaults. The six keys appear in reverse video under the panel: bold and underlined for a plan's own key, bold for a plan's set, dim for a built-in default, and struck through for a stored message that fails validation (it will not send).
+These are the usual CW forms: a short CQ ending in `K`, a report exchange, and a `TU 73 ... EE` close (see `docs/research/cw-message-formats.md`). `{MYCALL}` expands to your `callsign` setting (the older `{CALL}` is an error: "use {MYCALL}"); `{THEIRCALL}` and `{MYRST}` come from the Contact form. Named sets go under `[softkeys.<name>]` with the same F1 to F6 keys. Keys you leave unset use the built-in defaults. The six keys appear in reverse video under the panel: bold and underlined for a plan's own key, bold for a plan's set, dim for a built-in default, and struck through for a stored message that fails validation (it will not send).
 
 Safety: the only way the app transmits is a CW send you trigger from a key press. Nothing repeats or sends on its own.
 

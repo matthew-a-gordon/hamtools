@@ -51,8 +51,11 @@ kind = "ft847"
 # "ISS (ZARYA)" = "ISS"
 
 # Soft keys F1 to F6 (CW and CWR only). Text is sent as CW when you press the key.
-# {MYCALL} expands to the callsign above.
+# {MYCALL} expands to the callsign above; {THEIRCALL} and {MYRST} come from the Contact form.
 [macros]
-F1 = "CQ CQ CQ DE {MYCALL} {MYCALL} K"
-F2 = "{MYCALL}"
-F3 = "TU 73 DE {MYCALL} EE"
+F1 = "CQ CQ DE {MYCALL} {MYCALL} K"
+F2 = "{THEIRCALL} DE {MYCALL} UR {MYRST} {MYRST} K"
+F3 = "{THEIRCALL} TU 73 DE {MYCALL} EE"
+F4 = "QRZ? DE {MYCALL}"
+F5 = "PSE UR CALL AGN K"
+F6 = "QRL?"
