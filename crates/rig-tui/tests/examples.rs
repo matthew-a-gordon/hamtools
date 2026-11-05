@@ -25,6 +25,21 @@ fn the_example_config_loads_without_errors_and_its_soft_keys_validate() {
         hamtools_config::load_lenient(&repo_file("config.example.toml")).expect("example loads");
     assert!(errors.is_empty(), "{errors:?}");
 
+    // The two radios: the KX3's rigctld on 4532 and the FT-847's on 4533 (CLAUDE.md).
+    let rigs: Vec<_> = settings
+        .rigs
+        .iter()
+        .map(|r| (r.name.as_str(), r.addr.as_str(), r.kind))
+        .collect();
+    assert_eq!(
+        rigs,
+        [
+            ("kx3", "127.0.0.1:4532", hamtools_config::RigKind::Kx3),
+            ("ft847", "127.0.0.1:4533", hamtools_config::RigKind::Ft847),
+        ]
+    );
+    assert_eq!(settings.rig_default.as_deref(), Some("kx3"));
+
     let mut sets = vec![("macros".to_string(), settings.macros)];
     sets.extend(settings.softkey_sets);
     for name in ["pota", "sota"] {
