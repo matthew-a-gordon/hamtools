@@ -23,6 +23,7 @@ use crate::activity::{
 };
 use crate::bandplan::{BandAction, BandplanModal, View as BandView};
 use crate::config_dialog::{ConfigDialog, Outcome};
+use crate::export_modal::ExportModal;
 use crate::general::General;
 use crate::geocode::GeocodeResult;
 use crate::keybindings::KeybindingsModal;
@@ -187,6 +188,9 @@ pub struct App {
     /// The Activation plans: stored list, the one active this session, and their modal.
     plans: Plans,
     plans_modal: Option<PlansModal>,
+    /// The export preview, opened from the plan manager.
+    export_modal: Option<ExportModal>,
+    export_dir: Option<PathBuf>,
     /// The Activator screens' banner, tracker and warnings, derived from the active plan and the
     /// Log; rebuilt when stale or every few seconds, never fetched.
     activation: Option<ActivationView>,
@@ -272,6 +276,8 @@ impl App {
             keybindings: None,
             plans: Plans::none(),
             plans_modal: None,
+            export_modal: None,
+            export_dir: None,
             activation: None,
             activation_at: None,
             activation_stale: true,
@@ -444,6 +450,12 @@ impl App {
     /// The operator's license class (`station.license_class`), for the band plan's privilege row.
     pub fn with_license_class(mut self, class: Option<LicenseClass>) -> Self {
         self.license_class = class;
+        self
+    }
+
+    /// Where export files go (`[export] dir`); `None`: exporting is refused with a message.
+    pub fn with_export_dir(mut self, dir: Option<PathBuf>) -> Self {
+        self.export_dir = dir;
         self
     }
 
@@ -792,6 +804,7 @@ impl App {
             || self.quit_confirm.is_some()
             || self.palette.is_some()
             || self.plans_modal.is_some()
+            || self.export_modal.is_some()
             || self.keybindings.is_some()
     }
 
@@ -1082,6 +1095,7 @@ impl App {
                     Err(why) => self.plans_notice(why),
                 }
             }
+            PlansOutcome::Export(id) => self.open_export(&id),
             PlansOutcome::Reload => {
                 let path = self.config_path.as_deref().map(plans::plans_path);
                 self.plans.reload(path.as_deref());
@@ -1091,6 +1105,47 @@ impl App {
                 }
             }
         }
+    }
+
+    /// Open the export preview for plan `id`: read the Log once and resolve each park's cached
+    /// location. Writes nothing.
+    fn open_export(&mut self, id: &str) {
+        let Some(plan) = self.plans.list().iter().find(|p| p.id == id).cloned() else {
+            return;
+        };
+        let Some(operator) = self.callsign.clone() else {
+            return self.plans_notice("no callsign: set `callsign` in the config file".into());
+        };
+        let records = match self
+            .current_log()
+            .and_then(|l| l.read().map_err(|e| e.to_string()))
+        {
+            Ok(r) => r,
+            Err(why) => return self.plans_notice(format!("cannot read the Log: {why}")),
+        };
+        let now = self.now_unix();
+        let mut locations = BTreeMap::new();
+        for r in &plan.references {
+            let from_snapshot = plan
+                .snapshot
+                .as_ref()
+                .filter(|s| s.reference.eq_ignore_ascii_case(r))
+                .and_then(|s| s.location.clone());
+            let found = from_snapshot.or_else(|| match self.refdata.as_deref()?.lookup(r, now) {
+                crate::refdata::Lookup::Found(hit) => hit.entry.location,
+                crate::refdata::Lookup::NotCached => None,
+            });
+            if let Some(loc) = found {
+                locations.insert(r.to_ascii_uppercase(), loc);
+            }
+        }
+        self.export_modal = Some(ExportModal::new(
+            plan,
+            operator,
+            records,
+            locations,
+            self.export_dir.clone(),
+        ));
     }
 
     /// Re-apply an edited active plan's reference and Soft keys without moving the screen.
@@ -1408,6 +1463,12 @@ impl App {
                         Target::ManagePlans => self.open_plans(),
                     }
                 }
+            }
+            return Vec::new();
+        }
+        if let Some(modal) = &mut self.export_modal {
+            if modal.on_key(key) {
+                self.export_modal = None;
             }
             return Vec::new();
         }
@@ -1923,6 +1984,9 @@ impl App {
             palette.render(frame, area);
         }
         if let Some(modal) = &self.plans_modal {
+            modal.render(frame, area);
+        }
+        if let Some(modal) = &self.export_modal {
             modal.render(frame, area);
         }
         if let Some(modal) = &self.keybindings {

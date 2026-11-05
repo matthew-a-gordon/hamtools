@@ -63,7 +63,7 @@ fn upper(s: Option<&str>) -> String {
 }
 
 /// The references a record lists as the activator's own, for `program`.
-fn my_refs(program: Program, record: &Record) -> Vec<String> {
+pub(crate) fn my_refs(program: Program, record: &Record) -> Vec<String> {
     match program {
         Program::Pota => {
             if !upper(record.get("MY_SIG")).eq("POTA") {

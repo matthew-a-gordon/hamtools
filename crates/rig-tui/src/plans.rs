@@ -279,6 +279,7 @@ pub(crate) enum PlansOutcome {
     Save(Box<Plan>),
     Delete(String),
     ToggleDone(String, bool),
+    Export(String),
     Reload,
 }
 
@@ -488,6 +489,11 @@ impl PlansModal {
                 }
             }
             KeyCode::Char('r') => return PlansOutcome::Reload,
+            KeyCode::Char('E') => {
+                if let Some(id) = self.selected_row().map(|r| r.plan.id.clone()) {
+                    return PlansOutcome::Export(id);
+                }
+            }
             _ => {}
         }
         PlansOutcome::Stay
@@ -585,7 +591,7 @@ impl PlansModal {
             _ => {}
         }
         foot_lines.push(Line::styled(
-            "n new   e edit   d duplicate   x delete   m done/planned   r reload   Esc close",
+            "n new   e edit   d duplicate   x delete   m done/planned   r reload   E export   Esc close",
             dim(),
         ));
         frame.render_widget(Paragraph::new(foot_lines).wrap(Wrap { trim: true }), foot);

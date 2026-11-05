@@ -21,6 +21,8 @@ pub struct Config {
     pub license_class: Option<LicenseClass>,
     /// Where the Log lives; `None` means the default.
     pub log_path: Option<PathBuf>,
+    /// `[export] dir`; `None` means `~/hamtools-exports/`.
+    pub export_dir: Option<PathBuf>,
     /// Soft key messages, keyed 1..=6 for F1..F6. Text is uppercase and may contain variables such as `{MYCALL}`.
     pub soft_keys: BTreeMap<u8, String>,
     /// Named Soft key sets from `[softkeys.<name>]`.
@@ -68,6 +70,7 @@ impl Config {
             locator: settings.locator.as_ref().map(|g| g.as_str().to_string()),
             license_class: settings.license_class,
             log_path: settings.log_path.clone(),
+            export_dir: settings.export_dir.clone(),
             soft_keys: settings.macros.clone(),
             softkey_sets: settings.softkey_sets.clone(),
             satellite: settings.satellite.clone(),

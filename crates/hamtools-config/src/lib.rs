@@ -20,8 +20,10 @@
 //! license_class = "general"  # technician, general, extra, advanced, novice; no default
 //! [logbook]
 //! path = "/home/me/log.adi"
+//! [export]
+//! dir = "/home/me/hamtools-exports"   # optional; default ~/hamtools-exports/
 //! [rig]
-//! default = "kx3"         # optional; the first profile when absent
+//! default = "kx3"       # optional; the first profile when absent
 //! [rig.kx3]               # one table per rig: a name, an address and a kind
 //! addr = "127.0.0.1:4532"
 //! kind = "kx3"            # "kx3", "ft847" or "generic"
@@ -107,6 +109,9 @@ pub struct Settings {
     /// The operator's 6-character Locator.
     pub locator: Option<Grid>,
     pub log_path: Option<PathBuf>,
+    /// `[export] dir`: where export files go; `None` means the app's default
+    /// (`~/hamtools-exports/`). Read only here: the config dialog does not write it.
+    pub export_dir: Option<PathBuf>,
     /// `station.license_class`; no default.
     pub license_class: Option<LicenseClass>,
     /// The named rig profiles, in file order.
@@ -816,6 +821,16 @@ fn read_settings_lenient(root: &Table) -> (Settings, Vec<ConfigError>) {
         Ok(())
     })());
     keep((|| {
+        if let Some(item) = sub_table(root, "export")?.and_then(|t| t.get("dir")) {
+            let path = string(item, "export.dir")?.trim();
+            if path.is_empty() {
+                return Err(invalid("export.dir", "must not be empty"));
+            }
+            s.export_dir = Some(PathBuf::from(path));
+        }
+        Ok(())
+    })());
+    keep((|| {
         if let Some(macros) = sub_table(root, "macros")? {
             s.macros = read_soft_keys(macros, "macros")?;
         }
@@ -974,7 +989,7 @@ pub fn load_lenient(path: &Path) -> Result<(Settings, Vec<ConfigError>), ConfigE
     Ok((settings, errs))
 }
 
-const KNOWN: [(&str, &[&str]); 6] = [
+const KNOWN: [(&str, &[&str]); 7] = [
     (
         "satellite",
         &[
@@ -987,6 +1002,7 @@ const KNOWN: [(&str, &[&str]); 6] = [
     ),
     ("station", &["locator", "license_class"]),
     ("logbook", &["path"]),
+    ("export", &["dir"]),
     ("rig", &["default"]),
     ("macros", &[]),
     ("softkeys", &[]),

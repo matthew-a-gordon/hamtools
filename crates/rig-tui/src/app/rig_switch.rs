@@ -91,6 +91,7 @@ impl App {
             callsign: self.callsign.as_deref().and_then(|c| Callsign::new(c).ok()),
             locator: self.locator.as_deref().and_then(|g| Grid::new(g).ok()),
             log_path: self.log_path.clone(),
+            export_dir: self.export_dir.clone(),
             license_class: self.license_class,
             rigs,
             rig_default: self.rig_default.clone(),

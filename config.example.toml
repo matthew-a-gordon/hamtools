@@ -14,6 +14,11 @@ callsign = "N0CALL"
 # [logbook]
 # path = "/home/you/.local/share/hamtools/log.adi"
 
+# Where plan exports (POTA ADIF, SOTA CSV) are written, from E in the plan manager (Ctrl-G,
+# Activation plans). Files go only here and are never uploaded. Default: ~/hamtools-exports/
+# [export]
+# dir = "/home/you/hamtools-exports"
+
 # Rigs are named profiles, each with the address of its rigctld (see CLAUDE.md for the
 # commands) and a kind: "kx3", "ft847" or "generic". Both rigs stay connected; Ctrl-R switches.
 # The old single `[rig] addr` and `[kx3]` keys are no longer read and are rejected.

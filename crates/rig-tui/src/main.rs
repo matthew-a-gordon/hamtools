@@ -102,6 +102,9 @@ fn try_main() -> Result<(), Box<dyn Error>> {
         .with_locator(config.locator)
         .with_license_class(config.license_class)
         .with_log_path(config.log_path)
+        .with_export_dir(config.export_dir.or_else(|| {
+            std::env::var_os("HOME").map(|h| std::path::PathBuf::from(h).join("hamtools-exports"))
+        }))
         .with_default_log_path(default_log_path(
             std::env::var("XDG_DATA_HOME").ok().as_deref(),
             std::env::var("HOME").ok().as_deref(),
