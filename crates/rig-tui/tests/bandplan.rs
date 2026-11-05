@@ -169,6 +169,32 @@ fn m_applies_the_segments_usual_mode_with_passband_zero() {
 }
 
 #[test]
+fn m_in_the_mode_the_rig_already_has_sends_nothing_so_the_passband_stays() {
+    let mut app = connected_app_in(
+        App::new().with_license_class(Some(LicenseClass::General)),
+        "RTTY",
+    );
+    app.on_key(ctrl('b'));
+
+    assert_eq!(app.on_key(key(KeyCode::Char('m'))), vec![]);
+}
+
+#[test]
+fn m_on_60m_chooses_upper_sideband() {
+    let mut app = connected_app_in(App::new(), "CW");
+    app.on_rig(RigEvent::Freq(5_357_000));
+    app.on_key(ctrl('b'));
+
+    assert_eq!(
+        app.on_key(key(KeyCode::Char('m'))),
+        vec![Command::SetMode {
+            mode: RigMode::Usb,
+            passband: 0
+        }]
+    );
+}
+
+#[test]
 fn m_with_no_usual_mode_here_says_so_and_does_nothing() {
     let mut app = open_app();
     app.on_key(key(KeyCode::Up));

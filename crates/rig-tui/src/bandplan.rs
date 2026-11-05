@@ -211,6 +211,10 @@ impl BandplanModal {
     }
 
     fn usual_mode(&self) -> Option<RigMode> {
+        // The 60 m channels are USB by rule, whatever the ARRL rows say.
+        if self.band().name == "60m" {
+            return Some(RigMode::Usb);
+        }
         let mode = self.arrl_at(self.cursor)?.mode.as_deref()?;
         Some(match mode {
             "phone" if self.cursor < 10_000_000 => RigMode::Lsb,

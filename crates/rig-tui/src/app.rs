@@ -848,6 +848,10 @@ impl App {
             }
             BandAction::SetMode(mode) => {
                 self.status = None;
+                // Already in the mode: send nothing, so the passband is never changed by surprise.
+                if self.last_mode() == Some(&mode) {
+                    return Vec::new();
+                }
                 return vec![Command::SetMode { mode, passband: 0 }];
             }
             BandAction::Stay | BandAction::Close | BandAction::NoMode => return Vec::new(),
