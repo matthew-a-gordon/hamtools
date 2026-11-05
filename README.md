@@ -92,7 +92,7 @@ Posting or self-spotting, uploading anything, band plans outside the US, key reb
 
 ## Documentation
 
-- [User guide](docs/user-guide.md): running `rig-tui`, keys and configuration. Its sections 8 to 11 still say "Planned" and need a pass now that the code has landed.
+- [User guide](docs/user-guide.md): running `rig-tui`, keys and configuration.
 - [`GLOSSARY.md`](GLOSSARY.md): the project's terms (Contact, Log, Locator, Activity, Soft key and so on).
 - [`docs/adr/`](docs/adr): architecture decisions.
 - [`docs/research/`](docs/research): notes on band plans, reference data and CW message formats.

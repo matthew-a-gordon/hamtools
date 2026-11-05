@@ -1,8 +1,8 @@
 # hamtools user guide
 
-This guide is the start of the manual for `rig-tui`, which is becoming the one app for the whole station (spec [#54](https://github.com/matthew-a-gordon/hamtools/issues/54)). Each section says what works **today** and what is **planned**. Terms in **bold** are defined in [`GLOSSARY.md`](../GLOSSARY.md).
+This guide is the manual for `rig-tui`, the one app for the whole station (spec [#54](https://github.com/matthew-a-gordon/hamtools/issues/54)). Sections 1 to 7 cover the rig, CW, logging, configuration and satellites. Sections 8 to 11 cover the Activities, navigation, SOTA and POTA, the band plan and export, which are built and covered by tests but not yet run on the air. Terms in **bold** are defined in [`GLOSSARY.md`](../GLOSSARY.md).
 
-Hardware caveat: only what `CLAUDE.md` lists under "Hardware status" has been run on a real radio. Anything else here is marked *untested on hardware*.
+Hardware caveat: only what `CLAUDE.md` lists under "Hardware status" has been run on a real radio. Everything else here is *untested on hardware*, including every SOTA, POTA, band plan and export screen.
 
 Contents
 
@@ -13,10 +13,10 @@ Contents
 5. [Logging Contacts](#5-logging-contacts)
 6. [Configuration](#6-configuration)
 7. [Satellites](#7-satellites)
-8. [Planned: the unified app](#8-planned-the-unified-app)
-9. [Planned: SOTA and POTA](#9-planned-sota-and-pota)
-10. [Planned: band plan](#10-planned-band-plan)
-11. [Planned: export](#11-planned-export)
+8. [The unified app](#8-the-unified-app)
+9. [SOTA and POTA](#9-sota-and-pota)
+10. [Band plan](#10-band-plan)
+11. [Export](#11-export)
 12. [Colors](#12-colors)
 13. [Troubleshooting](#13-troubleshooting)
 
@@ -50,7 +50,7 @@ cargo run -p rig-tui -- --config ./my.toml
 
 On a KX3 over USB the user must be in the `dialout` group, and a login session started before joining the group does not have it.
 
-Quit with `q` (when no input has focus) or `Ctrl-C`. Today both quit at once. The planned app asks first (see section 8).
+Quit with `q` (when no input has focus) or `Ctrl-C`. Both ask first (see section 8).
 
 ## 2. The rig strip
 
@@ -254,21 +254,21 @@ While tracking with a connected rig, `l` opens the shared Contact form prefilled
 
 ### Open questions on the FT-847
 
-Serial is 4800 to 57600 baud, 8N2, but the actual CAT baud is unknown (menu item 14). How Hamlib's `ft847` backend exposes SAT mode, split and the sub-VFO, and whether correcting both uplink and downlink is right for its SAT mode, are not yet checked.
+Serial is 4800 to 57600 baud, 8N2, but the actual CAT baud is unknown (menu item 14). Split and the Sub transmit side were seen working through `rigctld` on 2026-11-04 (`s` reads `1 Sub`, `i` and `x` return the transmit side, and tracking set both frequencies, read back with nothing received or transmitted). How Hamlib's `ft847` backend exposes SAT mode (it has no read-back), whether the Satellite Activity engages it, the passband nudge keys, and whether correcting both uplink and downlink is right for its SAT mode on the air are not yet checked. `v` is not implemented by the backend, so the strip shows "VFO not supported".
 
 ---
 
-## 8. Planned: the unified app
+## 8. The unified app
 
-Everything from here on is the spec in [#54](https://github.com/matthew-a-gordon/hamtools/issues/54). None of it is built yet. It will arrive in the order of the build slices (#55-#71), with the Satellite fold-in first, then POTA, then SOTA. Details may shift as slices land.
+Everything from here on is the spec in [#54](https://github.com/matthew-a-gordon/hamtools/issues/54), now built. It is covered by tests with fixtures and no live network, but none of it has been run against a radio or on the air, so treat it as *untested on hardware*.
 
 ### Activities
 
-`rig-tui` will host exactly one **Activity** at a time:
+`rig-tui` hosts exactly one **Activity** at a time:
 
 | Activity | What it is |
 | --- | --- |
-| General | Today's `rig-tui`. The startup default. |
+| General | Plain rig control and logging. The startup default. |
 | Satellite | The former `sat-tui` screens, inside the app |
 | SOTA | Activator and "chaser" **Roles** |
 | POTA | Activator and Hunter **Roles** |
@@ -302,7 +302,7 @@ Plain `l`, `L` and `c` remain as aliases. The strip keys in section 3 mean the s
 
 ### Two rigs
 
-Rigs become named profiles, and the old single-address keys are removed with no compatibility:
+Rigs are named profiles, and the old single-address keys are removed with no compatibility. `--rig NAME` starts on a profile other than `rig.default`:
 
 ```toml
 [rig]
@@ -319,7 +319,7 @@ kind = "ft847"
 
 Both rigs stay connected. The inactive one is polled lightly (health, frequency and mode about every 5 seconds), so switching is instant. `Ctrl-R` opens the switcher with both connection states. Switching is refused while the current rig is transmitting (PTT on or a CW send in progress). If the new rig cannot run the current Activity, the app drops to General with a status line. Each rig keeps its own state: last frequency, mode, VFO, split, step, CW transcript and Soft key state.
 
-What each rig can do comes from a static capability table keyed by `kind` (`kx3`, `ft847`, `generic`), not from probing Hamlib. A profile may override `cw`, `split` or `sat_mode`; an override is never counted as verified. `Ctrl-R` shows each rig's row. Rows verified on hardware are the KX3's CW sending, VFO A/B, split and its transmit frequency, and the frequency, mode, passband and S-meter reads. Everything else, including every FT-847 row, is labelled *untested on hardware*.
+What each rig can do comes from a static capability table keyed by `kind` (`kx3`, `ft847`, `generic`), not from probing Hamlib. A profile may override `cw`, `split` or `sat_mode`; an override is never counted as verified. `Ctrl-R` shows each rig's row. Rows verified on hardware are the KX3's CW sending, VFO A/B, split and its transmit frequency, and the frequency, mode, passband and S-meter reads, and the FT-847's split (seen 2026-11-04, see `CLAUDE.md`). Everything else, including the FT-847's SAT mode and CW, is labelled *untested on hardware*.
 
 ### Satellite settings
 
@@ -342,7 +342,7 @@ General also gains a today's-contacts pane at 128 columns or 40 rows. Satellite 
 
 Colour uses the 16 ANSI colours only, and every coloured state also has a non-colour cue (a letter, symbol or `+`/`-`).
 
-## 9. Planned: SOTA and POTA
+## 9. SOTA and POTA
 
 ### Roles
 
@@ -384,7 +384,7 @@ Messages can contain variables, filled in when you press the key from live state
 | `{MYRST}` | Report you give |
 | `{THEIRRST}` | Report you receive |
 
-If any variable has no value the send is refused with a status naming it. You never send partial text or literal braces. `{CALL}` from today's config becomes a hard error with "use {MYCALL}". Keys are layered per key: plan override, the plan's set, your set for the Activity, then the built-in default. The bar shows which layer each key came from. A named set that is missing falls back to the lower layers and never blocks launching. The config dialog and the plan editor share one validator that rejects unknown variables, characters the keyer cannot send and unbalanced braces, and warns past 120 characters.
+If any variable has no value the send is refused with a status naming it. You never send partial text or literal braces. `{CALL}` is a hard error with "use {MYCALL}". Keys are layered per key: plan override, the plan's set, your set for the Activity, then the built-in default. The bar shows which layer each key came from. A named set that is missing falls back to the lower layers and never blocks launching. The config dialog and the plan editor share one validator that rejects unknown variables, characters the keyer cannot send and unbalanced braces, and warns past 120 characters.
 
 ### The Hunter screen
 
@@ -412,7 +412,7 @@ SOTA chasing works with the spot feed off. No SOTA API call is made until the SO
 - All requests go through one rate-limited client: at least 1 second between any two, exponential backoff from 1 minute to 1 hour on 429 or 5xx (honouring Retry-After), 5 s connect and 15 s total timeouts, and a descriptive User-Agent with your callsign when set. Config may slow these limits and never speed them.
 - Network work runs on its own task. A slow or dead network never delays a frame, a keypress, a CW send or a Log write. When offline you see one calm "offline" indicator with the last success time.
 
-## 10. Planned: band plan
+## 10. Band plan
 
 `Ctrl-B` opens a modal for the band of the Active rig's frequency (the nearest band below when outside all bands). `Left`/`Right` or `[`/`]` step bands.
 
@@ -434,12 +434,12 @@ Markers show the Active rig's frequency, and a second one for the transmit frequ
 
 The modal stays open after tuning. Tuning from it is refused while Satellite is tracking. Being out of privilege is a soft warning, never a gate: the app does not decide what you may do. 60 m is shown as discrete channels with a fixed note that the channel data is unverified. On a small screen the ARRL and satellite rows drop first. The footer shows the data's `as_of` date with a stale marker. The band plan is guidance, not a legal authority.
 
-## 11. Planned: export
+## 11. Export
 
 On an Activator plan, an export action produces a file to upload by hand. It never uploads anything or changes the plan or the Log.
 
 - **Which Contacts:** those whose reference matches the plan and whose start is on the plan's UTC date, with a toggle to include other dates for the same reference (a night activation across midnight). Contacts with no reference are never exported but are counted in the preview.
-- **POTA:** ADIF with the required fields, `MY_SIG`/`MY_SIG_INFO`, `SIG`/`SIG_INFO` for park-to-park, and `MY_STATE` from the cached park. An n-fer writes one file per park, named `CALL@US-1234-YYYYMMDD.adi`. A multi-state park is one file, never one per state (a Contact would count under each); `MY_STATE` is set only when the state is known, and the `-US-MI` name suffix is added when a state is chosen. Otherwise the uploader asks. Duplicates are judged by `SUBMODE` when present.
+- **POTA:** ADIF with the required fields, `MY_SIG`/`MY_SIG_INFO`, `SIG`/`SIG_INFO` for park-to-park, and `MY_STATE` from the cached park. An n-fer writes one file per park, named `CALL@US-1234-YYYYMMDD.adi`. A multi-state park is one file, never one per state (a Contact would count under each). When a plan has a park in more than one state, the export preview shows a `State:` line and `s` cycles through the choices; it starts on the primary park's first state. `MY_STATE` is set from the choice and the `-US-MI` name suffix is added. A park in one state asks nothing. One choice applies to every multi-state park in the plan, and a park that does not include it exports with a warning and no `MY_STATE`. When no state is known the uploader asks. Duplicates are judged by `SUBMODE` when present.
 - **SOTA:** CSV V2 with its ten fields in order, chronological, one file per activation (one per UTC day of a summit). The band column uses SOTA's names (`7MHz`) or the frequency; whether the server accepts a frequency is unverified.
 - **Preview first:** file names, counts, duplicates, exclusions, warnings (too few Contacts to count, a UTC rollover, a missing required field, missing state) and the first lines. Warnings never block, and skipped Contacts are named.
 - **Where it writes:** only to the export directory (default `~/hamtools-exports/`), asking before overwriting.
@@ -481,4 +481,4 @@ Hunter row markers use characters, not color: `✓` worked today, `~` stale, `P`
 
 ## Maintaining this guide
 
-When a build slice lands, move its section out of the "Planned" half into the working half, and update the keys tables from the key table in the code. Keep "untested on hardware" until `CLAUDE.md`'s Hardware status lists the behaviour as verified.
+When behaviour changes, update the keys tables from the key table in the code. Keep "untested on hardware" until `CLAUDE.md`'s Hardware status lists the behaviour as verified.
