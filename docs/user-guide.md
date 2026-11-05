@@ -324,7 +324,7 @@ What each rig can do comes from a static capability table keyed by `kind` (`kx3`
 
 ### Starting `rigctld`
 
-If the Active rig cannot be reached a few seconds after start-up, rig-tui offers to start a `rigctld` for you, once per session. `Ctrl-D` opens the same prompt any time. It lists the serial ports it finds (`ttyUSB*` and `ttyACM*`, shown by their `/dev/serial/by-id` name when they have one). **Listing a port does not open it**: only the `rigctld` it starts does. For each port you choose which rig profile it is, with `Left`/`Right`, and press `Enter`. `Esc` starts nothing.
+If the Active rig cannot be reached a few seconds after start-up, rig-tui offers to start a `rigctld` for you, once per session. `Ctrl-D` opens the same prompt any time. It lists the serial ports it finds (`ttyUSB*` and `ttyACM*`, shown by their `/dev/serial/by-id` name when they have one; the ClockworkPi uConsole's own keyboard port, `usb-ClockworkPI_uConsole_*`, is left out). **Listing a port does not open it**: only the `rigctld` it starts does. For each port you choose which rig profile it is, with `Left`/`Right`, and press `Enter`. `Esc` starts nothing.
 
 - The model and baud come from the profile kind: KX3 is model 2045 at 38400 baud, FT-847 is model 1001 at 9600. A `generic` profile, or one whose address is not on this machine (`127.0.0.1` or `localhost`), is not offered, because nothing is known about it or a daemon here could not serve it.
 - The listening TCP port is the one in the profile's address.

@@ -22,15 +22,26 @@ pub struct Port {
     pub path: PathBuf,
 }
 
+/// Devices that are never a radio, matched against the `/dev/serial/by-id` name (lowercase).
+/// The uConsole's own keyboard board shows up as a `ttyACM` port named `usb-ClockworkPI_uConsole_*`.
+const NOT_A_RADIO: [&str; 1] = ["clockworkpi"];
+
 /// The ports under `dev` (normally `/dev`): `ttyUSB*` and `ttyACM*`, each under its
-/// `serial/by-id` name when it has one. Reads directory entries only; opens nothing.
+/// `serial/by-id` name when it has one, minus devices known not to be radios. Reads directory
+/// entries only; opens nothing.
 pub fn scan_ports(dev: &Path) -> Vec<Port> {
     let mut by_target: BTreeMap<PathBuf, PathBuf> = BTreeMap::new();
+    let mut excluded: Vec<PathBuf> = Vec::new();
     if let Ok(entries) = fs::read_dir(dev.join("serial/by-id")) {
         for entry in entries.flatten() {
-            if let Ok(target) = fs::canonicalize(entry.path()) {
-                by_target.insert(target, entry.path());
+            let Ok(target) = fs::canonicalize(entry.path()) else {
+                continue;
+            };
+            let name = entry.file_name().to_string_lossy().to_ascii_lowercase();
+            if NOT_A_RADIO.iter().any(|n| name.contains(n)) {
+                excluded.push(target.clone());
             }
+            by_target.insert(target, entry.path());
         }
     }
     let mut ports = Vec::new();
@@ -43,6 +54,9 @@ pub fn scan_ports(dev: &Path) -> Vec<Port> {
             }
             let plain = entry.path();
             let canonical = fs::canonicalize(&plain).unwrap_or_else(|_| plain.clone());
+            if excluded.contains(&canonical) {
+                continue;
+            }
             ports.push(Port {
                 path: by_target.get(&canonical).cloned().unwrap_or(plain),
             });
@@ -272,6 +286,27 @@ mod tests {
         assert_eq!(ports.len(), 2);
         assert_eq!(ports[0].path, dev.join("serial/by-id/usb-FTDI_kx3"));
         assert_eq!(ports[1].path, dev.join("ttyUSB1"));
+        let _ = fs::remove_dir_all(dev);
+    }
+
+    #[test]
+    fn scan_skips_the_uconsoles_own_keyboard_port() {
+        let dev = scratch("uconsole");
+        fs::write(dev.join("ttyACM0"), "").unwrap();
+        fs::write(dev.join("ttyUSB0"), "").unwrap();
+        fs::create_dir_all(dev.join("serial/by-id")).unwrap();
+        symlink(
+            "../../ttyACM0",
+            dev.join("serial/by-id/usb-ClockworkPI_uConsole_20230713-if01"),
+        )
+        .unwrap();
+        let ports = scan_ports(&dev);
+        assert_eq!(
+            ports,
+            [Port {
+                path: dev.join("ttyUSB0")
+            }]
+        );
         let _ = fs::remove_dir_all(dev);
     }
 
