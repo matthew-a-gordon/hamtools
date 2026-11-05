@@ -13,10 +13,12 @@ use ratatui::layout::Rect;
 
 use crate::keys::KeyEntry;
 use crate::layout::Panes;
+use crate::logging::Logging;
 use crate::panel::{LogDefaults, LogMode, Role};
 use crate::rig::{Command, RigMode};
 use crate::rigs::Capability;
 use crate::softkeys::{Live, ResolvedKey};
+use crate::tracker::ActivationView;
 
 /// What an Activity is told about the app on every call.
 #[derive(Debug, Clone, Copy)]
@@ -34,6 +36,85 @@ pub struct ActivityCtx<'a> {
     pub recent: &'a [String],
     /// The panes the window has room for (see [`crate::layout`]).
     pub panes: Panes,
+    /// The Contact form the host keeps. An Activity that [embeds](Activity::embeds_contact_form)
+    /// it draws it in its body through this.
+    pub form: FormPane<'a>,
+    /// The active plan, its banner and the tracker, for the Activator screens (filled by the host
+    /// only while one is in the foreground).
+    pub activation: Option<&'a ActivationView>,
+    /// Plans the operator could launch on this screen (filled for rendering and plan picking).
+    pub plans: &'a [PlanChoice],
+    /// The receive frequency, if the rig reported it within the last two seconds.
+    pub rx_hz: Option<u64>,
+}
+
+/// A stored plan offered in a picker; `index` is its place in the stored list.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PlanChoice {
+    pub index: usize,
+    pub label: String,
+}
+
+/// A read-only view of the host's Contact form.
+#[derive(Clone, Copy)]
+pub struct FormPane<'a>(&'a Logging);
+
+impl<'a> FormPane<'a> {
+    pub(crate) fn new(logging: &'a Logging) -> Self {
+        Self(logging)
+    }
+
+    /// Whether the form is open (it needs a rig reading to open).
+    pub fn open(&self) -> bool {
+        self.0.form_open()
+    }
+
+    /// Whether a key has edited the form since it opened.
+    pub fn dirty(&self) -> bool {
+        self.0.form_dirty()
+    }
+
+    /// The call, mode and transmit frequency typed or captured so far.
+    pub fn call(&self) -> String {
+        self.0
+            .view()
+            .map(|v| v.their_call.to_string())
+            .unwrap_or_default()
+    }
+
+    pub fn mode(&self) -> String {
+        self.0.form_mode()
+    }
+
+    pub fn hz(&self) -> Option<u64> {
+        self.0.form_hz()
+    }
+
+    /// Draw the form compactly in `area`.
+    pub fn render(&self, frame: &mut Frame, area: Rect, focused: bool) {
+        self.0.render_embedded(frame, area, focused);
+    }
+}
+
+impl std::fmt::Debug for FormPane<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("FormPane")
+            .field("open", &self.open())
+            .finish()
+    }
+}
+
+/// Where an Activity wants a key that reached an embedded Contact form.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FormRoute {
+    /// Not about the form: offer it to [`Activity::on_key`], then to the shared strip keys.
+    Pass,
+    /// Type it into the form.
+    Form,
+    /// Discard the half-typed Contact and reopen the form fresh.
+    Discard,
+    /// The Activity used it (a focus change); nothing more to do.
+    Handled,
 }
 
 /// What an Activity returns: rig commands from the closed set, and an optional status line.
@@ -118,6 +199,19 @@ pub trait Activity {
     /// (`Role::General` when no plan is active) and `my_refs` its references, first primary.
     /// The Contact form's own references (`LogDefaults::my_refs`) come from here.
     fn set_plan(&mut self, _role: Role, _my_refs: &[String]) {}
+
+    /// Whether this Activity draws the Contact form itself, always open, instead of the host
+    /// showing it as a modal. The host then keeps the form open (when the rig has reported what
+    /// a Contact needs) and asks [`Self::form_key`] where each key goes.
+    fn embeds_contact_form(&self) -> bool {
+        false
+    }
+
+    /// Route a key between the embedded form and the rest of the screen. Only asked when
+    /// [`Self::embeds_contact_form`] is true and no modal is open.
+    fn form_key(&mut self, _key: KeyEvent, _ctx: &ActivityCtx) -> FormRoute {
+        FormRoute::Pass
+    }
 
     /// One line for each thing quitting now would lose (unsent CW input, active Doppler
     /// tracking). Empty when nothing would be lost.

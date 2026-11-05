@@ -17,7 +17,7 @@ use ratatui::layout::Rect;
 use ratatui::text::Line;
 use ratatui::widgets::Paragraph;
 
-use crate::activity::{Activity, ActivityCtx};
+use crate::activity::{Activity, ActivityCtx, FormRoute, PlanChoice};
 use crate::bandplan::{BandAction, BandplanModal, View as BandView};
 use crate::config_dialog::{ConfigDialog, Outcome};
 use crate::general::General;
@@ -34,6 +34,7 @@ use crate::rig::{Command, Feature, RigEvent, RigMode};
 use crate::rigs::{RigSlot, Switcher};
 use crate::softkeys::{Exchange, Layers, NamedSet, Resolved, resolve};
 use crate::style::{dim, red};
+use crate::tracker::{self, ActivationView, PlanBanner, Program, Tracker};
 
 mod rig_switch;
 
@@ -46,6 +47,9 @@ pub const STATE_POLL_EVERY: Duration = Duration::from_millis(500);
 pub const SMETER_POLL_EVERY: Duration = Duration::from_millis(250);
 /// A reading older than this shows as a dash. A starting value, untested on hardware.
 pub const STALE_AFTER: Duration = Duration::from_secs(2);
+
+/// How often an Activator screen re-reads the Log for its tracker.
+const ACTIVATION_EVERY: Duration = Duration::from_secs(2);
 
 /// Tuning steps in Hz, smallest first.
 pub(crate) const STEPS: [u64; 6] = [1, 10, 100, 1_000, 10_000, 100_000];
@@ -138,6 +142,14 @@ macro_rules! ctx {
                 .map(|r| &r.value.0),
             recent: $recent,
             panes: $panes,
+            form: crate::activity::FormPane::new(&$self.logging),
+            activation: $self.activation.as_ref(),
+            plans: &[],
+            rx_hz: $self
+                .freq
+                .as_ref()
+                .filter(|r| $self.now.saturating_duration_since(r.at) <= STALE_AFTER)
+                .map(|r| r.value),
         }
     };
 }
@@ -164,6 +176,11 @@ pub struct App {
     /// The Activation plans: stored list, the one active this session, and their modal.
     plans: Plans,
     plans_modal: Option<PlansModal>,
+    /// The Activator screens' banner, tracker and warnings, derived from the active plan and the
+    /// Log; rebuilt when stale or every few seconds, never fetched.
+    activation: Option<ActivationView>,
+    activation_at: Option<Instant>,
+    activation_stale: bool,
     refdata: Option<Arc<ReferenceData>>,
     last_resolve: Option<Instant>,
     connected: bool,
@@ -244,6 +261,9 @@ impl App {
             keybindings: None,
             plans: Plans::none(),
             plans_modal: None,
+            activation: None,
+            activation_at: None,
+            activation_stale: true,
             refdata: None,
             last_resolve: None,
             connected: false,
@@ -475,8 +495,146 @@ impl App {
             self.status = Some(why);
             return;
         }
+        // An embedded Contact form belongs to its screen: leaving drops it (the Log keeps every
+        // saved Contact; only a half-typed one is lost, and the status says so).
+        if self.embedded() && !self.activities[index].embeds_contact_form() {
+            if self.logging.form_dirty() {
+                self.status = Some("half-typed Contact discarded".to_string());
+            }
+            self.logging.discard();
+            self.sync_form_exchange();
+        }
         self.foreground = index;
         self.entry = None;
+        self.activation_stale = true;
+        self.sync_embedded();
+    }
+
+    /// Whether the foreground Activity draws the Contact form itself.
+    fn embedded(&self) -> bool {
+        self.activities[self.foreground].embeds_contact_form()
+    }
+
+    /// The Contact form is open as a modal (an embedded one is drawn by its Activity).
+    fn form_modal_open(&self) -> bool {
+        self.logging.form_open() && !self.embedded()
+    }
+
+    /// A Logging modal has the keyboard: the form as a modal, or the session list.
+    fn logging_modal_open(&self) -> bool {
+        self.form_modal_open() || self.logging.list_open()
+    }
+
+    /// Stored plans of the program `name` that are not done, soonest first, for a picker.
+    fn plan_choices(&self, name: &str) -> Vec<PlanChoice> {
+        self.plans
+            .sorted()
+            .into_iter()
+            .filter(|p| !p.done && plans::activity_label(p.activity) == name)
+            .filter_map(|p| {
+                let index = self.plans.list().iter().position(|q| q.id == p.id)?;
+                Some(PlanChoice {
+                    index,
+                    label: format!("{} {}", plans::refs_label(p), p.date),
+                })
+            })
+            .collect()
+    }
+
+    /// Keep an embedded Contact form open and current, and the Activation view fresh. Cheap when
+    /// nothing changed; touches the Log only to open the form or rebuild the view.
+    fn sync_embedded(&mut self) {
+        if !self.embedded() {
+            return;
+        }
+        if self.logging.form_open() {
+            if let Some(snapshot) = self.rig_snapshot() {
+                self.logging.refresh(snapshot);
+            }
+        } else {
+            match self.log_snapshot() {
+                Ok(snapshot) => {
+                    self.logging.set_wait(None);
+                    self.logging.open_form(snapshot);
+                }
+                Err(why) => self.logging.set_wait(Some(why)),
+            }
+        }
+        self.sync_form_exchange();
+        let due = self
+            .activation_at
+            .is_none_or(|at| self.now.saturating_duration_since(at) >= ACTIVATION_EVERY);
+        if self.activation_stale || due {
+            self.refresh_activation();
+        }
+    }
+
+    /// Rebuild the banner, tracker and warnings from the active plan and the Log.
+    fn refresh_activation(&mut self) {
+        self.activation_stale = false;
+        self.activation_at = Some(self.now);
+        let name = self.activities[self.foreground].name();
+        let program = match name {
+            "POTA" => Program::Pota,
+            "SOTA" => Program::Sota,
+            _ => {
+                self.activation = None;
+                return;
+            }
+        };
+        let Some(plan) = self
+            .plans
+            .active()
+            .filter(|p| plans::activity_label(p.activity) == name)
+            .cloned()
+        else {
+            self.activation = None;
+            return;
+        };
+        let today = self.clock().date_naive();
+        let mut warnings = Vec::new();
+        let tracker = match self
+            .current_log()
+            .and_then(|l| l.read().map_err(|e| e.to_string()))
+        {
+            Ok(records) => {
+                let began = plan
+                    .date
+                    .parse::<chrono::NaiveDate>()
+                    .is_ok_and(|d| tracker::any_on(program, &plan.references, d, &records));
+                warnings.extend(tracker::date_warning(&plan.date, today, began));
+                Some(Tracker::query(program, &plan.references, today, &records))
+            }
+            Err(why) => {
+                warnings.push(format!("tracker unavailable: {why}"));
+                None
+            }
+        };
+        let snapshot = plan
+            .snapshot
+            .as_ref()
+            .filter(|s| Some(s.reference.as_str()) == plan.primary());
+        let theirs = snapshot.and_then(|s| {
+            s.lat
+                .zip(s.lon)
+                .or_else(|| s.grid.as_deref().and_then(tracker::grid_center))
+        });
+        let mine = self.locator.as_deref().and_then(tracker::grid_center);
+        self.activation = Some(ActivationView {
+            banner: Some(PlanBanner {
+                program,
+                references: plan.references.clone(),
+                name: snapshot.map(|s| s.name.clone()),
+                location: snapshot.and_then(|s| s.location.clone()),
+                grid: snapshot.and_then(|s| s.grid.clone()),
+                distance_km: mine.zip(theirs).map(|(a, b)| tracker::distance_km(a, b)),
+                alt_m: snapshot.and_then(|s| s.alt_m),
+                points: snapshot.and_then(|s| s.points),
+                date: plan.date.clone(),
+            }),
+            tracker,
+            warnings,
+        });
     }
 
     /// The foreground Activity's name, as the shared strip shows it.
@@ -604,7 +762,7 @@ impl App {
             || self.config.is_some()
             || self.switcher_open()
             || self.bandplan.is_some()
-            || self.logging.modal_open()
+            || self.logging_modal_open()
             || self.quit_confirm.is_some()
             || self.palette.is_some()
             || self.plans_modal.is_some()
@@ -816,6 +974,7 @@ impl App {
         for a in &mut self.activities {
             a.set_plan(role, &refs);
         }
+        self.activation_stale = true;
     }
 
     /// Start the plan at `index` of the stored list: it becomes the active plan, its reference is
@@ -977,6 +1136,9 @@ impl App {
                 self.open_switcher();
             }
             Action::Bandplan => self.bandplan = Some(BandplanModal::open(self.frequency())),
+            Action::LogForm if self.embedded() => {
+                self.status = Some("the Contact form is already on this screen".to_string());
+            }
             Action::LogForm => self.open_log_form(),
             Action::SessionList => self.logging.open_list(),
             Action::Config => self.open_config(),
@@ -986,8 +1148,9 @@ impl App {
         Vec::new()
     }
 
+    /// The Contact form is open as a modal (an embedded form is not a modal).
     pub(crate) fn log_form_open(&self) -> bool {
-        self.logging.form_open()
+        self.form_modal_open()
     }
 
     /// Recent Contacts for the body when no panel applies, newest first.
@@ -1053,6 +1216,16 @@ impl App {
     }
 
     fn log_snapshot(&self) -> Result<Snapshot, String> {
+        self.snapshot(true)
+    }
+
+    /// The rig's reading for a Contact, without touching the Log (for keeping an open form
+    /// current).
+    fn rig_snapshot(&self) -> Option<Snapshot> {
+        self.snapshot(false).ok()
+    }
+
+    fn snapshot(&self, check_log: bool) -> Result<Snapshot, String> {
         if !self.connected {
             return Err("not connected: cannot log".to_string());
         }
@@ -1068,9 +1241,11 @@ impl App {
         if band_for_hz(hz).is_none() {
             return Err(format!("{} Hz is outside the band table", hz));
         }
-        self.current_log()?
-            .check()
-            .map_err(|e| format!("log: {e}"))?;
+        if check_log {
+            self.current_log()?
+                .check()
+                .map_err(|e| format!("log: {e}"))?;
+        }
         let (log_mode, defaults) = self.activities[self.foreground].log_hints(&rig_mode);
         Ok(Snapshot {
             hz,
@@ -1143,6 +1318,12 @@ impl App {
     }
 
     pub fn on_key(&mut self, key: KeyEvent) -> Vec<Command> {
+        let commands = self.on_key_inner(key);
+        self.sync_embedded();
+        commands
+    }
+
+    fn on_key_inner(&mut self, key: KeyEvent) -> Vec<Command> {
         if self.quit_confirm.is_some() {
             return self.on_quit_confirm_key(key);
         }
@@ -1211,13 +1392,13 @@ impl App {
             let action = modal.on_key(key, rx);
             return self.on_bandplan_action(action);
         }
-        if self.logging.modal_open() {
+        if self.logging_modal_open() {
             // The session list holds nothing to lose, so a Chord may open over it.
-            if let (true, Some(action)) = (self.logging.list_only(), chord) {
+            if let (true, Some(action)) = (!self.form_modal_open(), chord) {
                 return self.perform(action);
             }
             // Soft keys work while the form has the keyboard; the Activity sees what is typed.
-            if self.logging.form_open() && matches!(key.code, KeyCode::F(1..=6)) {
+            if self.form_modal_open() && matches!(key.code, KeyCode::F(1..=6)) {
                 let ctx = ctx!(self);
                 return match self.activities[self.foreground].on_key(key, &ctx) {
                     Some(out) => {
@@ -1229,22 +1410,7 @@ impl App {
                     None => Vec::new(),
                 };
             }
-            let now = self.clock();
-            let (log, grid) = (self.current_log(), self.own_grid());
-            if let Some(status) = self.logging.on_key(key, now, log, grid.as_ref()) {
-                self.status = Some(status);
-            }
-            if self.logging.take_reopen() {
-                // Quick entry: the next Contact needs a fresh rig reading, like any other.
-                match self.log_snapshot() {
-                    Ok(snapshot) => self.logging.open_form(snapshot),
-                    Err(why) => {
-                        let saved = self.status.take().unwrap_or_default();
-                        self.status = Some(format!("{saved}; {why}"));
-                    }
-                }
-            }
-            self.sync_form_exchange();
+            self.feed_form(key);
             return Vec::new();
         }
         if let Some(action) = chord {
@@ -1254,6 +1420,11 @@ impl App {
         if self.entry.is_some() {
             return self.on_entry_key(key);
         }
+        if self.embedded()
+            && let Some(commands) = self.on_embedded_key(key)
+        {
+            return commands;
+        }
         let ctx = ctx!(self);
         if let Some(out) = self.activities[self.foreground].on_key(key, &ctx) {
             if out.status.is_some() {
@@ -1262,6 +1433,64 @@ impl App {
             return out.commands;
         }
         self.on_strip_key(key)
+    }
+
+    /// Give a key to the Contact form (modal or embedded) and act on a save.
+    fn feed_form(&mut self, key: KeyEvent) {
+        let now = self.clock();
+        let (log, grid) = (self.current_log(), self.own_grid());
+        let before = self.logging.count();
+        if let Some(status) = self.logging.on_key(key, now, log, grid.as_ref()) {
+            self.status = Some(status);
+        }
+        if self.logging.count() != before {
+            self.activation_stale = true;
+        }
+        if self.logging.take_reopen() {
+            // Quick entry: the next Contact needs a fresh rig reading, like any other.
+            match self.log_snapshot() {
+                Ok(snapshot) => self.logging.open_form(snapshot),
+                Err(why) => {
+                    let saved = self.status.take().unwrap_or_default();
+                    self.status = Some(format!("{saved}; {why}"));
+                }
+            }
+        }
+        self.sync_form_exchange();
+    }
+
+    /// A key on an Activity-embedded Contact form screen: plan picking, then the Activity's
+    /// routing between the form and the rest. `None`: not taken, so the Activity's own keys and
+    /// the shared strip keys get it.
+    fn on_embedded_key(&mut self, key: KeyEvent) -> Option<Vec<Command>> {
+        if key.modifiers.contains(KeyModifiers::ALT)
+            && let KeyCode::Char(c @ '1'..='9') = key.code
+        {
+            let planless = self.activation.as_ref().is_none_or(|a| a.banner.is_none());
+            if planless
+                && let Some(choice) = self
+                    .plan_choices(self.activity_name())
+                    .get(usize::from(c as u8 - b'1'))
+            {
+                let index = choice.index;
+                self.launch_plan(index);
+            }
+            return Some(Vec::new());
+        }
+        let ctx = ctx!(self);
+        match self.activities[self.foreground].form_key(key, &ctx) {
+            FormRoute::Pass => None,
+            FormRoute::Handled => Some(Vec::new()),
+            FormRoute::Form => {
+                self.feed_form(key);
+                Some(Vec::new())
+            }
+            FormRoute::Discard => {
+                self.logging.discard();
+                self.sync_embedded();
+                Some(Vec::new())
+            }
+        }
     }
 
     /// The plain keys and aliases of the shared table. Only reached when no text-entering area
@@ -1503,6 +1732,7 @@ impl App {
     pub fn tick(&mut self, now: Instant) -> Vec<Command> {
         self.now = now;
         self.tick_plans(now);
+        self.sync_embedded();
         if !self.connected {
             let due = self
                 .last_connect
@@ -1542,8 +1772,22 @@ impl App {
 
     pub(crate) fn render_body(&self, frame: &mut Frame, area: Rect, panes: Panes) {
         // Room inside the border, less the heading line.
-        let recent = self.recent_contacts(usize::from(area.height.saturating_sub(3)));
-        let ctx = ctx!(self, &recent, panes);
+        let rows = usize::from(area.height.saturating_sub(3));
+        let (recent, choices) = if self.embedded() {
+            let planless = self.activation.as_ref().is_none_or(|a| a.banner.is_none());
+            let choices = if planless {
+                self.plan_choices(self.activity_name())
+            } else {
+                Vec::new()
+            };
+            (self.logging.recent_activator(rows), choices)
+        } else {
+            (self.recent_contacts(rows), Vec::new())
+        };
+        let ctx = ActivityCtx {
+            plans: &choices,
+            ..ctx!(self, &recent, panes)
+        };
         self.activities[self.foreground].render(frame, area, &ctx);
     }
 
@@ -1576,7 +1820,8 @@ impl App {
         if let Some(modal) = &self.keybindings {
             modal.render(frame, area);
         }
-        self.logging.render(frame, area, self.own_grid().is_some());
+        self.logging
+            .render(frame, area, self.own_grid().is_some(), self.embedded());
         if let Some(lines) = &self.quit_confirm {
             let rows = lines.len() as u16;
             let inner = Modal::new("Quit rig-tui?", 60, rows + 5).render(frame, area);

@@ -91,8 +91,10 @@ struct ContactForm {
     extras: Vec<(String, String)>,
     /// A save problem not tied to a field (shown under the fields).
     error: Option<String>,
-    /// A key edited a field since the form opened.
+    /// A key changed a field's text since the form opened.
     dirty: bool,
+    /// The field values as the form opened, to tell a real edit from a Tab or an arrow.
+    baseline: Vec<String>,
 }
 
 impl ContactForm {
@@ -142,8 +144,12 @@ impl ContactForm {
                 Kind::Comment => TextField::new("Comment"),
             })
             .collect();
+        let form = Form::new(fields);
+        let baseline = (0..kinds.len())
+            .map(|i| form.value(i).to_string())
+            .collect();
         Self {
-            form: Form::new(fields),
+            form,
             kinds,
             role,
             my_refs: defaults.my_refs,
@@ -153,6 +159,30 @@ impl ContactForm {
             extras: defaults.extra_adif,
             error: None,
             dirty: false,
+            baseline,
+        }
+    }
+
+    /// Whether any field's text differs from what the form opened with.
+    fn changed(&self) -> bool {
+        self.baseline
+            .iter()
+            .enumerate()
+            .any(|(i, v)| self.form.value(i) != v)
+    }
+
+    /// The label a field is drawn with.
+    fn label(&self, kind: Kind) -> &'static str {
+        match kind {
+            Kind::Call => "Call",
+            Kind::Mode => "Mode",
+            Kind::Submode => "Submode",
+            Kind::Grid => "Grid",
+            Kind::Name => "Name",
+            Kind::RstSent => "RST sent",
+            Kind::RstRcvd => "RST rcvd",
+            Kind::TheirRef => "Their ref",
+            Kind::Comment => "Comment",
         }
     }
 
@@ -255,6 +285,10 @@ struct Logged {
     mode: String,
     rst_sent: String,
     rst_rcvd: String,
+    /// Their reference, if the Contact was park-to-park or summit-to-summit.
+    their_ref: String,
+    /// `P` for park-to-park, `S` for summit-to-summit, else a space.
+    mark: char,
 }
 
 impl Logged {
@@ -267,7 +301,35 @@ impl Logged {
             mode: submode.unwrap_or(mode).to_string(),
             rst_sent: contact.rst_sent().unwrap_or_default().to_string(),
             rst_rcvd: contact.rst_rcvd().unwrap_or_default().to_string(),
+            their_ref: String::new(),
+            mark: ' ',
         }
+    }
+
+    fn with_ref(mut self, their_ref: &str, role: Role) -> Self {
+        self.their_ref = their_ref.trim().to_string();
+        self.mark = match (self.their_ref.is_empty(), role) {
+            (true, _) => ' ',
+            (false, Role::PotaActivator | Role::PotaHunter) => 'P',
+            (false, Role::SotaActivator | Role::SotaChaser) => 'S',
+            (false, _) => ' ',
+        };
+        self
+    }
+
+    /// The Activator's recent-list row: time, call, reports, Their ref and the mark.
+    fn activator_line(&self) -> String {
+        format!(
+            "{}  {:<10} {:>3}/{:<3} {:<12} {}",
+            self.start.format("%H:%MZ"),
+            self.call,
+            self.rst_sent,
+            self.rst_rcvd,
+            self.their_ref,
+            self.mark
+        )
+        .trim_end()
+        .to_string()
     }
 
     fn line(&self) -> String {
@@ -291,6 +353,8 @@ pub(crate) struct Logging {
     session: Vec<Logged>,
     /// An activator Contact was just saved: `App` reopens the form on a fresh snapshot.
     reopen: bool,
+    /// Why an embedded form could not open (not connected, no callsign, ...).
+    wait: Option<String>,
 }
 
 impl Logging {
@@ -302,9 +366,9 @@ impl Logging {
         self.session.len()
     }
 
-    /// A form or the session list is open and gets every key.
-    pub fn modal_open(&self) -> bool {
-        self.form.is_some() || self.list.is_some()
+    /// Why an embedded form is not open yet, for its placeholder.
+    pub fn set_wait(&mut self, why: Option<String>) {
+        self.wait = why;
     }
 
     pub fn form_open(&self) -> bool {
@@ -314,11 +378,6 @@ impl Logging {
     /// The form has Contact text typed into it that closing would lose.
     pub fn form_dirty(&self) -> bool {
         self.form.as_ref().is_some_and(|f| f.dirty)
-    }
-
-    /// Only the session list is open (it holds nothing to lose).
-    pub fn list_only(&self) -> bool {
-        self.form.is_none() && self.list.is_some()
     }
 
     /// The form's in-progress values, for the Activity's Soft key variables.
@@ -368,7 +427,7 @@ impl Logging {
         match form.form.handle_key(key) {
             FormEvent::Edited => {
                 form.error = None;
-                form.dirty = true;
+                form.dirty = form.dirty || form.changed();
                 // An Activator's Contact starts with its first call character.
                 if form.role.is_activator() && call_was_empty && !form.value(Kind::Call).is_empty()
                 {
@@ -406,7 +465,7 @@ impl Logging {
             form.error = None;
             return Some(format!("not logged: {e}"));
         }
-        let logged = Logged::new(&contact);
+        let logged = Logged::new(&contact).with_ref(form.value(Kind::TheirRef), form.role);
         let status = format!("logged {}", logged.call);
         self.session.push(logged);
         self.reopen = form.role.is_activator();
@@ -424,8 +483,135 @@ impl Logging {
             .collect()
     }
 
-    pub fn render(&self, frame: &mut Frame, area: Rect, has_locator: bool) {
-        if let Some(form) = &self.form {
+    /// The Activator's recent list, newest first.
+    pub fn recent_activator(&self, n: usize) -> Vec<String> {
+        self.session
+            .iter()
+            .rev()
+            .take(n)
+            .map(Logged::activator_line)
+            .collect()
+    }
+
+    pub fn list_open(&self) -> bool {
+        self.list.is_some()
+    }
+
+    pub fn form_mode(&self) -> String {
+        self.form
+            .as_ref()
+            .map(|f| f.value(Kind::Mode).to_string())
+            .unwrap_or_default()
+    }
+
+    pub fn form_hz(&self) -> Option<u64> {
+        self.form.as_ref().map(|f| f.hz)
+    }
+
+    /// Throw away the open form (an embedded form is then reopened fresh by the host).
+    pub fn discard(&mut self) {
+        self.form = None;
+    }
+
+    /// Bring an open form up to date with the rig. A form nobody has typed into is rebuilt when
+    /// the frequency or mode moved, so its Mode and RST follow the rig; a half-typed one keeps
+    /// its text and only takes the new frequency. My references always follow the plan.
+    pub fn refresh(&mut self, snapshot: Snapshot) {
+        let Some(form) = &mut self.form else { return };
+        form.my_refs.clone_from(&snapshot.defaults.my_refs);
+        if snapshot.hz == form.hz && snapshot.rig_mode == form.rig_mode {
+            return;
+        }
+        if form.dirty {
+            form.hz = snapshot.hz;
+            form.rig_mode = snapshot.rig_mode;
+        } else {
+            self.form = Some(ContactForm::new(snapshot));
+        }
+    }
+
+    /// Draw the open form inside `area` (a bordered block of at least 6 rows): the fields in
+    /// two columns, the rig's frequency and mode and the start time in the title.
+    pub fn render_embedded(&self, frame: &mut Frame, area: Rect, focused: bool) {
+        let border = crate::style::focus_border(focused);
+        let Some(form) = &self.form else {
+            frame.render_widget(
+                Paragraph::new(
+                    self.wait
+                        .clone()
+                        .unwrap_or_else(|| "waiting for the rig's frequency and mode".to_string()),
+                )
+                .style(dim())
+                .block(
+                    ratatui::widgets::Block::default()
+                        .borders(ratatui::widgets::Borders::ALL)
+                        .border_style(border)
+                        .title("Contact"),
+                ),
+                area,
+            );
+            return;
+        };
+        let state = if focused {
+            "typing"
+        } else {
+            "strip keys, Tab to type"
+        };
+        let mut title = vec![ratatui::text::Span::raw(format!(
+            "Contact {} {} {}Z | {state}",
+            format_hz(form.hz),
+            form.rig_mode,
+            form.started.format("%H:%M:%S")
+        ))];
+        if let Some(message) = &form.error {
+            title.push(ratatui::text::Span::styled(format!(" | {message}"), red()));
+        }
+        let block = ratatui::widgets::Block::default()
+            .borders(ratatui::widgets::Borders::ALL)
+            .border_style(border)
+            .title(Line::from(title));
+        let inner = block.inner(area);
+        frame.render_widget(block, area);
+        let [left, right] =
+            Layout::horizontal([Constraint::Percentage(50), Constraint::Percentage(50)])
+                .areas(inner);
+        let rows = usize::from(inner.height).max(1);
+        let focus = form.form.focus();
+        for (i, kind) in form.kinds.iter().enumerate() {
+            let (column, row) = (i / rows, i % rows);
+            let cell = if column == 0 { left } else { right };
+            if column > 1 {
+                break;
+            }
+            let label = format!("{}: ", form.label(*kind));
+            let style = if focused && i == focus {
+                ratatui::style::Style::default().add_modifier(
+                    ratatui::style::Modifier::BOLD | ratatui::style::Modifier::REVERSED,
+                )
+            } else {
+                ratatui::style::Style::default()
+            };
+            let value = form.form.value(i).to_string();
+            let line_area = Rect::new(cell.x, cell.y + row as u16, cell.width, 1);
+            if focused && i == focus {
+                let x = (label.chars().count() + value.chars().count()) as u16;
+                if x < cell.width {
+                    frame.set_cursor_position((cell.x + x, line_area.y));
+                }
+            }
+            frame.render_widget(
+                Paragraph::new(Line::from(vec![
+                    ratatui::text::Span::styled(label, style),
+                    ratatui::text::Span::raw(value),
+                ])),
+                line_area,
+            );
+        }
+    }
+
+    /// Draw the session list or the form as a modal; `embedded` leaves the form to the Activity.
+    pub fn render(&self, frame: &mut Frame, area: Rect, has_locator: bool, embedded: bool) {
+        if let Some(form) = self.form.as_ref().filter(|_| !embedded) {
             let title = if has_locator {
                 "Log contact".to_string()
             } else {

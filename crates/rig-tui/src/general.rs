@@ -37,6 +37,14 @@ impl General {
         }
     }
 
+    /// Draw the active panel alone in `area` (for an Activity that lays out its own screen).
+    pub(crate) fn render_panel(&self, frame: &mut Frame, area: Rect, ctx: &ActivityCtx) {
+        if let Some(index) = self.active_panel(ctx) {
+            let pctx = self.panel_ctx(ctx, self.text_focus(ctx));
+            self.panels[index].render(frame, area, &pctx);
+        }
+    }
+
     fn active_panel(&self, ctx: &ActivityCtx) -> Option<usize> {
         let mode = ctx.rig_mode?;
         self.panels.iter().position(|p| p.applies(mode))

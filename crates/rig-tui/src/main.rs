@@ -12,7 +12,7 @@ use rig_tui::refdata::ReferenceData;
 use rig_tui::reference::{
     Limits, ReferenceClient, SystemClock, UreqTransport, default_cache_dir, user_agent,
 };
-use rig_tui::{App, Command, Config, Rig, config_path, default_log_path, render};
+use rig_tui::{Activator, App, Command, Config, Rig, config_path, default_log_path, render};
 use tokio::runtime::Runtime;
 
 /// One loop pass. The KX3 clears its decode buffer on each `TB;` and holds only 40 characters,
@@ -94,6 +94,9 @@ fn try_main() -> Result<(), Box<dyn Error>> {
     if let Some(addr) = addr_arg {
         app = app.with_rig_addr(addr);
     }
+    // The hosted Activities, after General. `App::launch_plan` finds a plan's Activity by name.
+    app.host_activity(Box::new(Activator::sota()));
+    app.host_activity(Box::new(Activator::pota()));
     // One connection per configured rig; both stay up.
     let mut rigs: Vec<Rig> = app.rig_addrs().into_iter().map(Rig::new).collect();
     let geocoder = Geocoder::new();
