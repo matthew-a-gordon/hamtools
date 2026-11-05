@@ -27,6 +27,7 @@ mod rigs;
 pub mod satellite;
 pub mod softkeys;
 pub mod spots;
+mod spotwatch;
 mod style;
 mod tracker;
 mod ui;

@@ -6,6 +6,7 @@
 //! plan and the Log, and passes what the screen shows through [`ActivityCtx`]. Logging never
 //! waits on a plan: with no active plan the banner says so and Contacts carry no reference.
 
+use std::sync::Arc;
 use std::time::Instant;
 
 use logbook::band_for_hz;
@@ -19,7 +20,9 @@ use crate::activity::{Activity, ActivityCtx, ActivityOutput, FormRoute};
 use crate::general::General;
 use crate::keys::{self, Action, Key, KeyEntry, Scope};
 use crate::panel::{LogDefaults, LogMode, Role};
+use crate::reference::ReferenceClient;
 use crate::rig::{Command, RigMode};
+use crate::spotwatch::SpotWatch;
 use crate::style::{dim, yellow};
 use crate::tracker::Program;
 use crate::ui::format_hz;
@@ -40,6 +43,8 @@ pub struct Activator {
     role: Role,
     /// My references of the active plan, when it is this program's.
     my_refs: Vec<String>,
+    /// The shared spot feed, for the POTA Activator only.
+    spots: Option<SpotWatch>,
 }
 
 /// The Ctrl key that moves to the CW Send line.
@@ -67,7 +72,23 @@ impl Activator {
             focus: Focus::Form,
             role,
             my_refs: Vec::new(),
+            spots: None,
         }
+    }
+
+    /// Read the shared spot feed while this screen is in the foreground: a "you are spotted"
+    /// line, and (from 128 columns and 30 rows) nearby activators. POTA only; a SOTA Activator
+    /// stays silent and asks for nothing.
+    pub fn with_spots(
+        mut self,
+        client: Arc<ReferenceClient>,
+        online: bool,
+        call: Option<&str>,
+    ) -> Self {
+        if self.program == Program::Pota {
+            self.spots = Some(SpotWatch::new(client, online, call));
+        }
+        self
     }
 
     fn name_of(&self) -> &'static str {
@@ -100,6 +121,13 @@ impl Activator {
             }
         };
         let mut lines = vec![first, second];
+        if let Some(spotted) = self
+            .spots
+            .as_ref()
+            .and_then(|w| w.spotted_line(ctx.utc.timestamp()))
+        {
+            lines.push(Line::styled(spotted, yellow()));
+        }
         let call = ctx.form.call();
         let duplicate = view.and_then(|v| v.tracker.as_ref()).and_then(|t| {
             let band = ctx.form.hz().and_then(band_for_hz).map(|b| b.name);
@@ -164,6 +192,26 @@ impl Activator {
                     .borders(Borders::ALL)
                     .title("Recent contacts"),
             ),
+            area,
+        );
+    }
+
+    /// Other activators' spots: park-to-park candidates, nearest first.
+    fn render_nearby(&self, frame: &mut Frame, area: Rect, ctx: &ActivityCtx) {
+        let rows = usize::from(area.height.saturating_sub(2));
+        let lines = self
+            .spots
+            .as_ref()
+            .map(|w| w.nearby(ctx.utc.timestamp(), ctx.observer))
+            .unwrap_or_default();
+        let text = if lines.is_empty() {
+            "none spotted".to_string()
+        } else {
+            lines.into_iter().take(rows).collect::<Vec<_>>().join("\n")
+        };
+        frame.render_widget(
+            Paragraph::new(text)
+                .block(Block::default().borders(Borders::ALL).title("Nearby spots")),
             area,
         );
     }
@@ -312,6 +360,9 @@ impl Activity for Activator {
     }
 
     fn on_tick(&mut self, now: Instant, ctx: &ActivityCtx) -> Vec<Command> {
+        if let Some(watch) = &mut self.spots {
+            watch.tick(now);
+        }
         self.inner.on_tick(now, ctx)
     }
 
@@ -430,6 +481,16 @@ impl Activity for Activator {
             self.render_hints(frame, hints);
         }
         if let Some(side) = side {
+            let (nearby, side) = if self.spots.is_some() && ctx.panes.bandplan_strip {
+                let [top, rest] =
+                    Layout::vertical([Constraint::Percentage(50), Constraint::Min(0)]).areas(side);
+                (Some(top), rest)
+            } else {
+                (None, side)
+            };
+            if let Some(area) = nearby {
+                self.render_nearby(frame, area, ctx);
+            }
             // The wide screen's second column: the picker while there is no plan, then the list.
             if planless {
                 let [top, rest] = Layout::vertical([
