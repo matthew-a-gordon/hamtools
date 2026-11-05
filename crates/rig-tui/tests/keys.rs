@@ -53,6 +53,7 @@ mod table {
             vec![
                 ('b', Action::Bandplan),
                 ('c', Action::Quit),
+                ('d', Action::Daemon),
                 ('g', Action::GoTo),
                 ('j', Action::SessionList),
                 ('k', Action::Keybindings),

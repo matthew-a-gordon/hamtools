@@ -291,6 +291,7 @@ A **text-entering area** (the CW input, a form field, the palette filter, freque
 | `Ctrl-K` | Keybindings modal (context-aware, `/` filters, blocked keys greyed with a reason) |
 | `Ctrl-B` | Band plan |
 | `Ctrl-R` | Rig switcher |
+| `Ctrl-D` | Start `rigctld` for a serial port (see Starting `rigctld` under section 8) |
 | `Ctrl-L` | Contact form |
 | `Ctrl-J` | Session list |
 | `Ctrl-O` | Config |
@@ -320,6 +321,17 @@ kind = "ft847"
 Both rigs stay connected. The inactive one is polled lightly (health, frequency and mode about every 5 seconds), so switching is instant. `Ctrl-R` opens the switcher with both connection states. Switching is refused while the current rig is transmitting (PTT on or a CW send in progress). If the new rig cannot run the current Activity, the app drops to General with a status line. Each rig keeps its own state: last frequency, mode, VFO, split, step, CW transcript and Soft key state.
 
 What each rig can do comes from a static capability table keyed by `kind` (`kx3`, `ft847`, `generic`), not from probing Hamlib. A profile may override `cw`, `split` or `sat_mode`; an override is never counted as verified. `Ctrl-R` shows each rig's row. Rows verified on hardware are the KX3's CW sending, VFO A/B, split and its transmit frequency, and the frequency, mode, passband and S-meter reads, and the FT-847's split (seen 2026-11-04) and SAT mode on and off (seen 2026-11-05, see `CLAUDE.md`). Everything else, including the FT-847's CW, is labelled *untested on hardware*.
+
+### Starting `rigctld`
+
+If the Active rig cannot be reached a few seconds after start-up, rig-tui offers to start a `rigctld` for you, once per session. `Ctrl-D` opens the same prompt any time. It lists the serial ports it finds (`ttyUSB*` and `ttyACM*`, shown by their `/dev/serial/by-id` name when they have one). **Listing a port does not open it**: only the `rigctld` it starts does. For each port you choose which rig profile it is, with `Left`/`Right`, and press `Enter`. `Esc` starts nothing.
+
+- The model and baud come from the profile kind: KX3 is model 2045 at 38400 baud, FT-847 is model 1001 at 9600. A `generic` profile, or one whose address is not on this machine (`127.0.0.1` or `localhost`), is not offered, because nothing is known about it or a daemon here could not serve it.
+- The listening TCP port is the one in the profile's address.
+- The daemon is a child of rig-tui and stops when you quit. A `rigctld` your system already runs is never touched; if it is running, the prompt does not appear.
+- You must be in the `dialout` group. If `rigctld` exits, the status line shows what it printed last. Hamlib 4.7.2 does not exit when it cannot open the port (wrong name, no permission): it keeps running with no rig, prints the reason only when it stops, and the strip shows rig errors instead of connecting. Quit rig-tui to stop it and check the port and the `dialout` group. If `rigctld` is not installed: `apt install libhamlib-utils` on Debian and Raspberry Pi OS.
+
+*Untested on hardware.* The port listing and the start-up arguments are covered by tests; no daemon was started against a radio.
 
 ### Satellite settings
 

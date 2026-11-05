@@ -9,6 +9,7 @@ use chrono::Utc;
 use hamtools_config::Grid;
 use ratatui::DefaultTerminal;
 use ratatui::crossterm::event::{self, Event, KeyEventKind};
+use rig_tui::daemon::{Daemons, scan_ports};
 use rig_tui::geocode::{GeocodeResult, Geocoder};
 use rig_tui::refdata::ReferenceData;
 use rig_tui::reference::{
@@ -118,7 +119,8 @@ fn try_main() -> Result<(), Box<dyn Error>> {
             std::env::var("HOME").ok().as_deref(),
         ))
         .with_rigs(&config.rigs, config.rig_default.as_deref())
-        .with_config_path(config_arg.or(default_path));
+        .with_config_path(config_arg.or(default_path))
+        .with_daemon_prompt(true);
     if let Some(name) = rig_arg {
         app = app.with_active_rig(&name)?;
     }
@@ -168,6 +170,8 @@ fn try_main() -> Result<(), Box<dyn Error>> {
     let mut rigs: Vec<Rig> = app.rig_addrs().into_iter().map(Rig::new).collect();
     let geocoder = Geocoder::new().with_offline(offline);
 
+    // Daemons we start are children; dropping this (after the terminal is restored) kills them.
+    let mut daemons = Daemons::default();
     let mut terminal = ratatui::init();
     let result = run(
         &mut terminal,
@@ -176,6 +180,7 @@ fn try_main() -> Result<(), Box<dyn Error>> {
         app,
         &geocoder,
         &mut downloads,
+        &mut daemons,
     );
     ratatui::restore();
     result
@@ -294,6 +299,12 @@ impl Downloads {
     }
 }
 
+/// What `dispatch` runs besides the rigs: satellite downloads and the daemons we started.
+struct Services<'a> {
+    downloads: &'a mut Downloads,
+    daemons: &'a mut Daemons,
+}
+
 /// Run each command against the rig and feed what it reports back to the app. Returns true when
 /// the app asked to quit.
 fn dispatch(
@@ -302,7 +313,7 @@ fn dispatch(
     app: &mut App,
     geocoder: &Geocoder,
     lookups: &Sender<GeocodeResult>,
-    downloads: &mut Downloads,
+    services: &mut Services,
     commands: Vec<Command>,
 ) -> bool {
     for command in commands {
@@ -316,8 +327,20 @@ fn dispatch(
                 geocoder.clear_cache();
                 continue;
             }
+            Command::ScanPorts => {
+                let held = services.daemons.ports_in_use();
+                let mut ports = scan_ports(std::path::Path::new("/dev"));
+                ports.retain(|p| !held.contains(&p.path));
+                app.on_ports(ports);
+                continue;
+            }
+            Command::StartDaemon(launch) => {
+                let message = services.daemons.start(launch.clone()).unwrap_or_else(|e| e);
+                app.set_status(Some(message));
+                continue;
+            }
             Command::SatelliteRefresh { force } => {
-                downloads.refresh(app, *force);
+                services.downloads.refresh(app, *force);
                 continue;
             }
             _ => {}
@@ -350,10 +373,12 @@ fn run(
     mut app: App,
     geocoder: &Geocoder,
     downloads: &mut Downloads,
+    daemons: &mut Daemons,
 ) -> Result<(), Box<dyn Error>> {
     // The address lookup runs on a short-lived thread; its answer comes back here, like the
     // satellite downloads, so `App` stays free of threads.
     let (lookups, answers) = mpsc::channel();
+    let mut services = Services { downloads, daemons };
     loop {
         app.set_utc(SystemTime::now());
         let size = terminal.size()?;
@@ -365,7 +390,15 @@ fn run(
             && key.kind == KeyEventKind::Press
         {
             let commands = app.on_key(key);
-            if dispatch(rt, rigs, &mut app, geocoder, &lookups, downloads, commands) {
+            if dispatch(
+                rt,
+                rigs,
+                &mut app,
+                geocoder,
+                &lookups,
+                &mut services,
+                commands,
+            ) {
                 return Ok(());
             }
         }
@@ -373,10 +406,21 @@ fn run(
         while let Ok(answer) = answers.try_recv() {
             app.on_geocode(answer);
         }
-        downloads.poll(&mut app);
+        services.downloads.poll(&mut app);
+        if let Some(message) = services.daemons.poll().pop() {
+            app.set_status(Some(message));
+        }
 
         let commands = app.tick(Instant::now());
-        if dispatch(rt, rigs, &mut app, geocoder, &lookups, downloads, commands) {
+        if dispatch(
+            rt,
+            rigs,
+            &mut app,
+            geocoder,
+            &lookups,
+            &mut services,
+            commands,
+        ) {
             return Ok(());
         }
     }

@@ -10,6 +10,8 @@ mod bandplan;
 mod config;
 mod config_dialog;
 mod cw;
+pub mod daemon;
+mod daemon_modal;
 pub mod export;
 mod export_modal;
 mod general;
