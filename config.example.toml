@@ -59,3 +59,24 @@ F3 = "{THEIRCALL} TU 73 DE {MYCALL} EE"
 F4 = "QRZ? DE {MYCALL}"
 F5 = "PSE UR CALL AGN K"
 F6 = "QRL?"
+
+# Named sets, picked by a plan's "Soft key set" field. Keys you leave out fall back to [macros].
+# {MYREF} and {THEIRREF} are the park or summit references. Phrasing follows
+# docs/research/cw-message-formats.md.
+[softkeys.pota]
+F1 = "CQ POTA {MYCALL} {MYCALL} K"
+F2 = "{THEIRCALL} UR {MYRST} K"
+F3 = "{THEIRCALL} TU 73 DE {MYCALL} EE"
+F4 = "QRZ? POTA DE {MYCALL}"
+F5 = "UR {MYRST} P2P {MYREF} {MYREF} BK"
+F6 = "QRL?"
+
+# "CQ SOTA", "S2S" and the summit-reference exchange are not specified by a SOTA primary source
+# (see the research note), so check them against current SOTA practice.
+[softkeys.sota]
+F1 = "CQ SOTA {MYCALL} {MYCALL} K"
+F2 = "{THEIRCALL} UR {MYRST} {MYREF} K"
+F3 = "{THEIRCALL} TU 73 DE {MYCALL} EE"
+F4 = "QRZ? SOTA DE {MYCALL}"
+F5 = "S2S {MYREF} {MYREF} K"
+F6 = "QRL?"
