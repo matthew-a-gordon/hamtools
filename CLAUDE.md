@@ -1,6 +1,6 @@
 # hamtools
 
-Cargo workspace: `rigctld-client`, `rig-tui`, `sat-tui`, `logbook`, `orbit`, `hamtools-config`, `hamtools-tui`. Keep dependencies minimal; justify heavy crates.
+Cargo workspace: `rigctld-client`, `rig-tui`, `sat-tui` (library only, used by `rig-tui`; no binary), `logbook`, `orbit`, `hamtools-config`, `hamtools-tui`. Keep dependencies minimal; justify heavy crates.
 
 ## Commands
 - `nix develop` (or direnv) for the toolchain and `hamlib_4`

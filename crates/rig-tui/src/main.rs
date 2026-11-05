@@ -30,7 +30,7 @@ const TICK: Duration = Duration::from_millis(100);
 
 const USAGE: &str = "usage: rig-tui [--config PATH] [--grid GRID | --lat DEG --lon DEG] [--alt METRES] [ADDR]
 
---offline never asks the network (POTA spots show only what is cached; satellite data is not downloaded).
+--offline never asks the network (POTA spots, reference data and address lookups are off; satellite data is not downloaded).
 ADDR is the rigctld of the Active rig; it overrides that profile's address (with no profiles: 127.0.0.1:4532).
 Config defaults to $XDG_CONFIG_HOME/hamtools/config.toml (see config.example.toml).
 The app starts without a rig and keeps retrying the connection.
