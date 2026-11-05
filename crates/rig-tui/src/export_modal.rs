@@ -47,15 +47,21 @@ pub(crate) struct ExportModal {
     notice: Option<(String, bool)>,
 }
 
-/// The states to choose from: those of every park spanning more than one, the primary park's
-/// first. A park's cached or snapshot location is `US-IN` or `US-IN,US-MI`.
-fn multi_state_choices(plan: &Plan, locations: &BTreeMap<String, String>) -> Vec<String> {
+/// The states to choose from, deduplicated, and the index of the default. The pool is the
+/// states of every park spanning more than one. The default is the plan's primary park's
+/// state (its first reference): its first state when it spans several, its only state when
+/// that is in the pool; otherwise the pool's first. A park's cached or snapshot location is
+/// `US-IN` or `US-IN,US-MI`.
+fn multi_state_choices(plan: &Plan, locations: &BTreeMap<String, String>) -> (Vec<String>, usize) {
+    let states_of = |r: &str| {
+        locations
+            .get(&r.to_ascii_uppercase())
+            .map(|loc| parse_locations(loc))
+            .unwrap_or_default()
+    };
     let mut out: Vec<String> = Vec::new();
     for r in &plan.references {
-        let Some(loc) = locations.get(&r.to_ascii_uppercase()) else {
-            continue;
-        };
-        let states = parse_locations(loc);
+        let states = states_of(r);
         if states.len() > 1 {
             for s in states {
                 if !out.contains(&s) {
@@ -64,7 +70,12 @@ fn multi_state_choices(plan: &Plan, locations: &BTreeMap<String, String>) -> Vec
             }
         }
     }
-    out
+    let primary = plan.references.first().map(|r| states_of(r));
+    let default = primary
+        .and_then(|s| s.first().cloned())
+        .and_then(|s| out.iter().position(|o| *o == s))
+        .unwrap_or(0);
+    (out, default)
 }
 
 impl ExportModal {
@@ -75,7 +86,7 @@ impl ExportModal {
         locations: BTreeMap<String, String>,
         dir: Option<PathBuf>,
     ) -> Self {
-        let states = multi_state_choices(&plan, &locations);
+        let (states, state_idx) = multi_state_choices(&plan, &locations);
         let mut modal = Self {
             plan,
             operator,
@@ -84,7 +95,7 @@ impl ExportModal {
             dir,
             other_dates: false,
             states,
-            state_idx: 0,
+            state_idx,
             preview: Preview::default(),
             stage: Stage::Preview,
             scroll: 0,
@@ -298,14 +309,17 @@ impl ExportModal {
                     (_, Some((text, false))) => Line::raw(text.clone()),
                     _ => Line::raw(String::new()),
                 };
-                let keys = Line::styled(
-                    if self.states.is_empty() {
-                        "Enter write   d other dates   ? unverified   Up/Down scroll   Esc close"
-                    } else {
-                        "Enter write   s state   d other dates   ? unverified   Esc close"
-                    },
-                    dim(),
-                );
+                let mut parts = vec!["Enter write"];
+                if !self.states.is_empty() {
+                    parts.push("s state");
+                }
+                parts.extend([
+                    "d other dates",
+                    "? unverified",
+                    "Up/Down scroll",
+                    "Esc close",
+                ]);
+                let keys = Line::styled(parts.join("   "), dim());
                 frame.render_widget(Paragraph::new(vec![first, keys]), foot);
             }
         }

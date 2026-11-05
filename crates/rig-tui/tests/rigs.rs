@@ -453,6 +453,24 @@ fn rig_flag_with_an_unknown_name_errors_and_lists_the_profiles() {
 }
 
 #[test]
+fn the_switcher_shows_ft847_split_verified_while_cw_and_sat_mode_stay_untested() {
+    let mut app = two_rigs();
+    app.on_key(ctrl('r'));
+    let rows = screen(&app, 100, 30);
+    // The FT-847 capability line wraps across two screen rows; join them before reading.
+    let at = rows
+        .iter()
+        .position(|r| r.contains("CW no"))
+        .expect("FT-847 row");
+    let text = format!("{} {}", rows[at], rows[at + 1]);
+    assert!(
+        text.contains("CW no, untested on hardware; split yes;"),
+        "{text}"
+    );
+    assert!(text.contains("sat mode yes, untested on"), "{text}");
+}
+
+#[test]
 fn rig_flag_with_no_profiles_errors() {
     assert!(App::new().with_active_rig("kx3").is_err());
 }
