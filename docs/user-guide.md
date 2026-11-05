@@ -319,7 +319,7 @@ kind = "ft847"
 
 Both rigs stay connected. The inactive one is polled lightly (health, frequency and mode about every 5 seconds), so switching is instant. `Ctrl-R` opens the switcher with both connection states. Switching is refused while the current rig is transmitting (PTT on or a CW send in progress). If the new rig cannot run the current Activity, the app drops to General with a status line. Each rig keeps its own state: last frequency, mode, VFO, split, step, CW transcript and Soft key state.
 
-What each rig can do comes from a static capability table keyed by `kind` (`kx3`, `ft847`, `generic`), not from probing Hamlib. A profile may override `cw`, `split` or `sat_mode`; an override is never counted as verified. `Ctrl-R` shows each rig's row. Rows verified on hardware are the KX3's CW sending, VFO A/B, split and its transmit frequency, and the frequency, mode, passband and S-meter reads, and the FT-847's split (seen 2026-11-04, see `CLAUDE.md`). Everything else, including the FT-847's SAT mode and CW, is labelled *untested on hardware*.
+What each rig can do comes from a static capability table keyed by `kind` (`kx3`, `ft847`, `generic`), not from probing Hamlib. A profile may override `cw`, `split` or `sat_mode`; an override is never counted as verified. `Ctrl-R` shows each rig's row. Rows verified on hardware are the KX3's CW sending, VFO A/B, split and its transmit frequency, and the frequency, mode, passband and S-meter reads, and the FT-847's split (seen 2026-11-04) and SAT mode on and off (seen 2026-11-05, see `CLAUDE.md`). Everything else, including the FT-847's CW, is labelled *untested on hardware*.
 
 ### Satellite settings
 

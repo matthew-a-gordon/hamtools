@@ -98,24 +98,23 @@ fn every_row_not_verified_on_hardware_is_labelled_and_verified_rows_are_not() {
 }
 
 #[test]
-fn the_kx3_row_follows_claude_md_and_the_ft847_has_only_split_verified() {
+fn the_kx3_row_follows_claude_md_and_the_ft847_has_split_and_sat_mode_verified_but_not_cw() {
     let kx3 = capability_table(RigKind::Kx3);
     assert!(kx3.has(Capability::Cw) && kx3.verified(Capability::Cw));
     assert!(kx3.has(Capability::Split) && kx3.verified(Capability::Split));
     assert!(!kx3.has(Capability::SatMode));
 
     let ft = capability_table(RigKind::Ft847);
-    // Split seen on the FT-847 on 2026-11-04 (CLAUDE.md); SAT mode and CW were not.
+    // Split seen on the FT-847 on 2026-11-04 and SAT mode engaging and releasing on 2026-11-05
+    // (CLAUDE.md); CW was not.
     assert!(ft.has(Capability::Split) && ft.verified(Capability::Split));
-    assert!(ft.has(Capability::SatMode));
-    for c in [Capability::Cw, Capability::SatMode] {
-        assert!(!ft.verified(c), "{c:?}");
-    }
+    assert!(ft.has(Capability::SatMode) && ft.verified(Capability::SatMode));
+    assert!(!ft.verified(Capability::Cw));
     let rows = ft.rows();
     let row = |label: &str| rows.iter().find(|r| r.starts_with(label)).unwrap().clone();
     assert!(!row("split").contains("untested"), "{rows:?}");
     assert!(row("CW").contains("untested on hardware"), "{rows:?}");
-    assert!(row("sat mode").contains("untested on hardware"), "{rows:?}");
+    assert!(!row("sat mode").contains("untested"), "{rows:?}");
 }
 
 #[test]
@@ -453,7 +452,7 @@ fn rig_flag_with_an_unknown_name_errors_and_lists_the_profiles() {
 }
 
 #[test]
-fn the_switcher_shows_ft847_split_verified_while_cw_and_sat_mode_stay_untested() {
+fn the_switcher_shows_ft847_split_and_sat_mode_verified_while_cw_stays_untested() {
     let mut app = two_rigs();
     app.on_key(ctrl('r'));
     let rows = screen(&app, 100, 30);
@@ -467,7 +466,8 @@ fn the_switcher_shows_ft847_split_verified_while_cw_and_sat_mode_stay_untested()
         text.contains("CW no, untested on hardware; split yes;"),
         "{text}"
     );
-    assert!(text.contains("sat mode yes, untested on"), "{text}");
+    assert!(text.contains("sat mode yes;"), "{text}");
+    assert!(!text.contains("sat mode yes, untested"), "{text}");
 }
 
 #[test]

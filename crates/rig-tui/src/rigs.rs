@@ -96,13 +96,15 @@ pub fn table(kind: RigKind) -> Capabilities {
             bands_verified: false,
         },
         // Split is verified on the FT-847 (2026-11-04, CLAUDE.md: `s` reads `1 Sub`, `i`/`x`
-        // return the transmit side, tracking set and read back both frequencies). SAT mode has
-        // no recorded hardware check and no hamlib read-back, so it stays unverified; CW is not
-        // known to work through hamlib's ft847 backend, so it stays off and unverified.
+        // return the transmit side, tracking set and read back both frequencies). SAT mode
+        // engaging and releasing is verified too (2026-11-05, CLAUDE.md): split on turns the SAT
+        // indicator on, `S 0 VFOA` turns it off, seen on the radio's display. Hamlib has no
+        // read-back for it, and `Z` while tracking does not hold (#81). CW is not known to work
+        // through hamlib's ft847 backend, so it stays off and unverified.
         RigKind::Ft847 => Capabilities {
             cw: no(false),
             split: yes(true),
-            sat_mode: yes(false),
+            sat_mode: yes(true),
             bands: &[
                 "160m", "80m", "40m", "30m", "20m", "17m", "15m", "12m", "10m", "6m", "2m", "70cm",
             ],
