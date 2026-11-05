@@ -55,4 +55,4 @@ kind = "ft847"
 [macros]
 F1 = "CQ CQ CQ DE {MYCALL} {MYCALL} K"
 F2 = "{MYCALL}"
-F3 = "R R 73 TU DE {MYCALL} SK"
+F3 = "TU 73 DE {MYCALL} EE"

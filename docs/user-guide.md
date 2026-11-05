@@ -111,7 +111,7 @@ Bind messages under `[macros]` in the config. Text is sent as CW when you press 
 [macros]
 F1 = "CQ CQ CQ DE {MYCALL} {MYCALL} K"
 F2 = "{MYCALL}"
-F3 = "R R 73 TU DE {MYCALL} SK"
+F3 = "TU 73 DE {MYCALL} EE"
 ```
 
 `{MYCALL}` expands to your `callsign` setting (the older `{CALL}` is an error: "use {MYCALL}"). Named sets go under `[softkeys.<name>]` with the same F1 to F6 keys. Keys you leave unset use the built-in defaults. The six keys appear in reverse video under the panel: bold and underlined for a plan's own key, bold for a plan's set, dim for a built-in default, and struck through for a stored message that fails validation (it will not send).
