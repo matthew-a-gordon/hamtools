@@ -252,6 +252,11 @@ impl ReferenceData {
         self
     }
 
+    /// Whether `--offline` is set.
+    pub fn is_offline(&self) -> bool {
+        self.offline
+    }
+
     fn summits_feed() -> Feed {
         Feed::new(SUMMITS_KEY, SUMMIT_LIST_URL, Pace::Daily)
     }
