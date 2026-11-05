@@ -7,7 +7,7 @@
 #
 # x = extra, a = advanced, g = general, t = technician, n = novice.
 
-meta = { as_of = "2026-11-04", amended = "91 FR 1430 (per research note, unverified)" }
+meta = { as_of = "2026-11-04", amended = "91 FR 1430 (confirmed against the eCFR, docs/research/missing-data.md)" }
 
 segment = [
   { band = "160m", lo_hz = 1_800_000, hi_hz = 2_000_000, classes = "xag", source = "fcc-97.301" },
@@ -47,15 +47,18 @@ segment = [
   { band = "10m", lo_hz = 28_000_000, hi_hz = 28_500_000, classes = "xagtn", source = "fcc-97.301" },
   { band = "10m", lo_hz = 28_500_000, hi_hz = 29_700_000, classes = "xag", source = "fcc-97.301" },
 
-  { band = "6m", lo_hz = 50_000_000, hi_hz = 54_000_000, classes = "xagtn", source = "fcc-97.301(a)" },
-  { band = "2m", lo_hz = 144_000_000, hi_hz = 148_000_000, classes = "xagtn", source = "fcc-97.301(a)" },
+  { band = "6m", lo_hz = 50_000_000, hi_hz = 54_000_000, classes = "xagt", source = "fcc-97.301(a)" },
+  { band = "2m", lo_hz = 144_000_000, hi_hz = 148_000_000, classes = "xagt", source = "fcc-97.301(a)" },
   { band = "1.25m", lo_hz = 222_000_000, hi_hz = 225_000_000, classes = "xagtn", source = "fcc-97.301(a)" },
-  { band = "70cm", lo_hz = 420_000_000, hi_hz = 450_000_000, classes = "xagtn", source = "fcc-97.301(a)" },
-  { band = "33cm", lo_hz = 902_000_000, hi_hz = 928_000_000, classes = "xagtn", source = "fcc-97.301(a)" },
-  { band = "23cm", lo_hz = 1_240_000_000, hi_hz = 1_300_000_000, classes = "xagtn", source = "fcc-97.301(a)" },
+  { band = "70cm", lo_hz = 420_000_000, hi_hz = 450_000_000, classes = "xagt", source = "fcc-97.301(a)" },
+  { band = "33cm", lo_hz = 902_000_000, hi_hz = 928_000_000, classes = "xagt", source = "fcc-97.301(a)" },
+  # 23 cm: Novice only has 1270-1295 (97.301(e)).
+  { band = "23cm", lo_hz = 1_240_000_000, hi_hz = 1_270_000_000, classes = "xagt", source = "fcc-97.301(a)" },
+  { band = "23cm", lo_hz = 1_270_000_000, hi_hz = 1_295_000_000, classes = "xagtn", source = "fcc-97.301(a)(e)" },
+  { band = "23cm", lo_hz = 1_295_000_000, hi_hz = 1_300_000_000, classes = "xagt", source = "fcc-97.301(a)" },
 ]
 
-# 60 m channels (97.303(h)(3) as read; the ARRL page disagrees on the channel count). The carrier
+# 60 m channels (97.303(h)(3)). The carrier
 # is the dial frequency for upper sideband; the center frequency is the channel's nominal one.
 channel = [
   { band = "60m", center_hz = 5_332_000, carrier_hz = 5_330_500, classes = "xag", source = "fcc-97.303(h)" },
