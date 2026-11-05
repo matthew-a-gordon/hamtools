@@ -17,7 +17,8 @@ Contents
 9. [Planned: SOTA and POTA](#9-planned-sota-and-pota)
 10. [Planned: band plan](#10-planned-band-plan)
 11. [Planned: export](#11-planned-export)
-12. [Troubleshooting](#12-troubleshooting)
+12. [Colors](#12-colors)
+13. [Troubleshooting](#13-troubleshooting)
 
 ---
 
@@ -424,7 +425,25 @@ Exporting a Hunter log is out of scope for now.
 
 ---
 
-## 12. Troubleshooting
+## 12. Colors
+
+Color only ever adds to something already written in text: every colored item has a character, word or position that says the same thing, so the screen works on a monochrome terminal. Only the 16 ANSI colors are used, so your terminal's theme decides the exact shades.
+
+| Color | Meaning | Non-color cue |
+| --- | --- | --- |
+| Cyan | The pane that has focus (its border); the ARRL voluntary band plan row | The focused border is the one with the cursor or highlighted selection; the row is labelled `ARRL` |
+| Dark gray (dim) | Secondary text: hints, placeholders, stale spots, "not cached", notes | The text itself says what it is (`~` marks a stale spot) |
+| Yellow | A warning, or text that is about to be or was sent on the air; a short satellite pass; a satellite below the minimum elevation (no Doppler correction); cached data older than 30 days | The wording ("older than 30 days", "outside ... privileges"); a short pass is marked in the pass list |
+| Red | An error or a refusal; being outside your license privileges in the band plan | The message names the error; the privilege row shows `-` where red and `+` where green |
+| Green | Doppler tracking active, and being inside your license privileges in the band plan | The `TRACKING` heading; the `+` in the privilege row |
+| Magenta | The satellite sub-band row of the band plan | The row is labelled `Sat` |
+| Reverse video | The selected row of a list | The selection is also the row the keys act on |
+
+Hunter row markers use characters, not color: `✓` worked today, `~` stale, `P` park-to-park candidate, `!` outside privileges.
+
+---
+
+## 13. Troubleshooting
 
 | Symptom | Check |
 | --- | --- |

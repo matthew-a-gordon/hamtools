@@ -245,6 +245,12 @@ fn offline_mode_never_asks_the_network() {
 }
 
 #[test]
+fn only_a_soft_key_press_can_transmit_from_the_chaser() {
+    let mut s = Setup::cached();
+    assert_only_soft_keys_can_transmit(&mut s.app);
+}
+
+#[test]
 fn the_chaser_shows_todays_contacts_with_the_width_or_height() {
     let s = Setup::new(true);
     assert!(has(&s.rows(128, 24), "Today's contacts"));

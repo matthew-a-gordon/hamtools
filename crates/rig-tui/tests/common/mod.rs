@@ -256,3 +256,60 @@ pub async fn tick(rig: &mut Rig, app: &mut App, now: Instant) {
     let commands = app.tick(now);
     dispatch(rig, app, commands).await;
 }
+
+/// Every printable key, arrow and F-key, in both focuses, then 20 ticks: only an F1..F6 Soft key
+/// may produce a command that transmits, and ticks never do. `app` must have a CW panel active.
+pub fn assert_only_soft_keys_can_transmit(app: &mut App) {
+    use std::time::Duration;
+    let mut keys: Vec<KeyEvent> = Vec::new();
+    for c in ('!'..='~').chain(['é']) {
+        for modifiers in [
+            KeyModifiers::NONE,
+            KeyModifiers::SHIFT,
+            KeyModifiers::CONTROL,
+            KeyModifiers::ALT,
+        ] {
+            keys.push(KeyEvent::new(KeyCode::Char(c), modifiers));
+        }
+    }
+    for code in [
+        KeyCode::Left,
+        KeyCode::Right,
+        KeyCode::Up,
+        KeyCode::Down,
+        KeyCode::Esc,
+        KeyCode::Tab,
+        KeyCode::Backspace,
+        KeyCode::Enter,
+    ] {
+        keys.push(KeyEvent::new(code, KeyModifiers::NONE));
+    }
+    for n in 1..=12 {
+        keys.push(KeyEvent::new(KeyCode::F(n), KeyModifiers::NONE));
+    }
+    for focus_input in [false, true] {
+        app.on_key(KeyEvent::new(
+            if focus_input {
+                KeyCode::Tab
+            } else {
+                KeyCode::Esc
+            },
+            KeyModifiers::NONE,
+        ));
+        for k in &keys {
+            for command in app.on_key(*k) {
+                assert!(
+                    !command.transmits() || matches!(k.code, KeyCode::F(1..=6)),
+                    "{k:?} produced {command:?}"
+                );
+            }
+            app.on_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
+            app.on_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
+        }
+        for n in 0..20 {
+            for command in app.tick(Instant::now() + Duration::from_secs(n)) {
+                assert!(!command.transmits(), "tick produced {command:?}");
+            }
+        }
+    }
+}

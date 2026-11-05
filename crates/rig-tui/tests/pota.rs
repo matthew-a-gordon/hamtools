@@ -689,6 +689,12 @@ fn slash_filters_the_list_by_any_word_and_esc_clears_it() {
 }
 
 #[test]
+fn only_a_soft_key_press_can_transmit_from_the_hunter() {
+    let mut s = Setup::entered();
+    assert_only_soft_keys_can_transmit(&mut s.app);
+}
+
+#[test]
 fn the_hunter_shows_todays_contacts_with_the_width_or_height() {
     let s = Setup::entered();
     s.append_contact("W1AW", 14_062_500, Mode::Cw);
