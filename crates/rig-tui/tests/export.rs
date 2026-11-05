@@ -70,6 +70,7 @@ fn request<'a>(plan: &'a Plan, records: &'a [Record], other_dates: bool) -> Requ
         records,
         include_other_dates: other_dates,
         location_of: &locations,
+        my_state: None,
     }
 }
 
@@ -214,25 +215,70 @@ fn an_nfer_writes_one_file_per_park_and_a_contact_in_each() {
     assert!(p.warnings.join("\n").contains("n-fer"));
 }
 
-#[test]
-fn a_multi_state_park_gets_a_file_per_state() {
+fn multi_state_log() -> Vec<Record> {
     let a = row(&[
         ("CALL", "W1ABC"),
         ("MY_SIG", "POTA"),
         ("MY_SIG_INFO", "US-9999"),
     ]);
-    let log = records(&[&a]);
+    records(&[&a])
+}
+
+#[test]
+fn a_multi_state_park_writes_one_file_not_one_per_state() {
+    let log = multi_state_log();
     let plan = plan(PlanActivity::Pota, &["US-9999"], "2026-11-05");
     let p = export::build(&request(&plan, &log, false));
-    let names: Vec<&str> = p.files.iter().map(|f| f.name.as_str()).collect();
-    assert_eq!(
-        names,
-        [
-            "K9TST_P@US-9999-20261105-IN.adi",
-            "K9TST_P@US-9999-20261105-MI.adi"
-        ]
-    );
-    assert!(p.files[1].contents.contains("<MY_STATE:2>MI"));
+    assert_eq!(p.files.len(), 1);
+    assert_eq!(p.files[0].name, "K9TST_P@US-9999-20261105.adi");
+    assert!(!p.files[0].contents.contains("MY_STATE"));
+    assert!(p.warnings.join("\n").contains("asks which state"));
+}
+
+#[test]
+fn a_chosen_state_is_the_only_one_written_with_the_full_location_suffix() {
+    let log = multi_state_log();
+    let plan = plan(PlanActivity::Pota, &["US-9999"], "2026-11-05");
+    let mut req = request(&plan, &log, false);
+    req.my_state = Some("US-MI");
+    let p = export::build(&req);
+    assert_eq!(p.files.len(), 1);
+    assert_eq!(p.files[0].name, "K9TST_P@US-9999-20261105-US-MI.adi");
+    assert!(p.files[0].contents.contains("<MY_STATE:2>MI"));
+    assert!(!p.files[0].contents.contains(">IN"));
+}
+
+#[test]
+fn a_chosen_state_the_park_is_not_in_is_ignored_with_a_warning() {
+    let log = multi_state_log();
+    let plan = plan(PlanActivity::Pota, &["US-9999"], "2026-11-05");
+    let mut req = request(&plan, &log, false);
+    req.my_state = Some("US-OH");
+    let p = export::build(&req);
+    assert!(!p.files[0].contents.contains("MY_STATE"));
+    assert!(p.warnings.join("\n").contains("US-OH"));
+}
+
+#[test]
+fn the_pota_duplicate_key_uses_the_submode_when_present() {
+    let row_for = |time: &'static str, sub: &'static str| {
+        row(&[
+            ("CALL", "W1ABC"),
+            ("TIME_ON", time),
+            ("MODE", "MFSK"),
+            ("SUBMODE", sub),
+            ("MY_SIG", "POTA"),
+            ("MY_SIG_INFO", "US-1234"),
+        ])
+    };
+    let ft4 = row_for("150000", "FT4");
+    let ft8 = row_for("150500", "FT8");
+    let ft8_again = row_for("151000", "FT8");
+    let log = records(&[&ft4, &ft8, &ft8_again]);
+    let plan = plan(PlanActivity::Pota, &["US-1234"], "2026-11-05");
+    let p = export::build(&request(&plan, &log, false));
+    assert_eq!(p.duplicates.len(), 1, "{:?}", p.duplicates);
+    assert!(p.warnings.join("\n").contains("2 of 10"));
 }
 
 #[test]
@@ -286,6 +332,68 @@ fn sota_csv_v2_matches_golden_with_summit_to_summit_and_quoted_notes() {
         include_str!("fixtures/export/sota.csv")
     );
     assert!(p.warnings.join("\n").contains("3 of 4 distinct"));
+}
+
+#[test]
+fn sota_band_names_are_mhz_style_or_the_frequency() {
+    let at = |band: &str, freq: &str| {
+        let r = row(&[
+            ("CALL", "W7XYZ"),
+            ("MY_SOTA_REF", "W7W/KG-001"),
+            ("BAND", band),
+            ("FREQ", freq),
+        ]);
+        let log = records(&[&r]);
+        let plan = plan(PlanActivity::Sota, &["W7W/KG-001"], "2026-11-05");
+        let p = export::build(&request(&plan, &log, false));
+        p.files[0].contents.split(',').nth(5).unwrap().to_string()
+    };
+    for (band, want) in [
+        ("160m", "1.8MHz"),
+        ("80m", "3.5MHz"),
+        ("60m", "5MHz"),
+        ("40m", "7MHz"),
+        ("30M", "10MHz"),
+        ("20m", "14MHz"),
+        ("17m", "18MHz"),
+        ("15m", "21MHz"),
+        ("12m", "24MHz"),
+        ("10m", "28MHz"),
+        ("6m", "50MHz"),
+        ("2m", "144MHz"),
+        ("70cm", "432MHz"),
+        ("23cm", "1240MHz"),
+    ] {
+        assert_eq!(at(band, "7.030000"), want, "{band}");
+    }
+    // Not in SOTA's list: the actual frequency, trimmed.
+    assert_eq!(at("33cm", "902.100000"), "902.1MHz");
+    assert_eq!(at("", "7.032000"), "7.032MHz");
+}
+
+#[test]
+fn sota_writes_one_file_per_utc_day_of_the_summit() {
+    let day1 = row(&[("CALL", "W7XYZ"), ("MY_SOTA_REF", "W7W/KG-001")]);
+    let day2 = row(&[
+        ("CALL", "W7ABC"),
+        ("QSO_DATE", "20261106"),
+        ("TIME_ON", "160000"),
+        ("MY_SOTA_REF", "W7W/KG-001"),
+    ]);
+    let log = records(&[&day2, &day1]);
+    let plan = plan(PlanActivity::Sota, &["W7W/KG-001"], "2026-11-05");
+    let p = export::build(&request(&plan, &log, true));
+    let names: Vec<&str> = p.files.iter().map(|f| f.name.as_str()).collect();
+    assert_eq!(
+        names,
+        [
+            "K9TST_P@W7W_KG-001-20261105.csv",
+            "K9TST_P@W7W_KG-001-20261106.csv"
+        ]
+    );
+    assert_eq!(p.files[0].contacts, 1);
+    assert!(p.files[1].contents.contains("W7ABC"));
+    assert!(!p.files[0].contents.contains("W7ABC"));
 }
 
 #[test]
@@ -406,7 +514,6 @@ fn building_never_changes_the_plan() {
 #[test]
 fn the_unverified_uploader_behaviours_are_listed() {
     let text = export::UNVERIFIED.join("\n");
-    assert!(text.contains("n-fer"));
     assert!(text.contains("multi-state"));
-    assert!(text.contains("DD/MM/YY"));
+    assert!(text.contains("7.032MHz"));
 }

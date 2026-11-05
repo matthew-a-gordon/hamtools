@@ -416,8 +416,8 @@ The modal stays open after tuning. Tuning from it is refused while Satellite is 
 On an Activator plan, an export action produces a file to upload by hand. It never uploads anything or changes the plan or the Log.
 
 - **Which Contacts:** those whose reference matches the plan and whose start is on the plan's UTC date, with a toggle to include other dates for the same reference (a night activation across midnight). Contacts with no reference are never exported but are counted in the preview.
-- **POTA:** ADIF with the required fields, `MY_SIG`/`MY_SIG_INFO`, `SIG`/`SIG_INFO` for park-to-park, and `MY_STATE` from the cached park. An n-fer writes one file per park, named `CALL@US-1234-YYYYMMDD.adi`.
-- **SOTA:** CSV V2 with its ten fields in order, chronological, one file per activation.
+- **POTA:** ADIF with the required fields, `MY_SIG`/`MY_SIG_INFO`, `SIG`/`SIG_INFO` for park-to-park, and `MY_STATE` from the cached park. An n-fer writes one file per park, named `CALL@US-1234-YYYYMMDD.adi`. A multi-state park is one file, never one per state (a Contact would count under each); `MY_STATE` is set only when the state is known, and the `-US-MI` name suffix is added when a state is chosen. Otherwise the uploader asks. Duplicates are judged by `SUBMODE` when present.
+- **SOTA:** CSV V2 with its ten fields in order, chronological, one file per activation (one per UTC day of a summit). The band column uses SOTA's names (`7MHz`) or the frequency; whether the server accepts a frequency is unverified.
 - **Preview first:** file names, counts, duplicates, exclusions, warnings (too few Contacts to count, a UTC rollover, a missing required field, missing state) and the first lines. Warnings never block, and skipped Contacts are named.
 - **Where it writes:** only to the export directory (default `~/hamtools-exports/`), asking before overwriting.
 

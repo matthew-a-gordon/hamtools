@@ -82,7 +82,7 @@ fn the_preview_shows_files_exclusions_and_help_before_anything_is_written() {
     );
     assert!(!fx.out().exists(), "opening the preview writes nothing");
     app.on_key(key(KeyCode::Char('?')));
-    assert!(has(&screen(&app, 100, 30), "n-fer"));
+    assert!(has(&screen(&app, 100, 30), "multi-state"));
 }
 
 #[test]

@@ -74,6 +74,7 @@ impl ExportModal {
             records: &self.records,
             include_other_dates: self.other_dates,
             location_of: &lookup,
+            my_state: None,
         });
         self.scroll = 0;
     }
