@@ -22,6 +22,10 @@
 //! path = "/home/me/log.adi"
 //! [export]
 //! dir = "/home/me/hamtools-exports"   # optional; default ~/hamtools-exports/
+//! [reference]            # optional: slow the shared client down, never faster than its floors
+//! spots_secs = 120       # floor 60
+//! activations_secs = 600 # floor 300
+//! gap_secs = 2           # floor 1
 //! [rig]
 //! default = "kx3"       # optional; the first profile when absent
 //! [rig.kx3]               # one table per rig: a name, an address and a kind
@@ -112,6 +116,9 @@ pub struct Settings {
     /// `[export] dir`: where export files go; `None` means the app's default
     /// (`~/hamtools-exports/`). Read only here: the config dialog does not write it.
     pub export_dir: Option<PathBuf>,
+    /// `[reference]` request intervals in seconds. The app can only slow its built-in floors
+    /// with these; a value below a floor is read fine and then ignored there.
+    pub reference: ReferenceSettings,
     /// `station.license_class`; no default.
     pub license_class: Option<LicenseClass>,
     /// The named rig profiles, in file order.
@@ -126,6 +133,14 @@ pub struct Settings {
     pub softkey_sets: BTreeMap<String, BTreeMap<u8, String>>,
     /// The `[satellite]` table. Read only here: the config dialog does not write it.
     pub satellite: SatelliteSettings,
+}
+
+/// The `[reference]` table: optional slower request intervals, whole seconds.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct ReferenceSettings {
+    pub spots_secs: Option<u64>,
+    pub activations_secs: Option<u64>,
+    pub gap_secs: Option<u64>,
 }
 
 /// The `[satellite]` table: what shapes the Satellite Activity's pass list. Every key is
@@ -831,6 +846,25 @@ fn read_settings_lenient(root: &Table) -> (Settings, Vec<ConfigError>) {
         Ok(())
     })());
     keep((|| {
+        if let Some(table) = sub_table(root, "reference")? {
+            for (key, slot) in [
+                ("spots_secs", &mut s.reference.spots_secs),
+                ("activations_secs", &mut s.reference.activations_secs),
+                ("gap_secs", &mut s.reference.gap_secs),
+            ] {
+                if let Some(item) = table.get(key) {
+                    let name = format!("reference.{key}");
+                    *slot = Some(
+                        item.as_integer()
+                            .and_then(|n| u64::try_from(n).ok())
+                            .ok_or_else(|| invalid(&name, "expected a whole number of seconds"))?,
+                    );
+                }
+            }
+        }
+        Ok(())
+    })());
+    keep((|| {
         if let Some(macros) = sub_table(root, "macros")? {
             s.macros = read_soft_keys(macros, "macros")?;
         }
@@ -989,7 +1023,7 @@ pub fn load_lenient(path: &Path) -> Result<(Settings, Vec<ConfigError>), ConfigE
     Ok((settings, errs))
 }
 
-const KNOWN: [(&str, &[&str]); 7] = [
+const KNOWN: [(&str, &[&str]); 8] = [
     (
         "satellite",
         &[
@@ -1003,6 +1037,7 @@ const KNOWN: [(&str, &[&str]); 7] = [
     ("station", &["locator", "license_class"]),
     ("logbook", &["path"]),
     ("export", &["dir"]),
+    ("reference", &["spots_secs", "activations_secs", "gap_secs"]),
     ("rig", &["default"]),
     ("macros", &[]),
     ("softkeys", &[]),

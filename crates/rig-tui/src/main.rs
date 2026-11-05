@@ -118,7 +118,11 @@ fn try_main() -> Result<(), Box<dyn Error>> {
     let client = Arc::new(ReferenceClient::start(
         Arc::new(UreqTransport),
         Arc::new(SystemClock::new()),
-        Limits::default(),
+        Limits::slowed(
+            config.reference.spots_secs.map(Duration::from_secs),
+            config.reference.activations_secs.map(Duration::from_secs),
+            config.reference.gap_secs.map(Duration::from_secs),
+        ),
         user_agent(config.callsign.as_deref()),
         cache_dir.clone(),
     ));

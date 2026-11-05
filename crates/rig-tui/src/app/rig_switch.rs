@@ -99,6 +99,7 @@ impl App {
             softkey_sets: self.softkey_sets.clone(),
             // Read at start-up by `main`; the dialog neither shows nor writes it.
             satellite: hamtools_config::SatelliteSettings::default(),
+            reference: hamtools_config::ReferenceSettings::default(),
         }
     }
 
