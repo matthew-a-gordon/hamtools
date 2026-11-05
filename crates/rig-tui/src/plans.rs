@@ -194,38 +194,60 @@ impl Plans {
         let mut plans = self.list().to_vec();
         let mut changed = false;
         for p in plans.iter_mut().filter(|p| unresolved(p)) {
-            if let Some(primary) = p.primary()
-                && let Lookup::Found(hit) = data.lookup(primary, now_unix)
-            {
-                p.snapshot = Some(snapshot_of(&hit.entry));
-                changed = true;
+            let missing: Vec<String> = p
+                .references
+                .iter()
+                .filter(|r| p.snapshot_of(r).is_none())
+                .cloned()
+                .collect();
+            for r in missing {
+                if let Lookup::Found(hit) = data.lookup(&r, now_unix) {
+                    let snap = snapshot_of(&hit.entry);
+                    if p.primary() == Some(r.as_str()) {
+                        p.snapshot = Some(snap);
+                    } else {
+                        p.other_snapshots.push(snap);
+                    }
+                    changed = true;
+                }
             }
         }
         changed && self.store(plans).is_ok()
     }
 }
 
+/// Whether any of the plan's references has no snapshot yet.
 fn unresolved(plan: &Plan) -> bool {
-    plan.snapshot.as_ref().map(|s| s.reference.as_str()) != plan.primary()
+    plan.references
+        .iter()
+        .any(|r| plan.snapshot_of(r).is_none())
 }
 
-/// The snapshot to store with `plan`: the cached reference if there is one (asking the client to
-/// fetch it when nothing is cached), else the plan's own earlier snapshot of the same reference.
-/// `None` is unresolved; the plan saves anyway.
-pub(crate) fn snapshot_for(
-    plan: &Plan,
-    data: Option<&ReferenceData>,
-    now_unix: u64,
-) -> Option<RefSnapshot> {
-    let primary = plan.primary()?;
-    if let Some(data) = data
-        && let Lookup::Found(hit) = data.lookup_or_fetch(primary, now_unix)
-    {
-        return Some(snapshot_of(&hit.entry));
+/// Store with `plan` a snapshot of every reference: the cached one if there is one (asking the
+/// client to fetch it when nothing is cached, which is the only network use and goes through the
+/// rate-limited client), else the plan's own earlier snapshot of the same reference. A reference
+/// with neither stays unresolved; the plan saves anyway.
+pub(crate) fn snapshot_all(plan: &mut Plan, data: Option<&ReferenceData>, now_unix: u64) {
+    let mut primary = None;
+    let mut others: Vec<RefSnapshot> = Vec::new();
+    for (i, r) in plan.references.iter().enumerate() {
+        let fresh = data.and_then(|d| match d.lookup_or_fetch(r, now_unix) {
+            Lookup::Found(hit) => Some(snapshot_of(&hit.entry)),
+            Lookup::NotCached => None,
+        });
+        let snap = fresh.or_else(|| plan.snapshot_of(r).cloned());
+        if i == 0 {
+            primary = snap;
+        } else if let Some(s) = snap
+            && !others
+                .iter()
+                .any(|o| o.reference.eq_ignore_ascii_case(&s.reference))
+        {
+            others.push(s);
+        }
     }
-    plan.snapshot
-        .clone()
-        .filter(|s| s.reference.as_str() == primary)
+    plan.snapshot = primary;
+    plan.other_snapshots = others;
 }
 
 /// What to show for a plan's reference: its own snapshot first, then the cache, so a wiped cache
@@ -396,6 +418,7 @@ impl PlansModal {
             notes: None,
             done: false,
             snapshot: None,
+            other_snapshots: Vec::new(),
         }
     }
 
@@ -653,13 +676,17 @@ fn plan_from_form(editing: &Editing, ids: &[String]) -> Result<Plan, (usize, Str
         softkeys,
         notes: (!notes.is_empty()).then(|| notes.to_string()),
         done: editing.carry.done,
-        snapshot: editing
-            .carry
-            .snapshot
-            .clone()
-            .filter(|s| Some(s.reference.as_str()) == editing.carry.primary()),
+        // Kept as they were; saving re-sorts them against the new reference list.
+        snapshot: editing.carry.snapshot.clone(),
+        other_snapshots: editing.carry.other_snapshots.clone(),
     };
-    if plan.snapshot.as_ref().map(|s| s.reference.as_str()) != plan.primary() {
+    let kept = |s: &RefSnapshot| {
+        plan.references
+            .iter()
+            .any(|r| r.eq_ignore_ascii_case(&s.reference))
+    };
+    plan.other_snapshots.retain(kept);
+    if plan.snapshot.as_ref().is_some_and(|s| !kept(s)) {
         plan.snapshot = None;
     }
     if editing.id.is_none() {

@@ -1085,8 +1085,7 @@ impl App {
             PlansOutcome::Close => self.plans_modal = None,
             PlansOutcome::Save(plan) => {
                 let mut plan = *plan;
-                plan.snapshot =
-                    plans::snapshot_for(&plan, self.refdata.as_deref(), self.now_unix());
+                plans::snapshot_all(&mut plan, self.refdata.as_deref(), self.now_unix());
                 let id = plan.id.clone();
                 let was_active = self.plans.active().is_some_and(|a| a.id == id);
                 match self.plans.upsert(plan) {
@@ -1161,11 +1160,7 @@ impl App {
         let now = self.now_unix();
         let mut locations = BTreeMap::new();
         for r in &plan.references {
-            let from_snapshot = plan
-                .snapshot
-                .as_ref()
-                .filter(|s| s.reference.eq_ignore_ascii_case(r))
-                .and_then(|s| s.location.clone());
+            let from_snapshot = plan.snapshot_of(r).and_then(|s| s.location.clone());
             let found = from_snapshot.or_else(|| match self.refdata.as_deref()?.lookup(r, now) {
                 crate::refdata::Lookup::Found(hit) => hit.entry.location,
                 crate::refdata::Lookup::NotCached => None,
