@@ -7,6 +7,7 @@ Cargo workspace: `rigctld-client`, `rig-tui`, `sat-tui` (library only, used by `
 - `rigctld -m 1 -t 4532` runs the dummy rig for tests
 - `cargo fmt --check && cargo clippy --workspace --all-targets -- -D warnings && cargo test --workspace`
 - `nix build` builds the packaged binaries (needs `Cargo.lock` committed)
+- Drive a TUI with `herdr pane` (`split`, `run`, `send-keys`, `read`, `wait-output`, `close`; `herdr --skill` prints its agent guide). `tmux` is not installed. `nc` needs `-N`, not `-q1`. The shell is zsh, so there is no bash `PIPESTATUS`.
 
 ## Boundaries
 - Tools never open serial ports. Only `rigctld` does; everything else is a TCP client.
