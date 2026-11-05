@@ -509,6 +509,30 @@ impl App {
         self
     }
 
+    /// Start on the rig profile called `name` (`--rig NAME`). Unknown names are an error that
+    /// lists the configured profiles.
+    pub fn with_active_rig(mut self, name: &str) -> Result<Self, String> {
+        let found = (!self.implicit_rig)
+            .then(|| self.rigs.iter().position(|r| r.name == name))
+            .flatten();
+        match found {
+            Some(index) => {
+                self.active = index;
+                Ok(self)
+            }
+            None if self.implicit_rig => Err(format!(
+                "no rig profile {name:?}: the config defines no [rig.NAME] profiles"
+            )),
+            None => {
+                let names: Vec<&str> = self.rigs.iter().map(|r| r.name.as_str()).collect();
+                Err(format!(
+                    "no rig profile {name:?} (configured: {})",
+                    names.join(", ")
+                ))
+            }
+        }
+    }
+
     pub fn locator(&self) -> Option<&str> {
         self.locator.as_deref()
     }

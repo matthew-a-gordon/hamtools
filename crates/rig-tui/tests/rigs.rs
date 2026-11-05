@@ -428,3 +428,24 @@ fn an_activity_the_active_rig_cannot_run_is_unavailable_with_the_reason_and_is_n
     assert_eq!(app.activity_name(), "General");
     assert!(app.status().unwrap().contains("sat mode"));
 }
+
+#[test]
+fn rig_flag_picks_the_active_rig_by_name() {
+    let app = two_rigs().with_active_rig("ft847").unwrap();
+    assert_eq!(app.active_rig(), 1);
+    assert_eq!(app.rig_addr(), "127.0.0.1:2");
+}
+
+#[test]
+fn rig_flag_with_an_unknown_name_errors_and_lists_the_profiles() {
+    let err = two_rigs().with_active_rig("ic7300").err().unwrap();
+    assert!(
+        err.contains("ic7300") && err.contains("kx3") && err.contains("ft847"),
+        "{err}"
+    );
+}
+
+#[test]
+fn rig_flag_with_no_profiles_errors() {
+    assert!(App::new().with_active_rig("kx3").is_err());
+}
