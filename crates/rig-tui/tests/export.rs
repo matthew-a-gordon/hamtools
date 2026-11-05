@@ -515,5 +515,5 @@ fn building_never_changes_the_plan() {
 fn the_unverified_uploader_behaviours_are_listed() {
     let text = export::UNVERIFIED.join("\n");
     assert!(text.contains("multi-state"));
-    assert!(text.contains("7MHz"));
+    assert!(text.contains("7.032MHz"));
 }
