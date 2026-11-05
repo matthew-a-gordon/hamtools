@@ -5,20 +5,52 @@
 # `mode` is the usual rig mode the `m` key applies: CW, USB, LSB, FM, RTTY, or `phone`
 # (LSB below 10 MHz, USB above). Rows without it have no usual mode. A row with lo_hz == hi_hz
 # is a calling frequency.
+#
+# HF rows added from docs/research/missing-data.md (2026-11-04). The ARRL page states no CW
+# edge for 160-12 m, so those CW rows are inferred from the legal split in 47 CFR 97.305 and the
+# ARRL data/RTTY segments; they are labelled UNVERIFIED in `label` and `source` and should be
+# read against the ARRL chart. Phone rows cite 97.305(c)(3) for the lower phone edge.
 
 meta = { as_of = "2026-11-04" }
 
 segment = [
   { band = "160m", lo_hz = 1_800_000, hi_hz = 1_810_000, label = "digital", source = "arrl-band-plan" },
+  { band = "160m", lo_hz = 1_810_000, hi_hz = 1_843_000, label = "CW (UNVERIFIED)", mode = "CW", source = "arrl-band-plan (UNVERIFIED: CW edge not on the ARRL page, inferred)" },
+  { band = "160m", lo_hz = 1_843_000, hi_hz = 1_995_000, label = "phone", mode = "phone", source = "arrl-band-plan" },
+  { band = "160m", lo_hz = 1_995_000, hi_hz = 2_000_000, label = "experimental/beacons", source = "arrl-band-plan" },
+  { band = "80m", lo_hz = 3_500_000, hi_hz = 3_570_000, label = "CW (UNVERIFIED)", mode = "CW", source = "arrl-band-plan (UNVERIFIED: CW edge not on the ARRL page, inferred)" },
   { band = "80m", lo_hz = 3_570_000, hi_hz = 3_600_000, label = "RTTY/data", mode = "RTTY", source = "arrl-band-plan" },
+  { band = "80m", lo_hz = 3_600_000, hi_hz = 4_000_000, label = "phone", mode = "phone", source = "fcc-97.305(c)(3)" },
+  { band = "40m", lo_hz = 7_000_000, hi_hz = 7_040_000, label = "CW (UNVERIFIED)", mode = "CW", source = "arrl-band-plan (UNVERIFIED: CW edge not on the ARRL page, inferred)" },
+  { band = "40m", lo_hz = 7_040_000, hi_hz = 7_040_000, label = "RTTY/data DX", mode = "RTTY", source = "arrl-band-plan" },
   { band = "40m", lo_hz = 7_080_000, hi_hz = 7_125_000, label = "RTTY/data", mode = "RTTY", source = "arrl-band-plan" },
+  { band = "40m", lo_hz = 7_125_000, hi_hz = 7_300_000, label = "phone", mode = "phone", source = "fcc-97.305(c)(3)" },
+  { band = "30m", lo_hz = 10_100_000, hi_hz = 10_130_000, label = "CW (UNVERIFIED)", mode = "CW", source = "arrl-band-plan (UNVERIFIED: CW edge not on the ARRL page, inferred)" },
   { band = "30m", lo_hz = 10_130_000, hi_hz = 10_140_000, label = "RTTY", mode = "RTTY", source = "arrl-band-plan" },
   { band = "30m", lo_hz = 10_140_000, hi_hz = 10_150_000, label = "packet", source = "arrl-band-plan" },
+  { band = "20m", lo_hz = 14_000_000, hi_hz = 14_070_000, label = "CW (UNVERIFIED)", mode = "CW", source = "arrl-band-plan (UNVERIFIED: CW edge not on the ARRL page, inferred)" },
   { band = "20m", lo_hz = 14_070_000, hi_hz = 14_095_000, label = "RTTY", mode = "RTTY", source = "arrl-band-plan" },
+  { band = "20m", lo_hz = 14_095_000, hi_hz = 14_099_500, label = "packet", source = "arrl-band-plan" },
+  { band = "20m", lo_hz = 14_100_000, hi_hz = 14_100_000, label = "NCDXF beacons", source = "arrl-band-plan" },
   { band = "20m", lo_hz = 14_100_500, hi_hz = 14_112_000, label = "packet", source = "arrl-band-plan" },
+  { band = "20m", lo_hz = 14_150_000, hi_hz = 14_350_000, label = "phone", mode = "phone", source = "fcc-97.305(c)(3)" },
+  { band = "17m", lo_hz = 18_068_000, hi_hz = 18_100_000, label = "CW (UNVERIFIED)", mode = "CW", source = "arrl-band-plan (UNVERIFIED: CW edge not on the ARRL page, inferred)" },
+  { band = "17m", lo_hz = 18_100_000, hi_hz = 18_105_000, label = "RTTY", mode = "RTTY", source = "arrl-band-plan" },
+  { band = "17m", lo_hz = 18_105_000, hi_hz = 18_110_000, label = "packet", source = "arrl-band-plan" },
+  { band = "17m", lo_hz = 18_110_000, hi_hz = 18_168_000, label = "phone", mode = "phone", source = "fcc-97.305(c)(3)" },
+  { band = "15m", lo_hz = 21_000_000, hi_hz = 21_070_000, label = "CW (UNVERIFIED)", mode = "CW", source = "arrl-band-plan (UNVERIFIED: CW edge not on the ARRL page, inferred)" },
+  { band = "15m", lo_hz = 21_070_000, hi_hz = 21_110_000, label = "RTTY/data", mode = "RTTY", source = "arrl-band-plan" },
+  { band = "15m", lo_hz = 21_200_000, hi_hz = 21_450_000, label = "phone", mode = "phone", source = "fcc-97.305(c)(3)" },
+  { band = "12m", lo_hz = 24_890_000, hi_hz = 24_920_000, label = "CW (UNVERIFIED)", mode = "CW", source = "arrl-band-plan (UNVERIFIED: CW edge not on the ARRL page, inferred)" },
+  { band = "12m", lo_hz = 24_920_000, hi_hz = 24_925_000, label = "RTTY", mode = "RTTY", source = "arrl-band-plan" },
+  { band = "12m", lo_hz = 24_925_000, hi_hz = 24_930_000, label = "packet", source = "arrl-band-plan" },
+  { band = "12m", lo_hz = 24_930_000, hi_hz = 24_990_000, label = "phone", mode = "phone", source = "fcc-97.305(c)(3)" },
   { band = "10m", lo_hz = 28_000_000, hi_hz = 28_070_000, label = "CW", mode = "CW", source = "arrl-band-plan" },
+  { band = "10m", lo_hz = 28_070_000, hi_hz = 28_150_000, label = "RTTY", mode = "RTTY", source = "arrl-band-plan" },
   { band = "10m", lo_hz = 28_150_000, hi_hz = 28_190_000, label = "CW", mode = "CW", source = "arrl-band-plan" },
+  { band = "10m", lo_hz = 28_200_000, hi_hz = 28_300_000, label = "beacons", mode = "CW", source = "arrl-band-plan" },
   { band = "10m", lo_hz = 28_300_000, hi_hz = 29_300_000, label = "phone", mode = "phone", source = "arrl-band-plan" },
+  { band = "10m", lo_hz = 29_300_000, hi_hz = 29_510_000, label = "satellite", source = "arrl-band-plan" },
   { band = "10m", lo_hz = 29_520_000, hi_hz = 29_700_000, label = "FM repeaters", mode = "FM", source = "arrl-band-plan" },
   { band = "6m", lo_hz = 50_000_000, hi_hz = 50_100_000, label = "CW/beacons", mode = "CW", source = "arrl-band-plan" },
   { band = "6m", lo_hz = 50_125_000, hi_hz = 50_125_000, label = "SSB calling", mode = "USB", source = "arrl-band-plan" },

@@ -196,12 +196,13 @@ fn m_on_60m_chooses_upper_sideband() {
 
 #[test]
 fn m_with_no_usual_mode_here_says_so_and_does_nothing() {
-    let mut app = open_app();
-    app.on_key(key(KeyCode::Up));
-    app.on_key(key(KeyCode::Up));
-    app.on_key(key(KeyCode::Up));
-    app.on_key(key(KeyCode::Up));
-    app.on_key(key(KeyCode::Up));
+    // 14.100 MHz is the NCDXF beacon point, a row with no usual mode.
+    let mut app = connected_app_in(
+        App::new().with_license_class(Some(LicenseClass::General)),
+        "CW",
+    );
+    app.on_rig(RigEvent::Freq(14_100_000));
+    app.on_key(ctrl('b'));
 
     assert_eq!(app.on_key(key(KeyCode::Char('m'))), vec![]);
     assert!(app.status().unwrap().contains("no usual mode"));
