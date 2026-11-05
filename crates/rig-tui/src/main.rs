@@ -16,8 +16,8 @@ use rig_tui::reference::{
 };
 use rig_tui::satellite::{Satellite, load_data};
 use rig_tui::{
-    Activator, App, Command, Config, HostEvent, PotaHunter, Rig, config_path, default_log_path,
-    render,
+    Activator, App, Command, Config, HostEvent, PotaHunter, Rig, SotaChaser, config_path,
+    default_log_path, render,
 };
 use sat_tui::cache::{Cache, Dataset, Decision, decide};
 use sat_tui::fetch::Fetcher;
@@ -119,8 +119,11 @@ fn try_main() -> Result<(), Box<dyn Error>> {
         user_agent(config.callsign.as_deref()),
         cache_dir.clone(),
     ));
-    app = app.with_reference_data(Arc::new(ReferenceData::new(Arc::clone(&client), cache_dir)));
+    let refdata = Arc::new(ReferenceData::new(Arc::clone(&client), cache_dir));
+    app = app.with_reference_data(Arc::clone(&refdata));
     app.host_activity(Box::new(PotaHunter::new(client, !offline)));
+    // The SOTA Chaser reads the cached summit list only and makes no SOTA API call.
+    app.host_activity(Box::new(SotaChaser::new(refdata, !offline)));
     if let Some(addr) = addr_arg {
         app = app.with_rig_addr(addr);
     }

@@ -1221,7 +1221,7 @@ impl App {
                     snapshot.defaults.their_ref = Some(their_ref);
                 }
                 self.logging.open_form(snapshot);
-                if let Some(p) = &prefill {
+                if let Some(p) = prefill.as_ref().filter(|p| !p.call.is_empty()) {
                     self.logging.prefill_call(&p.call);
                 }
                 self.sync_form_exchange();
