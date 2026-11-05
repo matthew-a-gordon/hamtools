@@ -205,40 +205,6 @@ pub fn any_on(program: Program, refs: &[String], day: NaiveDate, records: &[Reco
     })
 }
 
-/// The centre of a 4 or 6 character Maidenhead Locator as (latitude, longitude) in degrees.
-pub fn grid_center(grid: &str) -> Option<(f64, f64)> {
-    let g: Vec<char> = grid.trim().to_ascii_uppercase().chars().collect();
-    if g.len() != 4 && g.len() != 6 {
-        return None;
-    }
-    let field = |c: char| (('A'..='R').contains(&c)).then(|| f64::from(c as u8 - b'A'));
-    let digit = |c: char| c.to_digit(10).map(f64::from);
-    let sub = |c: char| (('A'..='X').contains(&c)).then(|| f64::from(c as u8 - b'A'));
-    let mut lon = -180.0 + 20.0 * field(g[0])? + 2.0 * digit(g[2])?;
-    let mut lat = -90.0 + 10.0 * field(g[1])? + digit(g[3])?;
-    if g.len() == 6 {
-        lon += sub(g[4])? / 12.0 + 1.0 / 24.0;
-        lat += sub(g[5])? / 24.0 + 1.0 / 48.0;
-    } else {
-        lon += 1.0;
-        lat += 0.5;
-    }
-    Some((lat, lon))
-}
-
-/// Great-circle distance in kilometres.
-pub fn distance_km(from: (f64, f64), to: (f64, f64)) -> f64 {
-    let (la1, lo1, la2, lo2) = (
-        from.0.to_radians(),
-        from.1.to_radians(),
-        to.0.to_radians(),
-        to.1.to_radians(),
-    );
-    let a = ((la2 - la1) / 2.0).sin().powi(2)
-        + la1.cos() * la2.cos() * ((lo2 - lo1) / 2.0).sin().powi(2);
-    6371.0 * 2.0 * a.sqrt().asin()
-}
-
 /// What the host tells the Activator screen about the active plan.
 #[derive(Debug, Clone, PartialEq)]
 pub struct PlanBanner {
@@ -410,15 +376,5 @@ mod tests {
         assert!(w.contains("rolled over") && w.contains("2026-11-05"), "{w}");
         let w = date_warning("2026-11-09", day(), false).unwrap();
         assert!(w.contains("not today"), "{w}");
-    }
-
-    #[test]
-    fn grid_distance_is_close_to_the_known_value() {
-        // EN71 (Middlebury) to EN61 is one field-square west: about 80 km.
-        let a = grid_center("EN71DQ").unwrap();
-        let b = grid_center("EN61").unwrap();
-        let d = distance_km(a, b);
-        assert!((60.0..140.0).contains(&d), "{d}");
-        assert_eq!(grid_center("ZZ99"), None);
     }
 }

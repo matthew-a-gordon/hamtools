@@ -13,6 +13,7 @@ mod cw;
 pub mod export;
 mod export_modal;
 mod general;
+mod geo;
 pub mod geocode;
 pub mod keybindings;
 pub mod keys;

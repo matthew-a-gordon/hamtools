@@ -2,6 +2,7 @@
 //! the time (and `set_utc` the wall clock), so every behaviour is testable without a rig or a
 //! terminal.
 
+use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -153,7 +154,7 @@ macro_rules! ctx {
             activation: $self.activation.as_ref(),
             plans: &[],
             utc: $self.clock(),
-            observer: $self.locator.as_deref().and_then(crate::spots::grid_center),
+            observer: $self.locator.as_deref().and_then(crate::geo::grid_center),
             license_class: $self.license_class,
             worked: $worked,
             logged: $self.logging.count(),
@@ -164,6 +165,15 @@ macro_rules! ctx {
                 .map(|r| r.value),
         }
     };
+}
+
+/// What a cached read of the Log stands for: the file, its modified time and size, and the date.
+#[derive(Clone, PartialEq, Eq)]
+struct WorkedKey {
+    path: PathBuf,
+    modified: Option<SystemTime>,
+    len: u64,
+    day: chrono::NaiveDate,
 }
 
 pub struct App {
@@ -213,6 +223,8 @@ pub struct App {
     entry: Option<Entry>,
     /// Leaving an Activity stopped Doppler tracking; the strip says so until Satellite is back.
     doppler_stopped: bool,
+    /// Today's Contacts as last read, valid while the Log file and the date are unchanged.
+    worked_cache: RefCell<Option<(WorkedKey, Vec<Worked>)>>,
     status: Option<String>,
     /// The status came from a failing poll, so the next good poll clears it.
     poll_failed: bool,
@@ -300,6 +312,7 @@ impl App {
             step: DEFAULT_STEP,
             entry: None,
             doppler_stopped: false,
+            worked_cache: RefCell::new(None),
             status: None,
             poll_failed: false,
             callsign: None,
@@ -668,9 +681,9 @@ impl App {
         let theirs = snapshot.and_then(|s| {
             s.lat
                 .zip(s.lon)
-                .or_else(|| s.grid.as_deref().and_then(tracker::grid_center))
+                .or_else(|| s.grid.as_deref().and_then(crate::geo::grid_center))
         });
-        let mine = self.locator.as_deref().and_then(tracker::grid_center);
+        let mine = self.locator.as_deref().and_then(crate::geo::grid_center);
         self.activation = Some(ActivationView {
             banner: Some(PlanBanner {
                 program,
@@ -678,7 +691,7 @@ impl App {
                 name: snapshot.map(|s| s.name.clone()),
                 location: snapshot.and_then(|s| s.location.clone()),
                 grid: snapshot.and_then(|s| s.grid.clone()),
-                distance_km: mine.zip(theirs).map(|(a, b)| tracker::distance_km(a, b)),
+                distance_km: mine.zip(theirs).map(|(a, b)| crate::geo::distance_km(a, b)),
                 alt_m: snapshot.and_then(|s| s.alt_m),
                 points: snapshot.and_then(|s| s.points),
                 date: plan.date.clone(),
@@ -1629,14 +1642,28 @@ impl App {
         if !self.activities[self.foreground].uses_log() {
             return Vec::new();
         }
-        let Ok(records) = self
-            .current_log()
-            .and_then(|log| log.read().map_err(|e| e.to_string()))
-        else {
+        let Ok(log) = self.current_log() else {
             return Vec::new();
         };
         let today = self.clock().date_naive();
-        records
+        // A stat per frame instead of reading and parsing the whole Log: the cache holds until the
+        // file changes (a save appends, so its size grows) or the UTC date rolls over.
+        let meta = std::fs::metadata(log.path()).ok();
+        let key = WorkedKey {
+            path: log.path().to_path_buf(),
+            modified: meta.as_ref().and_then(|m| m.modified().ok()),
+            len: meta.as_ref().map_or(0, |m| m.len()),
+            day: today,
+        };
+        if let Some((cached, worked)) = &*self.worked_cache.borrow()
+            && *cached == key
+        {
+            return worked.clone();
+        }
+        let Ok(records) = log.read() else {
+            return Vec::new();
+        };
+        let worked: Vec<Worked> = records
             .iter()
             .filter(|r| r.start().is_some_and(|s| s.date_naive() == today))
             .filter_map(|r| {
@@ -1646,7 +1673,9 @@ impl App {
                     mode: r.mode()?.to_ascii_uppercase(),
                 })
             })
-            .collect()
+            .collect();
+        *self.worked_cache.borrow_mut() = Some((key, worked.clone()));
+        worked
     }
 
     /// Tune the receive frequency (and the mode when one is mapped) for an Activity. Refused

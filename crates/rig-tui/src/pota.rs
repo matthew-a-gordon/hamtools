@@ -23,12 +23,13 @@ use crate::activity::{
     Activity, ActivityCtx, ActivityOutput, HostRequest, LogPrefill, TuneRequest, Worked,
 };
 use crate::cw::CwPanel;
+use crate::geo::distance_km;
 use crate::keys::{Action, Key, KeyEntry, Scope};
 use crate::logging::default_log_mode;
 use crate::panel::{LogDefaults, LogMode, ModePanel, PanelCommand, PanelCtx, Role};
 use crate::reference::{Feed, Pace, ReferenceClient, SPOTS_EVERY, Submit};
 use crate::rig::{Command, RigMode};
-use crate::spots::{ModeGroup, Spot, distance_km, mode_group, parse_spots, rig_mode_for};
+use crate::spots::{ModeGroup, Spot, mode_group, parse_spots, rig_mode_for};
 use crate::style::dim;
 
 /// The cache key of the spot feed (shared by both POTA Roles).

@@ -8,9 +8,10 @@
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+use crate::geo::distance_km;
 use crate::pota::{SPOTS_KEY, spots_feed};
 use crate::reference::{ReferenceClient, SPOTS_EVERY, Submit};
-use crate::spots::{Spot, distance_km, parse_spots};
+use crate::spots::{Spot, parse_spots};
 use crate::ui::format_hz;
 
 const SNAPSHOT_EVERY: Duration = Duration::from_millis(500);

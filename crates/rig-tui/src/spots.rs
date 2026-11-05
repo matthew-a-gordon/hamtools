@@ -8,8 +8,8 @@
 use std::collections::BTreeMap;
 
 use chrono::NaiveDateTime;
-use logbook::Grid;
 
+use crate::geo::grid_center;
 use crate::rig::RigMode;
 
 /// How long a spot lives when the feed gives no expiry.
@@ -109,7 +109,7 @@ fn parse_one(item: &serde_json::Value, fetched_at: i64) -> Option<Spot> {
             let grid = text("grid6");
             grid_center(&grid)
         })
-        .or_else(|| grid4_center(&text("grid4")));
+        .or_else(|| grid_center(&text("grid4")));
     Some(Spot {
         call,
         hz: (khz * 1000.0).round() as u64,
@@ -175,47 +175,6 @@ pub fn rig_mode_for(mode: &str, hz: u64) -> Option<RigMode> {
     }
 }
 
-/// The centre of a 6-character Maidenhead locator, as (latitude, longitude) in degrees.
-pub fn grid_center(locator: &str) -> Option<(f64, f64)> {
-    let grid = Grid::new(locator).ok()?;
-    let b = grid.as_str().as_bytes();
-    let lon = -180.0
-        + f64::from(b[0] - b'A') * 20.0
-        + f64::from(b[2] - b'0') * 2.0
-        + f64::from(b[4] - b'A') / 12.0
-        + 1.0 / 24.0;
-    let lat = -90.0
-        + f64::from(b[1] - b'A') * 10.0
-        + f64::from(b[3] - b'0')
-        + f64::from(b[5] - b'A') / 24.0
-        + 1.0 / 48.0;
-    Some((lat, lon))
-}
-
-/// The centre of a 4-character locator.
-fn grid4_center(locator: &str) -> Option<(f64, f64)> {
-    let b = locator.trim().to_ascii_uppercase().into_bytes();
-    let ok = b.len() == 4
-        && b[0..2].iter().all(|c| (b'A'..=b'R').contains(c))
-        && b[2..4].iter().all(u8::is_ascii_digit);
-    ok.then(|| {
-        (
-            -90.0 + f64::from(b[1] - b'A') * 10.0 + f64::from(b[3] - b'0') + 0.5,
-            -180.0 + f64::from(b[0] - b'A') * 20.0 + f64::from(b[2] - b'0') * 2.0 + 1.0,
-        )
-    })
-}
-
-/// Great-circle distance in kilometres.
-pub fn distance_km(a: (f64, f64), b: (f64, f64)) -> f64 {
-    const EARTH_RADIUS_KM: f64 = 6371.0;
-    let (lat1, lat2) = (a.0.to_radians(), b.0.to_radians());
-    let dlat = lat2 - lat1;
-    let dlon = (b.1 - a.1).to_radians();
-    let h = (dlat / 2.0).sin().powi(2) + lat1.cos() * lat2.cos() * (dlon / 2.0).sin().powi(2);
-    2.0 * EARTH_RADIUS_KM * h.sqrt().asin()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -258,21 +217,6 @@ mod tests {
         assert!(parse_spots("{}", 0).is_err());
         assert!(parse_spots("<html>", 0).is_err());
         assert_eq!(parse_spots("[]", 0).unwrap(), Vec::new());
-    }
-
-    #[test]
-    fn the_grid_centre_of_middlebury() {
-        let (lat, lon) = grid_center("EN71DQ").unwrap();
-        assert!((lat - 41.6875).abs() < 0.001, "{lat}");
-        assert!((lon + 85.7083).abs() < 0.001, "{lon}");
-        assert_eq!(grid_center("EN71"), None);
-    }
-
-    #[test]
-    fn one_degree_of_longitude_at_41_7_north_is_83_km() {
-        let d = distance_km((41.6875, -85.7083), (41.6875, -86.7083));
-        assert!((82.0..84.5).contains(&d), "{d}");
-        assert!(distance_km((10.0, 10.0), (10.0, 10.0)) < 0.001);
     }
 
     #[test]

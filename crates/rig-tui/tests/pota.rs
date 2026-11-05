@@ -689,6 +689,21 @@ fn slash_filters_the_list_by_any_word_and_esc_clears_it() {
 }
 
 #[test]
+fn a_contact_saved_between_frames_shows_as_worked_on_the_next_one() {
+    let s = Setup::entered();
+    let line = |s: &Setup| {
+        s.screen()
+            .into_iter()
+            .find(|r| r.contains("K1AAA"))
+            .unwrap()
+    };
+    assert!(!line(&s).contains('✓'));
+    // The cached read must notice the Log changing.
+    s.append_contact("K1AAA", 14_062_500, Mode::Cw);
+    assert!(line(&s).contains('✓'), "{}", line(&s));
+}
+
+#[test]
 fn only_a_soft_key_press_can_transmit_from_the_hunter() {
     let mut s = Setup::entered();
     assert_only_soft_keys_can_transmit(&mut s.app);
