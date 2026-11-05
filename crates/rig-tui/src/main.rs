@@ -121,7 +121,7 @@ fn try_main() -> Result<(), Box<dyn Error>> {
     ));
     let refdata = Arc::new(ReferenceData::new(Arc::clone(&client), cache_dir));
     app = app.with_reference_data(Arc::clone(&refdata));
-    app.host_activity(Box::new(PotaHunter::new(client, !offline)));
+    app.host_activity(Box::new(PotaHunter::new(Arc::clone(&client), !offline)));
     // The SOTA Chaser reads the cached summit list only and makes no SOTA API call.
     app.host_activity(Box::new(SotaChaser::new(refdata, !offline)));
     if let Some(addr) = addr_arg {
@@ -130,7 +130,11 @@ fn try_main() -> Result<(), Box<dyn Error>> {
     // The hosted Activities, after General. `App::launch_plan` finds a plan's Activity by name,
     // so the POTA Hunter (named differently) and the Activators do not clash.
     app.host_activity(Box::new(Activator::sota()));
-    app.host_activity(Box::new(Activator::pota()));
+    app.host_activity(Box::new(Activator::pota().with_spots(
+        Arc::clone(&client),
+        !offline,
+        config.callsign.as_deref(),
+    )));
     // The Satellite Activity is built from whatever the cache holds (nothing is fine). It stays
     // in the background until chosen from the go-to palette. Untested on hardware.
     let mut downloads = Downloads::new(default_cache_dir(), offline);

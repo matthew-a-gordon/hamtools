@@ -28,6 +28,7 @@ pub mod satellite;
 pub mod softkeys;
 mod sota;
 pub mod spots;
+mod spotwatch;
 mod style;
 mod tracker;
 mod ui;
