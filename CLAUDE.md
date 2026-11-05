@@ -15,6 +15,8 @@ Cargo workspace: `rigctld-client`, `rig-tui`, `sat-tui` (library only, used by `
 - Observer position is runtime input (config, flags, later gpsd), never hard-coded. Defaults and fixtures use town-level Middlebury, IN only (~41.67 N, 85.71 W, EN71); no street address in the repo.
 
 ## Hardware status (say "untested on hardware" for anything not listed as verified)
+Before running anything against a radio, read `docs/agents/hardware-session.md`.
+
 Verified on the user's KX3 (2026-10-26, hamlib 4.7.2, rigctld model 2045):
 - 38400 baud works on `/dev/kx3`. The user must be in `dialout` (a login session started before joining the group lacks it; use `sg dialout -c '...'`).
 - `w TB;` through rigctld returns the documented `TBtrrs;` reply (`Reply: TB006F C E ;\0RPRT 0`; `rigctld-client` handles the framing). The KX3's decoder emits `*` for undecodable characters, so weak or fading signals give garbage; that is the radio, not the client.
