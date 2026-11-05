@@ -98,17 +98,24 @@ fn every_row_not_verified_on_hardware_is_labelled_and_verified_rows_are_not() {
 }
 
 #[test]
-fn the_kx3_row_follows_claude_md_cw_and_split_verified_nothing_on_the_ft847_is() {
+fn the_kx3_row_follows_claude_md_and_the_ft847_has_only_split_verified() {
     let kx3 = capability_table(RigKind::Kx3);
     assert!(kx3.has(Capability::Cw) && kx3.verified(Capability::Cw));
     assert!(kx3.has(Capability::Split) && kx3.verified(Capability::Split));
     assert!(!kx3.has(Capability::SatMode));
 
     let ft = capability_table(RigKind::Ft847);
+    // Split seen on the FT-847 on 2026-11-04 (CLAUDE.md); SAT mode and CW were not.
+    assert!(ft.has(Capability::Split) && ft.verified(Capability::Split));
     assert!(ft.has(Capability::SatMode));
-    for c in [Capability::Cw, Capability::Split, Capability::SatMode] {
+    for c in [Capability::Cw, Capability::SatMode] {
         assert!(!ft.verified(c), "{c:?}");
     }
+    let rows = ft.rows();
+    let row = |label: &str| rows.iter().find(|r| r.starts_with(label)).unwrap().clone();
+    assert!(!row("split").contains("untested"), "{rows:?}");
+    assert!(row("CW").contains("untested on hardware"), "{rows:?}");
+    assert!(row("sat mode").contains("untested on hardware"), "{rows:?}");
 }
 
 #[test]
