@@ -23,6 +23,8 @@ const DETAIL: &str = r#"{"reference":"US-4571","name":"Potato Creek State Park",
 
 const DETAIL2: &str = r#"{"reference":"US-4572","name":"Second Creek State Park","latitude":41.6,"longitude":-86.1,"grid6":"EN61vo","locationDesc":"US-MI"}"#;
 
+const PARK_LIST: &str = r#"[{"reference":"US-4571","name":"Potato Creek State Park","latitude":41.5546,"longitude":-86.3697,"grid":"EN61","locationDesc":"US-IN"},{"reference":"US-1234","name":"Pigeon River Fish and Wildlife Area","latitude":41.65,"longitude":-85.4,"grid":"EN71","locationDesc":"US-IN"}]"#;
+
 /// 2027-01-15 08:00 UTC.
 const NOW: u64 = 1_800_000_000;
 
@@ -48,7 +50,9 @@ impl Transport for Routes {
     fn get(&self, req: &HttpRequest) -> Result<HttpResponse, String> {
         self.calls.fetch_add(1, Ordering::SeqCst);
         self.urls.lock().unwrap().push(req.url.clone());
-        let body = if req.url.contains("/park/US-4571") {
+        let body = if req.url.contains("/location/parks/US-IN") {
+            PARK_LIST
+        } else if req.url.contains("/park/US-4571") {
             DETAIL
         } else if req.url.contains("/park/US-4572") {
             DETAIL2
@@ -618,5 +622,89 @@ mod hosted_activity {
             has(&rows, "Notes:") && has(&rows, "Enter save"),
             "{rows:#?}"
         );
+    }
+}
+
+mod park_list_refresh {
+    use super::*;
+
+    const WITH_STATE: &str = r#"
+[plan.p]
+activity = "pota"
+references = ["US-4571"]
+date = "2027-02-01"
+[plan.p.snapshot]
+reference = "US-4571"
+name = "Potato Creek State Park"
+location = "US-IN"
+"#;
+
+    const NO_STATE: &str = r#"
+[plan.s]
+activity = "sota"
+references = ["W4C/CM-001"]
+date = "2027-02-01"
+"#;
+
+    fn urls(fx: &Fx) -> Vec<String> {
+        fx.routes.urls.lock().unwrap().clone()
+    }
+
+    #[test]
+    fn r_fetches_the_park_list_for_the_plans_state_and_offline_search_finds_parks() {
+        let fx = Fx::new("rlist", false);
+        fx.write_plans(WITH_STATE);
+        let mut app = fx.app();
+        open_manager(&mut app);
+        press(&mut app, &[KeyCode::Char('R')]);
+        fx.client.sync();
+        let u = urls(&fx);
+        assert_eq!(u.len(), 1, "{u:?}");
+        assert!(u[0].ends_with("/location/parks/US-IN"), "{u:?}");
+
+        // A restarted app with a transport that fails: the cached list still searches.
+        let offline = Arc::new(ReferenceClient::start(
+            Arc::new(Routes {
+                urls: Mutex::new(vec![]),
+                calls: AtomicUsize::new(0),
+                offline: true,
+            }),
+            Arc::new(FakeClock(AtomicU64::new(0))),
+            Limits::default(),
+            user_agent(None),
+            fx.cache.clone(),
+        ));
+        let data = ReferenceData::new(offline, fx.cache.clone());
+        let hits = data.search("pigeon", NOW, 10);
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].entry.reference, "US-1234");
+    }
+
+    #[test]
+    fn r_is_a_no_op_with_a_note_under_offline() {
+        let fx = Fx::new("roff", false);
+        fx.write_plans(WITH_STATE);
+        let data =
+            Arc::new(ReferenceData::new(fx.client.clone(), fx.cache.clone()).with_offline(true));
+        let mut app = fx.app().with_reference_data(data);
+        open_manager(&mut app);
+        press(&mut app, &[KeyCode::Char('R')]);
+        fx.client.sync();
+        assert!(urls(&fx).is_empty());
+        let rows = screen(&app, 100, 30);
+        assert!(has(&rows, "offline"), "{rows:#?}");
+    }
+
+    #[test]
+    fn r_is_a_no_op_with_a_note_when_no_state_resolves() {
+        let fx = Fx::new("rnostate", false);
+        fx.write_plans(NO_STATE);
+        let mut app = fx.app();
+        open_manager(&mut app);
+        press(&mut app, &[KeyCode::Char('R')]);
+        fx.client.sync();
+        assert!(urls(&fx).is_empty());
+        let rows = screen(&app, 100, 30);
+        assert!(has(&rows, "no state"), "{rows:#?}");
     }
 }

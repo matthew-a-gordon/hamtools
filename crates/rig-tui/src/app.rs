@@ -509,6 +509,30 @@ impl App {
         self
     }
 
+    /// Start on the rig profile called `name` (`--rig NAME`). Unknown names are an error that
+    /// lists the configured profiles.
+    pub fn with_active_rig(mut self, name: &str) -> Result<Self, String> {
+        let found = (!self.implicit_rig)
+            .then(|| self.rigs.iter().position(|r| r.name == name))
+            .flatten();
+        match found {
+            Some(index) => {
+                self.active = index;
+                Ok(self)
+            }
+            None if self.implicit_rig => Err(format!(
+                "no rig profile {name:?}: the config defines no [rig.NAME] profiles"
+            )),
+            None => {
+                let names: Vec<&str> = self.rigs.iter().map(|r| r.name.as_str()).collect();
+                Err(format!(
+                    "no rig profile {name:?} (configured: {})",
+                    names.join(", ")
+                ))
+            }
+        }
+    }
+
     pub fn locator(&self) -> Option<&str> {
         self.locator.as_deref()
     }
@@ -582,6 +606,21 @@ impl App {
     /// The Contact form is open as a modal (an embedded one is drawn by its Activity).
     fn form_modal_open(&self) -> bool {
         self.logging.form_open() && !self.embedded()
+    }
+
+    /// At least one modal is open, and every open one holds nothing to lose: the go-to palette,
+    /// keybindings, bandplan, rig switcher and session list.
+    fn only_no_loss_modals_open(&self) -> bool {
+        let any = self.palette.is_some()
+            || self.keybindings.is_some()
+            || self.bandplan.is_some()
+            || self.switcher_open()
+            || self.logging.list_open();
+        any && self.config.is_none()
+            && self.export_modal.is_none()
+            && self.plans_modal.is_none()
+            && self.overlay.is_none()
+            && !self.form_modal_open()
     }
 
     /// A Logging modal has the keyboard: the form as a modal, or the session list.
@@ -1130,6 +1169,7 @@ impl App {
                 }
             }
             PlansOutcome::Export(id) => self.open_export(&id),
+            PlansOutcome::RefreshParkList => self.refresh_park_list_for_selected(),
             PlansOutcome::Reload => {
                 let path = self.config_path.as_deref().map(plans::plans_path);
                 self.plans.reload(path.as_deref());
@@ -1138,6 +1178,34 @@ impl App {
                     modal.show_list();
                 }
             }
+        }
+    }
+
+    /// `R` in the plan manager: ask the reference client for the park list of the highlighted
+    /// plan's state, so its parks can be searched offline. A no-op with a note under `--offline`
+    /// or when no state resolves.
+    fn refresh_park_list_for_selected(&mut self) {
+        let Some(data) = self.refdata.clone() else {
+            return self.plans_notice("no reference data".into());
+        };
+        if data.is_offline() {
+            return self.plans_notice("offline: the park list is not fetched".into());
+        }
+        let now = self.now_unix();
+        let Some(plan) = self
+            .plans_modal
+            .as_ref()
+            .and_then(|m| m.selected_plan())
+            .cloned()
+        else {
+            return;
+        };
+        match plans::state_of(&plan, &data, now) {
+            Some(state) => {
+                data.refresh_park_list(&state);
+                self.plans_notice(format!("requested the {state} park list"));
+            }
+            None => self.plans_notice("no state known for this plan's reference".into()),
         }
     }
 
@@ -1460,6 +1528,22 @@ impl App {
         if self.too_small() {
             // Nothing is on screen to act on; only the quit Chord works.
             return Vec::new();
+        }
+        // Modals that hold nothing to lose give way to a Chord; the rest keep every key.
+        // The palette and keybindings modal still close on their own Chord.
+        let toggles_itself = (chord == Some(Action::GoTo) && self.palette.is_some())
+            || (chord == Some(Action::Keybindings) && self.keybindings.is_some());
+        if let Some(action) = chord
+            && !toggles_itself
+            && self.only_no_loss_modals_open()
+        {
+            self.palette = None;
+            self.keybindings = None;
+            self.bandplan = None;
+            self.switcher = None;
+            self.logging.close_list();
+            self.entry = None;
+            return self.perform(action);
         }
         if let Some(dialog) = &mut self.config {
             return match dialog.on_key(key) {
