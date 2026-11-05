@@ -1,33 +1,18 @@
-//! Terminal UI state: the pass list, which pass and transmitter are selected, and tracking.
-//! No I/O; the event loop feeds it keys and the clock.
+//! The Satellite screens' state: the pass list, which pass and transmitter are selected, and
+//! tracking. No I/O; the Activity feeds it keys and the clock.
 
 use std::collections::HashSet;
 
 use chrono::{DateTime, Duration, Utc};
-use logbook::Grid;
-use orbit::{Observer, Pass, PropagationError, Satellite};
+use hamtools_config::SatelliteSettings;
+use orbit::{Observer, Pass, PropagationError, Satellite, downlink_hz, uplink_hz};
 use ratatui::crossterm::event::{KeyCode, KeyEvent};
+use sat_tui::satnogs::{Plan, RigMode, Transmitter};
+use sat_tui::tracker::{RigCommand, STEP_HZ, Tracker, doppler_range_rate};
 
-use crate::logging::Link;
-pub use crate::logging::{ContactForm, Field, LoggedContact, Logging};
-use crate::satnogs::{Plan, Transmitter};
-use crate::tracker::{RigCommand, STEP_HZ, Tracker, doppler_range_rate};
-
-/// Tunables that shape the pass list.
-#[derive(Debug, Clone)]
-pub struct Settings {
-    /// NORAD ids to show; empty means every satellite with a usable transmitter.
-    pub watch: Vec<u32>,
-    pub horizon_hours: u32,
-    pub min_elevation_deg: f64,
-    /// A pass shorter than this many seconds is flagged as short.
-    pub short_pass_secs: i64,
-}
-
-/// What the event loop must do in response to a key.
+/// What the Activity must do beyond updating the screen in response to a key.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Command {
-    Quit,
+pub enum Request {
     /// Download fresh TLEs and transmitter data.
     Refresh,
 }
@@ -66,7 +51,7 @@ struct Entry {
     transmitters: Vec<Transmitter>,
 }
 
-pub struct App {
+pub struct SatState {
     entries: Vec<Entry>,
     rows: Vec<Row>,
     focus: Focus,
@@ -79,19 +64,14 @@ pub struct App {
     tracking: Option<Tracking>,
     /// Commands queued by keys, sent on the next tick.
     pending: Vec<RigCommand>,
-    /// `None` when there is no callsign: logging is off.
-    logging: Option<Logging>,
-    rig_live: bool,
-    /// The latest time the event loop has told us, for stamping Contacts.
-    clock: DateTime<Utc>,
 }
 
-impl App {
+impl SatState {
     pub fn new(
         sats: Vec<Satellite>,
         transmitters: Vec<Transmitter>,
         observer: Observer,
-        settings: Settings,
+        settings: &SatelliteSettings,
         now: DateTime<Utc>,
     ) -> Self {
         let watch: HashSet<u32> = settings.watch.iter().copied().collect();
@@ -142,9 +122,6 @@ impl App {
             status: None,
             tracking: None,
             pending: Vec::new(),
-            logging: None,
-            rig_live: false,
-            clock: now,
         }
     }
 
@@ -185,31 +162,12 @@ impl App {
             .collect()
     }
 
-    pub fn handle_key(&mut self, key: KeyEvent) -> Option<Command> {
-        if let Some(logging) = &mut self.logging {
-            if logging.form().is_some() {
-                if let Some(status) = logging.handle_form_key(key, self.clock) {
-                    self.status = Some(status);
-                }
-                return None;
-            }
-            if logging.session_open() {
-                if key.code == KeyCode::Char('q') {
-                    return Some(Command::Quit);
-                }
-                logging.handle_session_key(key);
-                return None;
-            }
-        }
+    /// The plain keys the Satellite screens own. Up/Down and `j`/`k` move the cursor (the
+    /// screens are unchanged from `sat-tui`); `Z` is sat mode off, `u` shows the transmitters
+    /// the radio cannot demodulate (it was `m`, which is the shared mode key).
+    pub fn handle_key(&mut self, key: KeyEvent) -> Option<Request> {
         match key.code {
-            KeyCode::Char('l') => self.open_form(),
-            KeyCode::Char('L') => {
-                if let Some(logging) = &mut self.logging {
-                    logging.open_session();
-                }
-            }
-            KeyCode::Char('q') | KeyCode::Esc => return Some(Command::Quit),
-            KeyCode::Char('r') => return Some(Command::Refresh),
+            KeyCode::Char('r') => return Some(Request::Refresh),
             KeyCode::Tab => {
                 self.focus = match self.focus {
                     Focus::Passes => Focus::Transmitters,
@@ -219,7 +177,7 @@ impl App {
             KeyCode::Down | KeyCode::Char('j') => self.move_cursor(1),
             KeyCode::Up | KeyCode::Char('k') => self.move_cursor(-1),
             KeyCode::Char('t') => self.toggle_tracking(),
-            KeyCode::Char('s') => self.pending.push(RigCommand::SatMode(false)),
+            KeyCode::Char('Z') => self.pending.push(RigCommand::SatMode(false)),
             KeyCode::Char(c @ ('[' | ']' | '{' | '}')) => {
                 if let Some(tracking) = &mut self.tracking {
                     tracking.nudge_hz += match c {
@@ -230,7 +188,7 @@ impl App {
                     };
                 }
             }
-            KeyCode::Char('m') => {
+            KeyCode::Char('u') => {
                 self.show_unsupported = !self.show_unsupported;
                 let last = self.transmitter_choices().len().saturating_sub(1);
                 self.transmitter = self.transmitter.min(last);
@@ -287,12 +245,8 @@ impl Tracking {
         (turned.unsigned_abs() as f64 >= STEP_HZ).then_some(turned)
     }
 
-    /// A Contact form for what is on the air now, or why there is nothing to log.
-    fn contact_form(
-        &self,
-        own_grid: Grid,
-        started: DateTime<Utc>,
-    ) -> Result<ContactForm, &'static str> {
+    /// What is on the air now, or why there is nothing to log.
+    fn prefill(&self) -> Result<ContactPrefill, &'static str> {
         let (Some(rx_hz), Some(tx_hz), Some(plan)) =
             (self.sent_rx_hz(), self.tracker.sent_tx_hz(), self.plan())
         else {
@@ -301,21 +255,36 @@ impl Tracking {
         let Some(tx_mode) = plan.tx_mode else {
             return Err("this transmitter has no uplink: nothing to log");
         };
-        Ok(ContactForm::new(
-            self.satellite.clone(),
-            self.transmitter.description.clone(),
-            started,
-            own_grid,
-            Link {
+        Ok(ContactPrefill {
+            satellite: self.satellite.clone(),
+            transmitter: self.transmitter.description.clone(),
+            rx: Link {
                 hz: rx_hz,
                 mode: plan.rx_mode,
             },
-            Link {
+            tx: Link {
                 hz: tx_hz,
                 mode: tx_mode,
             },
-        ))
+        })
     }
+}
+
+/// One side of the radio link: a frequency and the mode it is worked in.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Link {
+    pub hz: u64,
+    pub mode: RigMode,
+}
+
+/// What a satellite Contact is prefilled with: the satellite, and the frequencies and modes last
+/// sent to the radio.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ContactPrefill {
+    pub satellite: String,
+    pub transmitter: String,
+    pub rx: Link,
+    pub tx: Link,
 }
 
 /// What is being tracked, for the display.
@@ -327,13 +296,14 @@ pub struct TrackingView {
     pub nudge_hz: i64,
 }
 
-impl App {
+impl SatState {
     pub fn status(&self) -> Option<&str> {
         self.status.as_deref()
     }
 
-    pub fn set_status(&mut self, status: Option<String>) {
-        self.status = status;
+    /// The message the last key left for the status line, if any (reading it clears it).
+    pub fn take_status(&mut self) -> Option<String> {
+        self.status.take()
     }
 
     /// Call after the rig connection is restored: tracking resends everything on the next tick.
@@ -361,6 +331,12 @@ impl App {
             transmitter: t.transmitter.description.clone(),
             nudge_hz: t.nudge_hz,
         })
+    }
+
+    /// Stop tracking (if it is running) and drop commands not yet sent. Does not touch the radio.
+    pub fn stop_tracking(&mut self) -> bool {
+        self.pending.clear();
+        self.tracking.take().is_some()
     }
 
     /// The transmitter the cursor is on, if the radio can use it.
@@ -396,7 +372,6 @@ impl App {
     /// Advance to `now`: queued commands first, then whatever tracking needs. The caller applies
     /// the returned commands to the rig.
     pub fn tick(&mut self, now: DateTime<Utc>) -> Result<Vec<RigCommand>, PropagationError> {
-        self.clock = now;
         let mut commands = std::mem::take(&mut self.pending);
         if let Some(tracking) = &mut self.tracking
             && let Some(plan) = tracking.plan()
@@ -404,6 +379,19 @@ impl App {
             commands.extend(tracking.tracker.step(&plan, now)?);
         }
         Ok(commands)
+    }
+
+    /// Whether keys have queued commands that wait for a rig.
+    pub fn has_pending(&self) -> bool {
+        !self.pending.is_empty()
+    }
+
+    /// What a Contact logged now is prefilled with, or why nothing can be logged.
+    pub fn contact_prefill(&self) -> Result<ContactPrefill, String> {
+        let Some(tracking) = &self.tracking else {
+            return Err("start tracking (t) before logging a Contact".to_string());
+        };
+        tracking.prefill().map_err(String::from)
     }
 }
 
@@ -423,7 +411,7 @@ pub struct Live {
     pub plan: Option<Plan>,
 }
 
-impl App {
+impl SatState {
     /// `None` when there are no passes or the TLE cannot be propagated to `now`.
     pub fn live(&self, now: DateTime<Utc>) -> Option<Live> {
         let row = self.rows.get(self.row)?;
@@ -448,11 +436,11 @@ impl App {
             range_rate_km_s: look.range_rate_km_s,
             rx_hz: plan
                 .as_ref()
-                .map(|p| step(orbit::downlink_hz(p.downlink_hz as f64, corrected_rate))),
+                .map(|p| step(downlink_hz(p.downlink_hz as f64, corrected_rate))),
             tx_hz: plan
                 .as_ref()
                 .and_then(|p| p.uplink_hz)
-                .map(|hz| step(orbit::uplink_hz(hz as f64, corrected_rate))),
+                .map(|hz| step(uplink_hz(hz as f64, corrected_rate))),
             plan,
         })
     }
@@ -466,87 +454,13 @@ impl App {
     pub fn selected_pass(&self) -> Option<&Row> {
         self.rows.get(self.row)
     }
-}
 
-const NO_LOGGING: &str = "logging is off: set callsign in the shared config (config.toml)";
-
-impl App {
-    /// `None` turns logging off (no callsign).
-    pub fn set_logging(&mut self, logging: Option<Logging>) {
-        self.logging = logging;
-    }
-
-    pub fn logging_enabled(&self) -> bool {
-        self.logging.is_some()
-    }
-
-    /// Whether the event loop currently has a working connection to the rig.
-    pub fn set_rig_live(&mut self, live: bool) {
-        self.rig_live = live;
-    }
-
-    /// The time the Contact stamps use: tell the app on every turn of the event loop.
-    pub fn set_clock(&mut self, now: DateTime<Utc>) {
-        self.clock = now;
-    }
-
-    pub fn form(&self) -> Option<&ContactForm> {
-        self.logging.as_ref()?.form()
-    }
-
-    /// This session's Contacts, oldest first.
-    pub fn session(&self) -> &[LoggedContact] {
-        self.logging.as_ref().map_or(&[], Logging::session)
-    }
-
-    /// Hand the session list over, so it can survive the app being rebuilt.
-    pub fn take_session(&mut self) -> Vec<LoggedContact> {
-        self.logging
-            .as_mut()
-            .map(Logging::take_session)
-            .unwrap_or_default()
-    }
-
-    pub fn restore_session(&mut self, session: Vec<LoggedContact>) {
-        if let Some(logging) = &mut self.logging {
-            logging.restore_session(session);
-        }
-    }
-
-    pub fn session_open(&self) -> bool {
-        self.logging.as_ref().is_some_and(Logging::session_open)
-    }
-
-    /// Lines the session list is scrolled back from the newest Contact.
-    pub fn session_scroll(&self) -> usize {
-        self.logging.as_ref().map_or(0, Logging::session_scroll)
-    }
-
-    /// The receive frequency the tracker last sent to the radio.
-    pub fn radio_now_rx_hz(&self) -> Option<u64> {
-        self.tracking.as_ref()?.sent_rx_hz()
-    }
-
-    fn open_form(&mut self) {
-        let Some(logging) = &mut self.logging else {
-            self.status = Some(NO_LOGGING.to_string());
-            return;
-        };
-        let Some(tracking) = &self.tracking else {
-            self.status = Some("start tracking (t) before logging a Contact".to_string());
-            return;
-        };
-        if !self.rig_live {
-            self.status = Some("no rig connected: cannot log a Contact".to_string());
-            return;
-        }
-        let opened = tracking
-            .contact_form(logging.own_grid(&self.observer), self.clock)
-            .map_err(String::from)
-            .and_then(|form| logging.open_form(form));
-        if let Err(message) = opened {
-            self.status = Some(message);
-        }
+    /// The next pass starting after `now`, for the palette's one-line state.
+    pub fn next_pass(&self, now: DateTime<Utc>) -> Option<&Row> {
+        self.rows
+            .iter()
+            .filter(|row| row.pass.los >= now)
+            .min_by_key(|row| row.pass.aos)
     }
 }
 
@@ -568,7 +482,7 @@ pub enum Countdown {
     NoFurtherPass,
 }
 
-impl App {
+impl SatState {
     /// Countdown for the tracked satellite's current pass, or its next one if none is under way.
     /// Independent of where the cursor is; `None` when nothing is tracked.
     pub fn tracked_countdown(&self, now: DateTime<Utc>) -> Option<Countdown> {

@@ -96,6 +96,8 @@ impl App {
             rig_default: self.rig_default.clone(),
             macros: self.soft_keys.clone(),
             softkey_sets: self.softkey_sets.clone(),
+            // Read at start-up by `main`; the dialog neither shows nor writes it.
+            satellite: hamtools_config::SatelliteSettings::default(),
         }
     }
 
@@ -184,8 +186,12 @@ impl App {
         }
         self.status = Some(format!("rig: {}", self.rig_name()));
         if let Some(why) = self.activity_unavailable(self.foreground) {
+            let stopped = self.activities[self.foreground].on_leave();
             self.foreground = 0;
-            self.status = Some(format!("{why}; back to General"));
+            self.status = Some(match stopped {
+                Some(note) => format!("{why}; back to General. {note}"),
+                None => format!("{why}; back to General"),
+            });
         }
     }
 

@@ -3,9 +3,10 @@
 //! 2026-10-26 12:00Z and 2026-10-27 12:00Z above 10 degrees.
 
 use chrono::{DateTime, TimeZone, Utc};
+use hamtools_config::SatelliteSettings;
 use orbit::{Observer, parse_tles};
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
-use sat_tui::app::{App, Command, Settings};
+use rig_tui::satellite::{Request, SatState as App};
 use sat_tui::satnogs::{Transmitter, parse_transmitters};
 
 const ISS: &str = "ISS (ZARYA)";
@@ -15,12 +16,13 @@ fn now() -> DateTime<Utc> {
     Utc.with_ymd_and_hms(2026, 10, 26, 12, 0, 0).unwrap()
 }
 
-fn settings(watch: &[u32]) -> Settings {
-    Settings {
+fn settings(watch: &[u32]) -> SatelliteSettings {
+    SatelliteSettings {
         watch: watch.to_vec(),
         horizon_hours: 24,
         min_elevation_deg: 10.0,
         short_pass_secs: 180,
+        names: Default::default(),
     }
 }
 
@@ -35,7 +37,7 @@ fn app_with(tx: Vec<Transmitter>, watch: &[u32]) -> App {
         lon_deg: -85.71,
         alt_m: 250.0,
     };
-    App::new(sats, tx, observer, settings(watch), now())
+    App::new(sats, tx, observer, &settings(watch), now())
 }
 
 fn app() -> App {
@@ -46,7 +48,7 @@ fn key(code: KeyCode) -> KeyEvent {
     KeyEvent::new(code, KeyModifiers::NONE)
 }
 
-fn press(app: &mut App, code: KeyCode) -> Option<Command> {
+fn press(app: &mut App, code: KeyCode) -> Option<Request> {
     app.handle_key(key(code))
 }
 
@@ -132,10 +134,10 @@ mod navigation {
     }
 
     #[test]
-    fn m_also_shows_the_ones_the_radio_cannot_demodulate() {
+    fn u_also_shows_the_ones_the_radio_cannot_demodulate() {
         let mut app = app();
 
-        press(&mut app, KeyCode::Char('m'));
+        press(&mut app, KeyCode::Char('u'));
 
         let list = app.transmitter_choices();
         let qpsk = list
@@ -180,13 +182,13 @@ mod navigation {
     }
 
     #[test]
-    fn q_and_escape_quit_and_r_asks_for_a_refresh() {
-        assert_eq!(press(&mut app(), KeyCode::Char('q')), Some(Command::Quit));
-        assert_eq!(press(&mut app(), KeyCode::Esc), Some(Command::Quit));
+    fn r_asks_for_a_refresh_and_q_and_escape_are_the_hosts_not_the_screens() {
         assert_eq!(
             press(&mut app(), KeyCode::Char('r')),
-            Some(Command::Refresh)
+            Some(Request::Refresh)
         );
+        assert_eq!(press(&mut app(), KeyCode::Char('q')), None);
+        assert_eq!(press(&mut app(), KeyCode::Esc), None);
     }
 }
 
@@ -371,10 +373,10 @@ mod tracking {
     }
 
     #[test]
-    fn s_switches_satellite_mode_off_even_when_not_tracking() {
+    fn z_switches_satellite_mode_off_even_when_not_tracking() {
         let mut app = app();
 
-        press(&mut app, KeyCode::Char('s'));
+        press(&mut app, KeyCode::Char('Z'));
 
         assert_eq!(
             app.tick(at(13, 15, 0)).unwrap(),
@@ -443,13 +445,14 @@ mod durations {
             lon_deg: -85.71,
             alt_m: 250.0,
         };
-        let settings = Settings {
+        let settings = SatelliteSettings {
             watch: vec![],
             horizon_hours: 24,
             min_elevation_deg: 10.0,
             short_pass_secs,
+            names: Default::default(),
         };
-        App::new(sats, transmitters(), observer, settings, now)
+        App::new(sats, transmitters(), observer, &settings, now)
     }
 
     #[test]
@@ -496,7 +499,7 @@ mod durations {
 }
 
 mod countdowns {
-    use sat_tui::app::Countdown;
+    use rig_tui::satellite::Countdown;
 
     use super::*;
 

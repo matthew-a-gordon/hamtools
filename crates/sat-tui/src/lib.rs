@@ -1,12 +1,9 @@
-//! Satellite tracker: SatNOGS/CelesTrak data, caching, Doppler-corrected rig control and UI.
+//! Satellite data and tracking, free of any terminal UI: SatNOGS/CelesTrak downloads, the cache,
+//! the observer position and the Doppler tracker. The Satellite Activity of `rig-tui` builds the
+//! screens and performs the rig commands.
 
-pub mod app;
 pub mod cache;
-pub mod config;
 pub mod fetch;
-pub mod logging;
 pub mod observer;
-pub mod rig;
 pub mod satnogs;
 pub mod tracker;
-pub mod ui;

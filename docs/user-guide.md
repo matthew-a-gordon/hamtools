@@ -190,16 +190,16 @@ Verified on a KX3 setup: opening the dialog, one live lookup, picking a Locator 
 
 ## 7. Satellites
 
-`sat-tui` is the satellite pass predictor and Doppler tracker for the FT-847. It is a separate program today. All of it is *untested on hardware*. It will fold into `rig-tui` as the Satellite Activity (section 8), and the screens you see now are the screens that carry over.
+The Satellite Activity is the satellite pass predictor and Doppler tracker for the FT-847, hosted inside `rig-tui` (the standalone `sat-tui` program is gone). All of it is *untested on hardware*. Open it with `Ctrl-G`, then Satellite. It needs a rig with the `sat_mode` capability: on the KX3 it is listed as unavailable, with the reason. The shared top strip replaces its old title, rig line and clock; the Contact form, session list and rig connection are the app's.
 
 ```sh
-cargo run -p sat-tui                                  # position from config, else a town-level default
-cargo run -p sat-tui -- --grid EN71 --rig 127.0.0.1:4533
+cargo run -p rig-tui                          # position from station.locator, else a town-level default
+cargo run -p rig-tui -- --grid EN71           # or --lat DEG --lon DEG, and --alt METRES
 ```
 
-Options: `--config PATH`, `--rig ADDR`, `--grid GRID` (or `--lat DEG --lon DEG`), `--alt METRES`, `--log PATH`. Your position comes from the command line, then `[observer]` in `sat-tui.toml`, then `station.locator` in the shared config, then a town-level default. It is never hard-coded.
+Your position comes from the command line, then `station.locator` in the shared config, then a town-level default. It is never hard-coded. Satellite settings are the `[satellite]` table of the shared config (see `config.example.toml`).
 
-It works with no rig, as a pass viewer. TLEs (CelesTrak) and transmitters (SatNOGS) download into `~/.cache/hamtools/`, and their ages are shown, so it keeps working offline.
+It works with no rig, as a pass viewer. TLEs (CelesTrak) and transmitters (SatNOGS) download into `~/.cache/hamtools/` when you enter the Activity and they are stale (and with `r`), and their ages are shown in its footer, so it keeps working offline.
 
 ### Reading the screen
 
@@ -207,24 +207,26 @@ The **pass list** shows each **Pass**: AOS, LOS, duration and peak elevation (**
 
 ### Keys
 
+The shared strip keys (`f`, `m`/`M`, `v`, `s`, `S`, Left/Right) mean what they mean everywhere. `s` is split, so the sat-mode key moved to `Z`, and `m` is the mode key, so the transmitter filter moved to `u`.
+
 | Key | Action |
 | --- | --- |
-| `j` / `k`, arrows | Move the cursor |
+| `j` / `k`, Up / Down | Move the cursor |
 | `Tab` | Switch between the pass list and the transmitter picker |
 | `t` | Start or stop **tracking** |
 | `[` `]` | Nudge the passband position by 1 kHz |
 | `{` `}` | Nudge it by 100 Hz |
-| `s` | Switch the radio's SAT mode off |
-| `m` | Show transmitters the radio cannot demodulate |
+| `Z` | Switch the radio's SAT mode off |
+| `u` | Show transmitters the radio cannot demodulate |
 | `r` | Refresh TLEs and transmitters |
 | `l` / `L` | Log a Contact / list this session's Contacts |
-| `q` | Quit |
+| `Ctrl-C` | Quit (asks; warns that Doppler tracking is running) |
 
-**Tracking** keeps the radio's receive and transmit frequencies on a transmitter: nominal before AOS, corrected for Doppler from AOS, and following your dial. Transmitting is always your action. It never keys the transmitter; you press PTT.
+**Tracking** keeps the radio's receive and transmit frequencies on a transmitter: nominal before AOS, corrected for Doppler from AOS, and following your dial. Transmitting is always your action. It never keys the transmitter; you press PTT. Tracking runs only while Satellite is in the foreground, on the Active rig. Leaving Satellite (or switching to a rig without sat mode) stops it and the status line says so; the radio keeps whatever it was last set to. Tuning from the band plan is refused while tracking.
 
 ### Logging a satellite Contact
 
-While tracking with a connected rig, `l` opens a form prefilled with the satellite, modes, the frequencies last sent to the radio (uplink as `FREQ`, downlink as `FREQ_RX`) and the start time. It writes to the same Log as `rig-tui`. Per-satellite `SAT_NAME` overrides go under `[logbook.satellites]` in `sat-tui.toml`.
+While tracking with a connected rig, `l` opens the shared Contact form prefilled with the satellite, the uplink mode, the frequencies last sent to the radio (the transmit frequency under split as `FREQ`, the downlink as `FREQ_RX`) and the start time. It writes to the same Log as everything else, with the usual refusals (a rig reading older than two seconds, an unknown transmit frequency under split). One RST is offered for both directions (599 when CW is worked both ways, else 59). Per-satellite `SAT_NAME` overrides go under `[satellite.names]` in the shared config.
 
 ### Open questions on the FT-847
 
@@ -243,7 +245,7 @@ Everything from here on is the spec in [#54](https://github.com/matthew-a-gordon
 | Activity | What it is |
 | --- | --- |
 | General | Today's `rig-tui`. The startup default. |
-| Satellite | Today's `sat-tui` screens, inside the app |
+| Satellite | The former `sat-tui` screens, inside the app |
 | SOTA | Activator and "chaser" **Roles** |
 | POTA | Activator and Hunter **Roles** |
 
@@ -297,7 +299,7 @@ What each rig can do comes from a static capability table keyed by `kind` (`kx3`
 
 ### Satellite settings
 
-`sat-tui.toml` goes away. Satellite settings move to a `[satellite]` table in the shared config (watch list, pass horizon, minimum elevation, short-pass threshold, satellite-name map). Position comes from flags, then the shared Locator, then the town-level default. The standalone `sat-tui` binary is deleted when the Satellite Activity lands. Doppler commands are performed on the Active rig only while Satellite is in the foreground and the rig has the `sat_mode` capability.
+Satellite settings are the `[satellite]` table of the shared config (watch list, pass horizon, minimum elevation, short-pass threshold, and `[satellite.names]`); `sat-tui.toml`, its `rig_addr`, `[observer]` and `[logbook] grid` are gone. Position comes from flags, then the shared Locator, then the town-level default. Doppler commands are performed on the Active rig only while Satellite is in the foreground and the rig has the `sat_mode` capability.
 
 ### Window size
 
@@ -433,7 +435,7 @@ Exporting a Hunter log is out of scope for now.
 | "split is off" when pressing `S` | Press `s` first. |
 | Logging refuses to open | Set `callsign`; make sure the rig is connected and reporting a recent frequency. |
 | Config dialog will not save | Read-only file (`Ctrl-A` applies for this run), unparsable file (fix and `Ctrl-R`), or a conflict to settle first. |
-| `sat-tui` shows old data | The footer shows the TLE and transmitter ages. `r` refreshes when online. |
+| The Satellite Activity shows old data | The footer shows the TLE and transmitter ages. `r` refreshes when online. |
 
 ## Maintaining this guide
 

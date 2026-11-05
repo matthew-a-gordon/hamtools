@@ -17,7 +17,10 @@ use ratatui::layout::Rect;
 use ratatui::text::Line;
 use ratatui::widgets::Paragraph;
 
-use crate::activity::{Activity, ActivityCtx, FormRoute, PlanChoice};
+use crate::activity::{
+    Activity, ActivityCtx, FormRoute, HostEvent, HostRequest, LogPrefill, PlanChoice, TuneRequest,
+    Worked,
+};
 use crate::bandplan::{BandAction, BandplanModal, View as BandView};
 use crate::config_dialog::{ConfigDialog, Outcome};
 use crate::general::General;
@@ -31,7 +34,7 @@ use crate::panel::{LogDefaults, LogMode, Role};
 use crate::plans::{self, PlanRow, Plans, PlansModal, PlansOutcome};
 use crate::refdata::ReferenceData;
 use crate::rig::{Command, Feature, RigEvent, RigMode};
-use crate::rigs::{RigSlot, Switcher};
+use crate::rigs::{Capability, RigSlot, Switcher};
 use crate::softkeys::{Exchange, Layers, NamedSet, Resolved, resolve};
 use crate::style::{dim, red};
 use crate::tracker::{self, ActivationView, PlanBanner, Program, Tracker};
@@ -130,6 +133,9 @@ macro_rules! ctx {
         ctx!($self, $recent, crate::layout::Panes::MINIMAL)
     };
     ($self:ident, $recent:expr, $panes:expr) => {
+        ctx!($self, $recent, $panes, &[])
+    };
+    ($self:ident, $recent:expr, $panes:expr, $worked:expr) => {
         ActivityCtx {
             connected: $self.connected,
             live: $self.exchange.live($self.callsign.as_deref()),
@@ -145,7 +151,12 @@ macro_rules! ctx {
             form: crate::activity::FormPane::new(&$self.logging),
             activation: $self.activation.as_ref(),
             plans: &[],
-            rx_hz: $self
+            utc: $self.clock(),
+            observer: $self.locator.as_deref().and_then(crate::spots::grid_center),
+            license_class: $self.license_class,
+            worked: $worked,
+            logged: $self.logging.count(),
+            freq: $self
                 .freq
                 .as_ref()
                 .filter(|r| $self.now.saturating_duration_since(r.at) <= STALE_AFTER)
@@ -497,17 +508,32 @@ impl App {
         }
         // An embedded Contact form belongs to its screen: leaving drops it (the Log keeps every
         // saved Contact; only a half-typed one is lost, and the status says so).
+        let mut dropped = None;
         if self.embedded() && !self.activities[index].embeds_contact_form() {
             if self.logging.form_dirty() {
-                self.status = Some("half-typed Contact discarded".to_string());
+                dropped = Some("half-typed Contact discarded".to_string());
             }
             self.logging.discard();
             self.sync_form_exchange();
         }
+        let left = (index != self.foreground).then(|| self.activities[self.foreground].on_leave());
         self.foreground = index;
         self.entry = None;
+        if let Some(note) = dropped.or(left.flatten()) {
+            self.status = Some(note);
+        }
+        self.activities[index].on_enter();
         self.activation_stale = true;
         self.sync_embedded();
+    }
+
+    /// Hand a piece of outside news (a finished download) to every hosted Activity.
+    pub fn on_host_event(&mut self, event: HostEvent) {
+        for activity in &mut self.activities {
+            if let Some(status) = activity.on_event(&event) {
+                self.status = Some(status);
+            }
+        }
     }
 
     /// Whether the foreground Activity draws the Contact form itself.
@@ -1183,10 +1209,21 @@ impl App {
     /// The `l` gate. Opens the form with a snapshot of the rig, or says in the status line which
     /// condition failed.
     fn open_log_form(&mut self) {
+        self.open_log_form_with(None);
+    }
+
+    /// `open_log_form`, with the Call (and Their ref) an Activity chose, such as a spot.
+    fn open_log_form_with(&mut self, prefill: Option<LogPrefill>) {
         match self.log_snapshot() {
-            Ok(snapshot) => {
+            Ok(mut snapshot) => {
                 self.entry = None;
+                if let Some(their_ref) = prefill.as_ref().and_then(|p| p.their_ref.clone()) {
+                    snapshot.defaults.their_ref = Some(their_ref);
+                }
                 self.logging.open_form(snapshot);
+                if let Some(p) = &prefill {
+                    self.logging.prefill_call(&p.call);
+                }
                 self.sync_form_exchange();
             }
             Err(why) => self.status = Some(why),
@@ -1226,6 +1263,9 @@ impl App {
     }
 
     fn snapshot(&self, check_log: bool) -> Result<Snapshot, String> {
+        if let Some(why) = self.activities[self.foreground].log_blocked() {
+            return Err(why);
+        }
         if !self.connected {
             return Err("not connected: cannot log".to_string());
         }
@@ -1346,7 +1386,7 @@ impl App {
                 }
                 Outcome::Apply(settings) => {
                     self.config = None;
-                    let mut commands = self.apply_settings(settings);
+                    let mut commands = self.apply_settings(*settings);
                     commands.push(Command::ClearGeocodeCache);
                     commands
                 }
@@ -1425,12 +1465,19 @@ impl App {
         {
             return commands;
         }
-        let ctx = ctx!(self);
+        let worked = self.worked_today();
+        let ctx = ctx!(self, &[], crate::layout::Panes::MINIMAL, &worked);
         if let Some(out) = self.activities[self.foreground].on_key(key, &ctx) {
             if out.status.is_some() {
                 self.status = out.status;
             }
-            return out.commands;
+            let mut commands = out.commands;
+            match self.activities[self.foreground].take_request() {
+                Some(HostRequest::OpenLog(prefill)) => self.open_log_form_with(Some(prefill)),
+                Some(HostRequest::Tune(tune)) => commands.extend(self.apply_tune(tune)),
+                None => {}
+            }
+            return commands;
         }
         self.on_strip_key(key)
     }
@@ -1491,6 +1538,59 @@ impl App {
                 Some(Vec::new())
             }
         }
+    }
+
+    /// Today's Contacts from the Log, for an Activity that marks "worked today". Derived afresh
+    /// each time so there is no state to drift; empty for any other Activity.
+    fn worked_today(&self) -> Vec<Worked> {
+        if !self.activities[self.foreground].uses_log() {
+            return Vec::new();
+        }
+        let Ok(records) = self
+            .current_log()
+            .and_then(|log| log.read().map_err(|e| e.to_string()))
+        else {
+            return Vec::new();
+        };
+        let today = self.clock().date_naive();
+        records
+            .iter()
+            .filter(|r| r.start().is_some_and(|s| s.date_naive() == today))
+            .filter_map(|r| {
+                Some(Worked {
+                    call: r.call()?.to_ascii_uppercase(),
+                    band: r.band()?.to_string(),
+                    mode: r.mode()?.to_ascii_uppercase(),
+                })
+            })
+            .collect()
+    }
+
+    /// Tune the receive frequency (and the mode when one is mapped) for an Activity. Refused
+    /// while any hosted Activity is correcting the dial itself. Never touches split, and none of
+    /// these commands can key the transmitter.
+    fn apply_tune(&mut self, tune: TuneRequest) -> Vec<Command> {
+        if let Some(why) = self.activities.iter().find_map(|a| a.tuning_blocked()) {
+            self.status = Some(format!("not while {why}"));
+            return Vec::new();
+        }
+        if !self.ready() {
+            return Vec::new();
+        }
+        let mut commands = Vec::new();
+        match tune.mode {
+            Some(mode) => {
+                self.status = None;
+                if self.last_mode() != Some(&mode) {
+                    commands.push(Command::SetMode { mode, passband: 0 });
+                }
+            }
+            None => {
+                self.status = Some(format!("mode {} not set: frequency only", tune.mode_name));
+            }
+        }
+        commands.push(Command::SetFreq(tune.hz));
+        commands
     }
 
     /// The plain keys and aliases of the shared table. Only reached when no text-entering area
@@ -1767,11 +1867,19 @@ impl App {
     /// Only the foreground Activity is ticked.
     fn tick_foreground(&mut self, now: Instant) -> Vec<Command> {
         let ctx = ctx!(self);
-        self.activities[self.foreground].on_tick(now, &ctx)
+        let mut commands = self.activities[self.foreground].on_tick(now, &ctx);
+        // Doppler correction is the one thing an Activity may do to the dial by itself, and only
+        // on a rig with satellite mode. The foreground Activity is the only one ticked, so this
+        // also means no Doppler command is ever issued from the background.
+        if !self.capabilities().has(Capability::SatMode) {
+            commands.retain(|c| !matches!(c, Command::Doppler(_)));
+        }
+        commands
     }
 
     pub(crate) fn render_body(&self, frame: &mut Frame, area: Rect, panes: Panes) {
         // Room inside the border, less the heading line.
+        let worked = self.worked_today();
         let rows = usize::from(area.height.saturating_sub(3));
         let (recent, choices) = if self.embedded() {
             let planless = self.activation.as_ref().is_none_or(|a| a.banner.is_none());
@@ -1786,7 +1894,7 @@ impl App {
         };
         let ctx = ActivityCtx {
             plans: &choices,
-            ..ctx!(self, &recent, panes)
+            ..ctx!(self, &recent, panes, &worked)
         };
         self.activities[self.foreground].render(frame, area, &ctx);
     }

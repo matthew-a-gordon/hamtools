@@ -52,7 +52,7 @@ const NOTHING: Spec = Spec {
 
 #[test]
 fn with_nothing_configured_it_falls_back_to_town_level_middlebury() {
-    let o = resolve(&NOTHING, &NOTHING, None).unwrap();
+    let o = resolve(&NOTHING, None).unwrap();
 
     assert_eq!(
         o,
@@ -65,10 +65,10 @@ fn with_nothing_configured_it_falls_back_to_town_level_middlebury() {
 }
 
 #[test]
-fn config_values_replace_the_defaults() {
-    let config = spec(None, Some(40.0), Some(-105.0), Some(1600.0));
+fn command_line_coordinates_and_altitude_replace_the_defaults() {
+    let cli = spec(None, Some(40.0), Some(-105.0), Some(1600.0));
 
-    let o = resolve(&NOTHING, &config, None).unwrap();
+    let o = resolve(&cli, None).unwrap();
 
     assert_eq!(
         o,
@@ -81,29 +81,10 @@ fn config_values_replace_the_defaults() {
 }
 
 #[test]
-fn the_command_line_wins_over_the_config() {
-    let cli = spec(None, Some(10.0), Some(20.0), None);
-    let config = spec(None, Some(40.0), Some(-105.0), Some(1600.0));
-
-    let o = resolve(&cli, &config, None).unwrap();
-
-    // Position comes from the command line; altitude, unset there, from the config.
-    assert_eq!(
-        o,
-        Observer {
-            lat_deg: 10.0,
-            lon_deg: 20.0,
-            alt_m: 1600.0
-        }
-    );
-}
-
-#[test]
-fn a_command_line_grid_beats_config_coordinates() {
+fn a_command_line_grid_resolves_to_its_centre() {
     let cli = spec(Some("EN71"), None, None, None);
-    let config = spec(None, Some(40.0), Some(-105.0), None);
 
-    let o = resolve(&cli, &config, None).unwrap();
+    let o = resolve(&cli, None).unwrap();
 
     close(o.lat_deg, 41.5);
     close(o.lon_deg, -85.0);
@@ -112,26 +93,19 @@ fn a_command_line_grid_beats_config_coordinates() {
 
 #[test]
 fn half_a_coordinate_pair_is_an_error() {
-    assert!(resolve(&spec(None, Some(41.0), None, None), &NOTHING, None).is_err());
-    assert!(resolve(&NOTHING, &spec(None, None, Some(-85.0), None), None).is_err());
+    assert!(resolve(&spec(None, Some(41.0), None, None), None).is_err());
+    assert!(resolve(&spec(None, None, Some(-85.0), None), None).is_err());
 }
 
 #[test]
 fn one_source_may_not_give_both_a_grid_and_coordinates() {
-    assert!(
-        resolve(
-            &spec(Some("EN71"), Some(41.0), Some(-85.0), None),
-            &NOTHING,
-            None
-        )
-        .is_err()
-    );
+    assert!(resolve(&spec(Some("EN71"), Some(41.0), Some(-85.0), None), None).is_err());
 }
 
 #[test]
 fn out_of_range_coordinates_are_rejected() {
-    assert!(resolve(&spec(None, Some(91.0), Some(0.0), None), &NOTHING, None).is_err());
-    assert!(resolve(&spec(None, Some(0.0), Some(181.0), None), &NOTHING, None).is_err());
+    assert!(resolve(&spec(None, Some(91.0), Some(0.0), None), None).is_err());
+    assert!(resolve(&spec(None, Some(0.0), Some(181.0), None), None).is_err());
 }
 
 mod shared_locator {
@@ -139,10 +113,10 @@ mod shared_locator {
     use logbook::Grid;
 
     #[test]
-    fn it_places_the_observer_when_no_flag_or_observer_section_does() {
+    fn it_places_the_observer_when_no_flag_does() {
         let locator = Grid::new("en71dq").unwrap();
 
-        let o = resolve(&NOTHING, &NOTHING, Some(&locator)).unwrap();
+        let o = resolve(&NOTHING, Some(&locator)).unwrap();
 
         close(o.lat_deg, 41.6875);
         close(o.lon_deg, -85.70833);
@@ -150,19 +124,14 @@ mod shared_locator {
     }
 
     #[test]
-    fn flags_and_the_observer_section_both_beat_it() {
+    fn flags_beat_it() {
         let locator = Grid::new("EN71DQ").unwrap();
 
-        let o = resolve(
-            &spec(None, Some(10.0), Some(20.0), None),
-            &NOTHING,
-            Some(&locator),
-        )
-        .unwrap();
+        let o = resolve(&spec(None, Some(10.0), Some(20.0), None), Some(&locator)).unwrap();
         assert_eq!((o.lat_deg, o.lon_deg), (10.0, 20.0));
 
         let own = spec(Some("EN71"), None, None, None);
-        let o = resolve(&NOTHING, &own, Some(&locator)).unwrap();
+        let o = resolve(&own, Some(&locator)).unwrap();
         close(o.lat_deg, 41.5);
         close(o.lon_deg, -85.0);
     }

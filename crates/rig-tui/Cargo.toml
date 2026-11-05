@@ -15,8 +15,10 @@ hamtools-config = { path = "../hamtools-config" }
 rigctld-client = { path = "../rigctld-client" }
 hamtools-tui = { path = "../hamtools-tui" }
 logbook = { path = "../logbook" }
+orbit = { path = "../orbit" }
+sat-tui = { path = "../sat-tui" }
 serde_json = "1"
-chrono = { version = "0.4", default-features = false, features = ["std"] }
+chrono = { version = "0.4", default-features = false, features = ["std", "clock"] }
 tokio = { version = "1", features = ["rt", "net", "time"] }
 # One HTTPS GET to Nominatim (address -> Locator in the config dialog); a blocking client on a
 # short-lived thread, with no async runtime or reqwest/hyper stack. TLS is needed for https; gzip

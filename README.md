@@ -7,7 +7,7 @@ Terminal tools (Rust, ratatui) for ham rig control, logging, CW and satellite wo
 | Crate | Purpose |
 | --- | --- |
 | `rig-tui` | Rig control TUI for any rigctld: rig strip, CW panel with Soft keys (F1-F6), logging, config dialog |
-| `sat-tui` | Pass prediction, Doppler-corrected rig tracking, SatNOGS transmitter data (to be folded into `rig-tui`) |
+| `sat-tui` | Library: TLE and SatNOGS downloads, the cache, the observer position and the Doppler tracker. The screens live in `rig-tui` as the Satellite Activity |
 | `rigctld-client` | Async client for the rigctld text protocol |
 | `logbook` | Contact, callsign and Locator types; ADIF writer; the append-only Log |
 | `orbit` | Orbit propagation for pass prediction and Doppler |
@@ -33,7 +33,7 @@ Early. Hardware results are recorded in `CLAUDE.md` ("Hardware status"); anythin
 - **Config dialog:** edit the callsign, Locator, Log path, rig address and Soft keys in place, with a safe field-level save that keeps your comments and unknown keys. An address lookup (OpenStreetMap Nominatim, one request when you ask) turns a town into a 6-character Locator. The address is never stored.
 - **Resilient:** starts with no rig, shows "disconnected" with the error, and reconnects on its own.
 
-### Satellites (`sat-tui`, untested on hardware)
+### Satellites (the Satellite Activity in `rig-tui`, untested on hardware)
 
 - Pass prediction from CelesTrak TLEs, with start, end, length and peak elevation, and short passes flagged.
 - Transmitters from SatNOGS, with a picker that hides what the radio cannot demodulate.
@@ -43,7 +43,7 @@ Early. Hardware results are recorded in `CLAUDE.md` ("Hardware status"); anythin
 
 ### Safety
 
-Tools never open serial ports; only `rigctld` does. Nothing can key the transmitter except an explicit CW send from a key press. `sat-tui` tunes but never keys: you press PTT.
+Tools never open serial ports; only `rigctld` does. Nothing can key the transmitter except an explicit CW send from a key press. The Satellite Activity tunes but never keys: you press PTT.
 
 ## Planned (spec #54, not built yet)
 
@@ -67,8 +67,7 @@ Out of scope for now: posting or self-spotting, uploading anything, band plans o
 
 ```sh
 nix develop            # or `direnv allow`: toolchain and hamlib_4
-cargo run -p rig-tui   # control the rig at 127.0.0.1:4532
-cargo run -p sat-tui   # pass viewer / tracker
+cargo run -p rig-tui   # control the rig at 127.0.0.1:4532; Ctrl-G then Satellite for passes
 ```
 
 `nix build` produces `packages.<system>.default` (alias `hamtools`) containing all binaries.
@@ -86,11 +85,11 @@ rigctld -m 1 -t 4532
 
 ## Documentation
 
-- [User guide](docs/user-guide.md): running `rig-tui` and `sat-tui`, keys, configuration, and what is coming.
+- [User guide](docs/user-guide.md): running `rig-tui`, keys, configuration, and what is coming.
 - [`GLOSSARY.md`](GLOSSARY.md): the project's terms (Contact, Log, Locator, Activity, Soft key and so on).
 - [`docs/adr/`](docs/adr): architecture decisions behind the planned unified app.
 - [`CLAUDE.md`](CLAUDE.md): conventions, boundaries and the hardware status list.
-- `config.example.toml`, `sat-tui.example.toml`: annotated configs.
+- `config.example.toml`: the annotated config.
 
 ## Development
 

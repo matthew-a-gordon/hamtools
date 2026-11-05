@@ -190,7 +190,7 @@ impl Activator {
     /// One line of the band the receiver is in, with the frequency marked: `20m 14.000 [--|--]
     /// 14.350`. Shown from 30 rows.
     fn render_bandplan(&self, frame: &mut Frame, area: Rect, ctx: &ActivityCtx) {
-        let text = match ctx.rx_hz.and_then(|hz| band_for_hz(hz).map(|b| (hz, b))) {
+        let text = match ctx.freq.and_then(|hz| band_for_hz(hz).map(|b| (hz, b))) {
             None => "bandplan: no frequency".to_string(),
             Some((hz, band)) => {
                 let width = usize::from(area.width).saturating_sub(40).clamp(10, 60);

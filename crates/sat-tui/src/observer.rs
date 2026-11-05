@@ -90,22 +90,18 @@ impl Spec {
     }
 }
 
-/// Choose the observer: position from the command line, else sat-tui's own `[observer]`, else
-/// the shared config's Locator, else the default; altitude chosen from the first two
-/// independently of position.
-pub fn resolve(
-    cli: &Spec,
-    config: &Spec,
-    shared_locator: Option<&Grid>,
-) -> Result<Observer, ObserverError> {
+/// Choose the observer: position from the command line, else
+/// the shared config's Locator, else the default; altitude from the command line, else the
+/// default, independently of position.
+pub fn resolve(cli: &Spec, shared_locator: Option<&Grid>) -> Result<Observer, ObserverError> {
     let shared = shared_locator
         .map(|locator| grid_centre(locator.as_str()))
         .transpose()?;
-    let (lat_deg, lon_deg) = match cli.position()?.or(config.position()?).or(shared) {
+    let (lat_deg, lon_deg) = match cli.position()?.or(shared) {
         Some(position) => position,
         None => (DEFAULT.lat_deg, DEFAULT.lon_deg),
     };
-    let alt_m = cli.alt_m.or(config.alt_m).unwrap_or(DEFAULT.alt_m);
+    let alt_m = cli.alt_m.unwrap_or(DEFAULT.alt_m);
     Ok(Observer {
         lat_deg,
         lon_deg,

@@ -397,6 +397,17 @@ impl Logging {
         std::mem::take(&mut self.reopen)
     }
 
+    /// Put a Call in the open form (a spot's) and move to the next field, ready for the reports.
+    /// Not counted as typing, so Esc still closes without asking.
+    pub fn prefill_call(&mut self, call: &str) {
+        if let Some(form) = &mut self.form
+            && let Some(i) = form.kinds.iter().position(|k| *k == Kind::Call)
+        {
+            form.form.set_value(i, call.to_ascii_uppercase());
+            form.form.set_focus(i + 1);
+        }
+    }
+
     pub fn open_form(&mut self, snapshot: Snapshot) {
         self.list = None;
         self.form = Some(ContactForm::new(snapshot));

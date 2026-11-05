@@ -29,12 +29,12 @@ const DISCLOSURE: [&str; 2] = [
 ];
 
 /// What a key did, for `App` to act on.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub(crate) enum Outcome {
     Stay,
     Close,
     /// Use these settings now and close (after a save, or `Ctrl-A` on a read-only file).
-    Apply(Settings),
+    Apply(Box<Settings>),
     /// Look this address up and answer with [`ConfigDialog::on_geocode`].
     Lookup(String),
 }
@@ -544,7 +544,7 @@ impl ConfigDialog {
             return Outcome::Stay;
         };
         match file.save(&new) {
-            Ok(_) => Outcome::Apply(file.settings().clone()),
+            Ok(_) => Outcome::Apply(Box::new(file.settings().clone())),
             Err(SaveError::Conflict(conflicts)) => {
                 self.mode = Mode::Conflict { conflicts, next: 0 };
                 Outcome::Stay
@@ -568,7 +568,7 @@ impl ConfigDialog {
     /// `Ctrl-A`: use the values for this run without writing the (read-only) file.
     fn apply_unsaved(&mut self) -> Outcome {
         if matches!(self.problem, Some(Problem::ReadOnly(_))) && self.validate_all() {
-            Outcome::Apply(self.build_settings())
+            Outcome::Apply(Box::new(self.build_settings()))
         } else {
             Outcome::Stay
         }
