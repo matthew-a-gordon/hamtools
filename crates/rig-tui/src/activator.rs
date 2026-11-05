@@ -55,6 +55,8 @@ const FORM_H: u16 = 6;
 /// The least the CW panel needs: one transcript row, the Send line and the Soft key bar.
 const CW_MIN_H: u16 = 7;
 const SIDE_W: u16 = 44;
+/// Rows of the stacked nearby-spots pane (a border and three spots).
+const NEARBY_H: u16 = 5;
 
 impl Activator {
     pub fn pota() -> Self {
@@ -442,17 +444,30 @@ impl Activity for Activator {
         let banner_h = banner_lines.len() as u16 + 2;
         let hints_h = if ctx.panes.key_hints { 5 } else { 0 };
         let band_h = u16::from(ctx.panes.bandplan_strip);
-        let fixed = banner_h + FORM_H + band_h + hints_h;
+        // Nearby spots come with the height (30 rows), in the second column when there is one,
+        // else stacked under the band strip while the CW panel keeps its minimum.
+        let base = banner_h + FORM_H + band_h + hints_h;
+        let nearby_h = if side.is_none()
+            && self.spots.is_some()
+            && ctx.panes.bandplan_strip
+            && main.height >= base + NEARBY_H + CW_MIN_H
+        {
+            NEARBY_H
+        } else {
+            0
+        };
+        let fixed = base + nearby_h;
         let spare = main.height.saturating_sub(fixed + CW_MIN_H);
         // The CW panel grows a little, the recent list takes the rest (beside it at 128 columns).
         let cw_extra = if side.is_some() { spare } else { spare.min(3) };
         let recent_h = if side.is_some() { 0 } else { spare - cw_extra };
         let recent_h = if recent_h >= 3 { recent_h } else { 0 };
         let cw_h = main.height.saturating_sub(fixed + recent_h);
-        let [banner, form, band, cw, recent, hints] = Layout::vertical([
+        let [banner, form, band, nearby_pane, cw, recent, hints] = Layout::vertical([
             Constraint::Length(banner_h),
             Constraint::Length(FORM_H),
             Constraint::Length(band_h),
+            Constraint::Length(nearby_h),
             Constraint::Length(cw_h),
             Constraint::Length(recent_h),
             Constraint::Length(hints_h),
@@ -467,6 +482,9 @@ impl Activity for Activator {
         );
         if band_h > 0 {
             self.render_bandplan(frame, band, ctx);
+        }
+        if nearby_h > 0 {
+            self.render_nearby(frame, nearby_pane, ctx);
         }
         self.render_cw(frame, cw, ctx);
         let planless = ctx.activation.is_none_or(|a| a.banner.is_none());

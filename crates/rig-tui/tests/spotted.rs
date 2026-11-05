@@ -199,7 +199,7 @@ fn sota_activators_ask_for_nothing() {
 }
 
 #[test]
-fn nearby_spots_need_the_second_column_and_30_rows_and_list_nearest_first() {
+fn nearby_spots_come_with_30_rows_in_either_layout_and_list_nearest_first() {
     let mut r = Rig::new(SPOTS);
     r.go_to("US-4571");
     r.run(3);
@@ -210,7 +210,10 @@ fn nearby_spots_need_the_second_column_and_30_rows_and_list_nearest_first() {
         .expect("near");
     let far = wide.iter().position(|l| l.contains("K1FAR")).expect("far");
     assert!(near < far, "{wide:#?}");
-    assert!(!has(&r.screen(100, 32), "N9NEAR"), "one column");
+    assert!(
+        has(&r.screen(100, 32), "N9NEAR"),
+        "one column stacks it under the band strip"
+    );
     assert!(!has(&r.screen(140, 28), "N9NEAR"), "short");
 }
 

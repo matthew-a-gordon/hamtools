@@ -267,6 +267,10 @@ impl Activity for SotaChaser {
     }
 
     fn render(&self, frame: &mut Frame, area: Rect, ctx: &ActivityCtx) {
+        let (area, contacts) = crate::general::split_contacts(ctx, area);
+        if let Some(pane) = contacts {
+            crate::general::render_todays_contacts(ctx, frame, pane);
+        }
         let panel = self.inner.has_panel(ctx) && area.height >= PANEL_MIN_BODY;
         let [list_area, detail_area, panel_area, count_area] = Layout::vertical([
             Constraint::Min(4),

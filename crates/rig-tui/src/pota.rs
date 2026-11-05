@@ -58,6 +58,8 @@ struct Filters {
     band: Option<&'static str>,
     group: Option<ModeGroup>,
     hide_worked: bool,
+    /// `/`: every word must appear in the call, reference, park, location or comment.
+    text: String,
 }
 
 /// One visible spot with everything the list derives for it.
@@ -90,6 +92,8 @@ pub struct PotaHunter {
     request: Option<HostRequest>,
     panels: Vec<Box<dyn ModePanel>>,
     panel_focus: bool,
+    /// The `/` search line has the keyboard.
+    searching: bool,
 }
 
 impl PotaHunter {
@@ -111,6 +115,7 @@ impl PotaHunter {
             request: None,
             panels: vec![Box::new(CwPanel::new())],
             panel_focus: false,
+            searching: false,
         }
     }
 
@@ -163,6 +168,7 @@ impl PotaHunter {
                     .is_none_or(|g| mode_group(&r.spot.mode) == g)
             })
             .filter(|r| !(self.filters.hide_worked && r.worked))
+            .filter(|r| self.matches_text(r.spot))
             .collect();
         match self.sort {
             Sort::Newest => {
@@ -177,6 +183,18 @@ impl PotaHunter {
             }),
         }
         rows
+    }
+
+    fn matches_text(&self, spot: &Spot) -> bool {
+        let hay = format!(
+            "{} {} {} {} {}",
+            spot.call, spot.reference, spot.park_name, spot.location, spot.comment
+        )
+        .to_lowercase();
+        self.filters
+            .text
+            .split_whitespace()
+            .all(|w| hay.contains(&w.to_lowercase()))
     }
 
     fn live_spots(&self, now: i64) -> impl Iterator<Item = &Spot> {
@@ -265,6 +283,9 @@ impl PotaHunter {
         }
         if self.sort == Sort::Nearest {
             title.push_str(" [nearest first]");
+        }
+        if !self.filters.text.trim().is_empty() {
+            title.push_str(&format!(" [search {}]", self.filters.text.trim()));
         }
         title
     }
@@ -423,6 +444,7 @@ impl Activity for PotaHunter {
             plain('b', "band filter"),
             plain('o', "mode filter"),
             plain('w', "hide worked"),
+            plain('/', "search spots"),
             plain('t', "tune to spot"),
             KeyEntry {
                 scope: Scope::Plain,
@@ -435,6 +457,27 @@ impl Activity for PotaHunter {
     }
 
     fn on_key(&mut self, key: KeyEvent, ctx: &ActivityCtx) -> Option<ActivityOutput> {
+        if self.searching {
+            match key.code {
+                KeyCode::Enter => self.searching = false,
+                KeyCode::Esc => {
+                    self.searching = false;
+                    self.filters.text.clear();
+                }
+                KeyCode::Backspace => {
+                    self.filters.text.pop();
+                }
+                KeyCode::Char(c)
+                    if !key
+                        .modifiers
+                        .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT) =>
+                {
+                    self.filters.text.push(c);
+                }
+                _ => return None,
+            }
+            return Some(ActivityOutput::default());
+        }
         let panel = self.active_panel(ctx);
         let focused = self.text_focus(ctx);
         if matches!(key.code, KeyCode::Esc | KeyCode::Tab) && focused {
@@ -483,6 +526,7 @@ impl Activity for PotaHunter {
             KeyCode::Char('b') => self.cycle_band(ctx),
             KeyCode::Char('o') => self.cycle_group(),
             KeyCode::Char('w') => self.filters.hide_worked = !self.filters.hide_worked,
+            KeyCode::Char('/') => self.searching = true,
             KeyCode::Char('r') => out.status = Some(self.refresh_now()),
             KeyCode::Enter => {
                 let spot = self.selected_spot(ctx);
@@ -560,6 +604,9 @@ impl Activity for PotaHunter {
     }
 
     fn text_focus(&self, ctx: &ActivityCtx) -> bool {
+        if self.searching {
+            return true;
+        }
         match self.active_panel(ctx) {
             Some(i) => self.panel_focus && self.panels[i].captures_text(),
             None => false,
@@ -595,14 +642,20 @@ impl Activity for PotaHunter {
     }
 
     fn hint(&self, ctx: &ActivityCtx) -> &'static str {
-        if self.text_focus(ctx) {
+        if self.searching {
+            "type to filter spots  Enter keep  Esc clear\nCtrl-G go to  Ctrl-C quit"
+        } else if self.text_focus(ctx) {
             "Enter send  F1-F6 soft keys  Tab/Esc spots\nCtrl-L log  Ctrl-C quit"
         } else {
-            "j/k select  Enter log  t tune  d nearest  b band  o mode  w worked  r refresh\nf freq  </> tune  v VFO  s/S split  l log  L list  c config  Tab input  ^C quit"
+            "j/k select  Enter log  t tune  d nearest  b band  o mode  w worked  / search  r refresh\nf freq  </> tune  v VFO  s/S split  l log  L list  c config  Tab input  ^C quit"
         }
     }
 
     fn render(&self, frame: &mut Frame, area: Rect, ctx: &ActivityCtx) {
+        let (area, contacts) = crate::general::split_contacts(ctx, area);
+        if let Some(pane) = contacts {
+            crate::general::render_todays_contacts(ctx, frame, pane);
+        }
         let panel = self
             .active_panel(ctx)
             .filter(|_| area.height >= PANEL_MIN_BODY);

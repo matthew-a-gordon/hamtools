@@ -243,3 +243,11 @@ fn offline_mode_never_asks_the_network() {
     assert!(s.app.status().is_some_and(|t| t.contains("offline")));
     let _ = s.chaser;
 }
+
+#[test]
+fn the_chaser_shows_todays_contacts_with_the_width_or_height() {
+    let s = Setup::new(true);
+    assert!(has(&s.rows(128, 24), "Today's contacts"));
+    assert!(has(&s.rows(83, 47), "Today's contacts"));
+    assert!(!has(&s.rows(80, 24), "Today's contacts"));
+}

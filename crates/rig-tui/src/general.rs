@@ -193,19 +193,7 @@ impl Activity for General {
     fn render(&self, frame: &mut Frame, area: Rect, ctx: &ActivityCtx) {
         // Today's contacts: a column on the right from 128 columns, else stacked below from
         // 40 rows. The screen is otherwise unchanged.
-        let (main, contacts) = if ctx.panes.columns >= 2 {
-            let [main, side] =
-                Layout::horizontal([Constraint::Min(60), Constraint::Length(CONTACTS_WIDTH)])
-                    .areas(area);
-            (main, Some(side))
-        } else if ctx.panes.stacked_contacts {
-            let [main, below] =
-                Layout::vertical([Constraint::Min(10), Constraint::Length(CONTACTS_HEIGHT)])
-                    .areas(area);
-            (main, Some(below))
-        } else {
-            (area, None)
-        };
+        let (main, contacts) = split_contacts(ctx, area);
         match self.active_panel(ctx) {
             Some(index) => {
                 let pctx = self.panel_ctx(ctx, self.text_focus(ctx));
@@ -219,11 +207,30 @@ impl Activity for General {
     }
 }
 
+/// Carve the today's-contacts pane out of `area`: a column on the right from 128 columns, else
+/// stacked below from 40 rows. Returns the rest and the pane. Shared by every Activity that
+/// shows the pane, so they all place it the same way.
+pub(crate) fn split_contacts(ctx: &ActivityCtx, area: Rect) -> (Rect, Option<Rect>) {
+    if ctx.panes.columns >= 2 {
+        let [main, side] =
+            Layout::horizontal([Constraint::Min(60), Constraint::Length(CONTACTS_WIDTH)])
+                .areas(area);
+        (main, Some(side))
+    } else if ctx.panes.stacked_contacts {
+        let [main, below] =
+            Layout::vertical([Constraint::Min(10), Constraint::Length(CONTACTS_HEIGHT)])
+                .areas(area);
+        (main, Some(below))
+    } else {
+        (area, None)
+    }
+}
+
 const CONTACTS_WIDTH: u16 = 44;
 const CONTACTS_HEIGHT: u16 = 8;
 
 /// This run's Contacts, newest first, as many as fit.
-fn render_todays_contacts(ctx: &ActivityCtx, frame: &mut Frame, area: Rect) {
+pub(crate) fn render_todays_contacts(ctx: &ActivityCtx, frame: &mut Frame, area: Rect) {
     let rows = usize::from(area.height.saturating_sub(2));
     let text = if ctx.recent.is_empty() {
         "none yet".to_string()

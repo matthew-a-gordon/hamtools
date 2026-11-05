@@ -665,3 +665,37 @@ fn the_palette_lists_the_hunter_and_its_keys_pass_the_reserved_key_check() {
     let s = Setup::new();
     assert_eq!(s.app.check_activity_keys(), Ok(()));
 }
+
+#[test]
+fn slash_filters_the_list_by_any_word_and_esc_clears_it() {
+    let mut s = Setup::entered();
+
+    s.press('/');
+    // The search line owns printable keys, so `j` types instead of selecting.
+    for c in "gamma np".chars() {
+        s.press(c);
+    }
+    let rows = s.screen();
+    assert!(has(&rows, "N3CCC"), "{rows:#?}");
+    assert!(!has(&rows, "K1AAA") && !has(&rows, "W2BBB"), "{rows:#?}");
+    assert!(has(&rows, "[search gamma np]"), "{rows:#?}");
+
+    s.app.on_key(key(KeyCode::Enter));
+    assert!(has(&s.screen(), "[search gamma np]"));
+    s.press('/');
+    s.app.on_key(key(KeyCode::Esc));
+    let rows = s.screen();
+    assert!(has(&rows, "K1AAA") && !has(&rows, "[search"), "{rows:#?}");
+}
+
+#[test]
+fn the_hunter_shows_todays_contacts_with_the_width_or_height() {
+    let s = Setup::entered();
+    s.append_contact("W1AW", 14_062_500, Mode::Cw);
+    let wide = screen(&s.app, 128, 24);
+    assert!(has(&wide, "Today's contacts"), "{wide:#?}");
+    let tall = screen(&s.app, 83, 47);
+    assert!(has(&tall, "Today's contacts"), "{tall:#?}");
+    let small = screen(&s.app, 80, 24);
+    assert!(!has(&small, "Today's contacts"), "{small:#?}");
+}
