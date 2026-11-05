@@ -54,7 +54,7 @@ fn park_list_and_detail_parse_defensively() {
     assert_eq!(p[0].reference, "US-4571");
     assert_eq!(p[0].grid.as_deref(), Some("EN61"));
     assert_eq!(p[1].lat, Some(41.65)); // a number sent as a string
-    let d = parse_park_detail(DETAIL).unwrap();
+    let d = parse_park_detail(DETAIL).unwrap().unwrap();
     assert_eq!(d.grid.as_deref(), Some("EN61uo"));
     assert_eq!(d.location.as_deref(), Some("US-IN"));
     // Unknown shapes are errors, not panics; missing optional fields are fine.
@@ -62,6 +62,7 @@ fn park_list_and_detail_parse_defensively() {
     assert!(parse_park_detail("[]").is_err());
     assert_eq!(
         parse_park_detail(r#"{"reference":"K-0039","name":"X"}"#)
+            .unwrap()
             .unwrap()
             .grid,
         None
@@ -152,6 +153,122 @@ impl Fx {
     fn now(&self) -> u64 {
         self.clock.unix()
     }
+}
+
+// ---- Live shapes from docs/research/missing-data.md section 3 (2026-11-04) ----
+
+fn client_over(
+    t: Arc<dyn Transport>,
+    tag: &str,
+) -> (Arc<ReferenceClient>, ReferenceData, Arc<FakeClock>, PathBuf) {
+    let dir = std::env::temp_dir().join(format!("hamtools-refdata-{tag}-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    let clock = Arc::new(FakeClock(AtomicU64::new(0)));
+    let client = Arc::new(ReferenceClient::start(
+        t,
+        clock.clone(),
+        Limits::default(),
+        user_agent(None),
+        dir.clone(),
+    ));
+    let data = ReferenceData::new(client.clone(), dir.clone());
+    (client, data, clock, dir)
+}
+
+#[test]
+fn the_live_17_column_summit_list_parses() {
+    let live = "SOTA Summits List (Date=04/11/2026)\n\
+SummitCode,AssociationName,RegionName,SummitName,AltM,AltFt,GridRef1,GridRef2,Longitude,Latitude,Points,BonusPoints,ValidFrom,ValidTo,ActivationCount,ActivationDate,ActivationCall\n\
+3B8/MU-001,Mauritius,Mauritius,\"Piton de la Petite Rivi\u{e8}re Noire (Black River Peak)\",828,2716,57.40771,-20.40882,57.40771,-20.40882,10,0,01/08/2026,31/12/2099,0,,\n\
+W9/IL-001,\"USA - W9\",Illinois,\"Williams Hill\",324,1064,-88.4756,37.5823,-88.47560,37.58230,1,0,01/07/2013,31/12/2099,40,23/01/2026,K8ARE\n";
+    let s = parse_summit_list(live).unwrap();
+    assert_eq!(s.len(), 2);
+    assert_eq!(s[0].reference, "3B8/MU-001");
+    assert_eq!(s[0].alt_m, Some(828));
+    assert!((s[0].lon.unwrap() - 57.40771).abs() < 1e-9);
+    assert!((s[0].lat.unwrap() + 20.40882).abs() < 1e-9);
+    assert_eq!(s[1].name, "Williams Hill");
+    assert_eq!(s[1].points, Some(1));
+    assert_eq!(s[1].valid_to, Some(20991231));
+}
+
+#[test]
+fn a_park_detail_of_null_is_unknown_not_an_error() {
+    // `GET /park/K-0001` answers HTTP 200 with the body `null`.
+    assert_eq!(parse_park_detail("null"), Ok(None));
+    assert_eq!(parse_park_detail("  null\n"), Ok(None));
+    assert!(parse_park_detail(DETAIL).unwrap().is_some());
+}
+
+#[test]
+fn a_null_park_reply_leaves_the_lookup_not_cached_and_no_error() {
+    struct NullPark;
+    impl Transport for NullPark {
+        fn get(&self, _: &HttpRequest) -> Result<HttpResponse, String> {
+            Ok(HttpResponse {
+                status: 200,
+                body: b"null".to_vec(),
+                ..Default::default()
+            })
+        }
+    }
+    let (client, data, clock, dir) = client_over(Arc::new(NullPark), "null");
+    data.refresh_park("K-0001", clock.unix());
+    client.sync();
+    assert_eq!(data.lookup("K-0001", clock.unix()), Lookup::NotCached);
+    assert!(data.search("K-0001", clock.unix(), 5).is_empty());
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn a_location_of_sixteen_states_is_kept_whole() {
+    let desc = [
+        "US-ID", "US-MT", "US-OR", "US-WA", "US-WY", "US-ND", "US-SD", "US-NE", "US-IA", "US-MO",
+        "US-IL", "US-IN", "US-OH", "US-KY", "US-TN", "US-VA",
+    ]
+    .join(",");
+    let json = format!(
+        r#"[{{"reference":"US-4572","name":"Lewis and Clark National Historic Trail","locationDesc":"{desc}","grid":"DN36ss"}}]"#
+    );
+    let p = parse_park_list(&json).unwrap();
+    assert_eq!(p[0].location.as_deref(), Some(desc.as_str()));
+    assert_eq!(p[0].location.as_deref().unwrap().split(',').count(), 16);
+}
+
+#[test]
+fn the_summit_list_download_follows_a_redirect_to_another_host() {
+    struct Redirecting(Mutex<Vec<String>>);
+    impl Transport for Redirecting {
+        fn get(&self, req: &HttpRequest) -> Result<HttpResponse, String> {
+            self.0.lock().unwrap().push(req.url.clone());
+            if req.url.starts_with("https://www.sotadata.org.uk/") {
+                Ok(HttpResponse {
+                    status: 302,
+                    location: Some("https://storage.sota.org.uk/summitslist.csv".into()),
+                    ..Default::default()
+                })
+            } else {
+                Ok(HttpResponse {
+                    status: 200,
+                    body: SUMMITS.as_bytes().to_vec(),
+                    ..Default::default()
+                })
+            }
+        }
+    }
+    let t = Arc::new(Redirecting(Mutex::new(vec![])));
+    let (client, data, clock, dir) = client_over(t.clone(), "302");
+    data.refresh_summits();
+    client.sync();
+    assert_eq!(
+        *t.0.lock().unwrap(),
+        [SUMMIT_LIST_URL, "https://storage.sota.org.uk/summitslist.csv"]
+    );
+    assert!(matches!(
+        data.lookup("W4C/CM-001", clock.unix()),
+        Lookup::Found(_)
+    ));
+    let _ = std::fs::remove_dir_all(&dir);
 }
 
 #[test]
