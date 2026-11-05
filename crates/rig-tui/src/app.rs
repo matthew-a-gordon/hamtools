@@ -1131,6 +1131,7 @@ impl App {
                 }
             }
             PlansOutcome::Export(id) => self.open_export(&id),
+            PlansOutcome::RefreshParkList => self.refresh_park_list_for_selected(),
             PlansOutcome::Reload => {
                 let path = self.config_path.as_deref().map(plans::plans_path);
                 self.plans.reload(path.as_deref());
@@ -1139,6 +1140,34 @@ impl App {
                     modal.show_list();
                 }
             }
+        }
+    }
+
+    /// `R` in the plan manager: ask the reference client for the park list of the highlighted
+    /// plan's state, so its parks can be searched offline. A no-op with a note under `--offline`
+    /// or when no state resolves.
+    fn refresh_park_list_for_selected(&mut self) {
+        let Some(data) = self.refdata.clone() else {
+            return self.plans_notice("no reference data".into());
+        };
+        if data.is_offline() {
+            return self.plans_notice("offline: the park list is not fetched".into());
+        }
+        let now = self.now_unix();
+        let Some(plan) = self
+            .plans_modal
+            .as_ref()
+            .and_then(|m| m.selected_plan())
+            .cloned()
+        else {
+            return;
+        };
+        match plans::state_of(&plan, &data, now) {
+            Some(state) => {
+                data.refresh_park_list(&state);
+                self.plans_notice(format!("requested the {state} park list"));
+            }
+            None => self.plans_notice("no state known for this plan's reference".into()),
         }
     }
 

@@ -228,6 +228,28 @@ pub(crate) fn snapshot_for(
         .filter(|s| s.reference.as_str() == primary)
 }
 
+/// The POTA location (`US-IN`) of a plan's primary park, from its snapshot or the cache. A SOTA
+/// summit or anything that is not a `CC-SS` location gives `None`.
+pub(crate) fn state_of(plan: &Plan, data: &ReferenceData, now_unix: u64) -> Option<String> {
+    if plan.activity != PlanActivity::Pota {
+        return None;
+    }
+    let primary = plan.primary()?;
+    let from_snapshot = plan
+        .snapshot
+        .as_ref()
+        .filter(|s| s.reference == primary)
+        .and_then(|s| s.location.clone());
+    let location = from_snapshot.or_else(|| match data.lookup(primary, now_unix) {
+        Lookup::Found(hit) => hit.entry.location,
+        Lookup::NotCached => None,
+    })?;
+    let first = location.split(',').next()?.trim().to_ascii_uppercase();
+    let (country, state) = first.split_once('-')?;
+    let ok = |s: &str| (2..=3).contains(&s.len()) && s.chars().all(|c| c.is_ascii_alphabetic());
+    (ok(country) && ok(state)).then_some(first)
+}
+
 /// What to show for a plan's reference: its own snapshot first, then the cache, so a wiped cache
 /// changes nothing.
 pub(crate) fn display_name(
@@ -281,6 +303,7 @@ pub(crate) enum PlansOutcome {
     ToggleDone(String, bool),
     Export(String),
     Reload,
+    RefreshParkList,
 }
 
 const F_ACTIVITY: usize = 0;
@@ -364,6 +387,10 @@ impl PlansModal {
         self.selected = id
             .and_then(|id| self.rows.iter().position(|r| r.plan.id == id))
             .unwrap_or_else(|| self.selected.min(self.rows.len().saturating_sub(1)));
+    }
+
+    pub(crate) fn selected_plan(&self) -> Option<&Plan> {
+        self.selected_row().map(|r| &r.plan)
     }
 
     pub(crate) fn set_notice(&mut self, notice: Option<String>) {
@@ -489,6 +516,7 @@ impl PlansModal {
                 }
             }
             KeyCode::Char('r') => return PlansOutcome::Reload,
+            KeyCode::Char('R') => return PlansOutcome::RefreshParkList,
             KeyCode::Char('E') => {
                 if let Some(id) = self.selected_row().map(|r| r.plan.id.clone()) {
                     return PlansOutcome::Export(id);
@@ -591,7 +619,7 @@ impl PlansModal {
             _ => {}
         }
         foot_lines.push(Line::styled(
-            "n new   e edit   d duplicate   x delete   m done/planned   r reload   E export   Esc close",
+            "n new   e edit   d duplicate   x delete   m done/planned   r reload   R parks   E export   Esc close",
             dim(),
         ));
         frame.render_widget(Paragraph::new(foot_lines).wrap(Wrap { trim: true }), foot);
