@@ -8,6 +8,7 @@ use std::fmt;
 use std::time::Duration;
 
 use rigctld_client::Client;
+use sat_tui::tracker::RigCommand;
 
 /// The rig's mode as hamlib names it. Other names are kept verbatim.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -110,6 +111,16 @@ pub enum Command {
     SetSplitFreq(u64),
     /// Key this text as CW. The only command that can transmit.
     Send(String),
+    /// One Doppler step of the Satellite Activity: sat mode, a mode, or a frequency on the
+    /// FT-847's receive or transmit VFO. Tuning only; it never keys the transmitter. Planned
+    /// only while Satellite is in the foreground, and dropped unless the Active rig has the
+    /// `sat_mode` capability. Untested on hardware.
+    Doppler(RigCommand),
+    /// Download the TLEs and transmitter data if they are stale (`force`: the operator asked,
+    /// so only the CelesTrak pause applies). Not a rig command: `main` runs it on a thread.
+    SatelliteRefresh {
+        force: bool,
+    },
     /// A raw request a Mode panel asked for, e.g. `TB;`.
     Panel(String),
     /// Talk to a different `rigctld` from now on: drop the connection and let the retry loop
@@ -143,6 +154,8 @@ impl Command {
             | Self::SetVfo(_)
             | Self::SetSplit { .. }
             | Self::SetSplitFreq(_)
+            | Self::Doppler(_)
+            | Self::SatelliteRefresh { .. }
             | Self::Panel(_)
             | Self::SetRigAddr { .. }
             | Self::LightPoll(_)
@@ -214,7 +227,10 @@ impl Rig {
     /// the app then asks to `Connect` again.
     pub async fn execute(&mut self, command: Command) -> Vec<RigEvent> {
         match command {
-            Command::Quit | Command::Lookup(_) | Command::ClearGeocodeCache => Vec::new(),
+            Command::Quit
+            | Command::Lookup(_)
+            | Command::ClearGeocodeCache
+            | Command::SatelliteRefresh { .. } => Vec::new(),
             Command::SetRigAddr { addr, .. } => {
                 self.addr = addr;
                 self.client = None;
@@ -257,6 +273,7 @@ impl Rig {
                 .await
             }
             Command::Send(text) => self.send(&text).await,
+            Command::Doppler(step) => self.doppler(step).await,
             Command::Panel(request) => self.panel(request).await,
         }
     }
@@ -466,6 +483,32 @@ impl Rig {
                 events
             }
             Err(Failure::Refused(e)) => vec![RigEvent::SetFailed(format!("{what} failed: {e}"))],
+        }
+    }
+
+    /// One Doppler step. Written for hamlib's FT-847 backend (model 1001, read from the 4.6.5
+    /// source): split on/off switches the radio's satellite mode, plain frequency and mode calls
+    /// address the SAT RX VFO and the split calls the SAT TX VFO. Untested on hardware. No
+    /// read-back follows: the state poll reports what the rig now says.
+    async fn doppler(&mut self, step: RigCommand) -> Vec<RigEvent> {
+        let result = self
+            .call(async |c| match step {
+                RigCommand::SatMode(true) => c.set_split(true, "VFOB").await,
+                RigCommand::SatMode(false) => c.set_split(false, "VFOA").await,
+                // Passband 0 leaves the choice to the radio.
+                RigCommand::RxMode(mode) => c.set_mode(mode.name(), 0).await,
+                RigCommand::TxMode(mode) => c.set_split_mode(mode.name(), 0).await,
+                RigCommand::RxFreq(hz) => c.set_freq(hz).await,
+                RigCommand::TxFreq(hz) => c.set_split_freq(hz).await,
+            })
+            .await;
+        match result {
+            Ok(()) => Vec::new(),
+            Err(Failure::Lost(e)) => vec![RigEvent::Disconnected(e)],
+            Err(Failure::Unsupported) => vec![RigEvent::SetFailed(
+                "Doppler: the rig does not support that".to_string(),
+            )],
+            Err(Failure::Refused(e)) => vec![RigEvent::SetFailed(format!("Doppler failed: {e}"))],
         }
     }
 

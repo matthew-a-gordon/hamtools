@@ -3,13 +3,13 @@
 //! approaching, so 145.825 MHz is heard at 145,828,190 Hz (worked with awk, c = 299792.458 km/s).
 
 use chrono::{DateTime, Duration, TimeZone, Utc};
+use hamtools_config::SatelliteSettings;
 use orbit::{Observer, parse_tles};
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
-use sat_tui::app::{App, Settings};
+use rig_tui::satellite::{Footer, SatState as App, render};
 use sat_tui::satnogs::parse_transmitters;
-use sat_tui::ui::{Footer, render};
 
 fn t(h: u32, m: u32, s: u32) -> DateTime<Utc> {
     Utc.with_ymd_and_hms(2026, 10, 26, h, m, s).unwrap()
@@ -24,11 +24,12 @@ fn app() -> App {
             lon_deg: -85.71,
             alt_m: 250.0,
         },
-        Settings {
+        &SatelliteSettings {
             watch: vec![],
             horizon_hours: 24,
             min_elevation_deg: 10.0,
             short_pass_secs: 180,
+            names: Default::default(),
         },
         t(12, 0, 0),
     )
@@ -40,14 +41,16 @@ fn footer(now: DateTime<Utc>) -> Footer {
         tle_age: Some(Duration::hours(3)),
         transmitter_age: Some(Duration::hours(5)),
         tles_stale: false,
-        rig: "not connected".to_string(),
+        downloading: false,
     }
 }
 
 fn screen(app: &App, footer: &Footer) -> Vec<String> {
     let (width, height) = (110u16, 32u16);
     let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
-    terminal.draw(|frame| render(app, footer, frame)).unwrap();
+    terminal
+        .draw(|frame| render(app, footer, frame.area(), frame))
+        .unwrap();
     terminal
         .backend()
         .buffer()
@@ -101,13 +104,14 @@ fn the_picker_lists_transmitters_and_marks_receive_only_ones() {
 }
 
 #[test]
-fn the_footer_shows_the_clock_data_ages_and_rig_state() {
+fn the_footer_shows_the_data_ages_and_nothing_the_strip_already_shows() {
     let screen = text(&screen(&app(), &footer(t(13, 15, 0))));
 
-    assert!(screen.contains("13:15:00Z"), "{screen}");
     assert!(screen.contains("TLEs 3h"), "{screen}");
     assert!(screen.contains("SatNOGS 5h"), "{screen}");
-    assert!(screen.contains("rig: not connected"), "{screen}");
+    // The clock and the rig line are the shared strip's.
+    assert!(!screen.contains("13:15:00Z"), "{screen}");
+    assert!(!screen.contains("rig:"), "{screen}");
 }
 
 #[test]
@@ -142,20 +146,12 @@ fn tracking_is_announced_with_the_chosen_transmitter_and_nudge() {
     assert!(nudged.contains("+1000 Hz"), "{nudged}");
 }
 
-#[test]
-fn a_status_message_is_shown() {
-    let mut app = app();
-    app.set_status(Some("rig: connection refused".to_string()));
-
-    let screen = text(&screen(&app, &footer(t(13, 15, 0))));
-
-    assert!(screen.contains("rig: connection refused"), "{screen}");
-}
-
 /// Render at an explicit size (the other helpers use 110x32).
 fn screen_sized(app: &App, footer: &Footer, width: u16, height: u16) -> Vec<String> {
     let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
-    terminal.draw(|frame| render(app, footer, frame)).unwrap();
+    terminal
+        .draw(|frame| render(app, footer, frame.area(), frame))
+        .unwrap();
     terminal
         .backend()
         .buffer()
@@ -194,11 +190,12 @@ mod list_and_detail {
                 lon_deg: -85.71,
                 alt_m: 250.0,
             },
-            Settings {
+            &SatelliteSettings {
                 watch: vec![],
                 horizon_hours: 24,
                 min_elevation_deg: 10.0,
                 short_pass_secs: secs,
+                names: Default::default(),
             },
             t(12, 0, 0),
         )

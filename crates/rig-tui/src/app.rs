@@ -16,7 +16,7 @@ use ratatui::layout::Rect;
 use ratatui::text::Line;
 use ratatui::widgets::Paragraph;
 
-use crate::activity::{Activity, ActivityCtx};
+use crate::activity::{Activity, ActivityCtx, HostEvent};
 use crate::bandplan::{BandAction, BandplanModal, View as BandView};
 use crate::config_dialog::{ConfigDialog, Outcome};
 use crate::general::General;
@@ -28,7 +28,7 @@ use crate::logging::{Logging, Snapshot};
 use crate::palette::{Palette, PaletteOutcome, PaletteRow, Target};
 use crate::panel::{LogDefaults, LogMode};
 use crate::rig::{Command, Feature, RigEvent, RigMode};
-use crate::rigs::{RigSlot, Switcher};
+use crate::rigs::{Capability, RigSlot, Switcher};
 use crate::softkeys::{Exchange, Layers, NamedSet, Resolved, resolve};
 use crate::style::{dim, red};
 
@@ -135,6 +135,12 @@ macro_rules! ctx {
                 .map(|r| &r.value.0),
             recent: $recent,
             panes: $panes,
+            utc: $self.utc.unwrap_or_else(SystemTime::now).into(),
+            freq: $self
+                .freq
+                .as_ref()
+                .filter(|r| $self.now.saturating_duration_since(r.at) <= STALE_AFTER)
+                .map(|r| r.value),
         }
     };
 }
@@ -443,8 +449,21 @@ impl App {
             self.status = Some(why);
             return;
         }
+        let left = (index != self.foreground).then(|| self.activities[self.foreground].on_leave());
         self.foreground = index;
         self.entry = None;
+        if let Some(Some(note)) = left {
+            self.status = Some(note);
+        }
+    }
+
+    /// Hand a piece of outside news (a finished download) to every hosted Activity.
+    pub fn on_host_event(&mut self, event: HostEvent) {
+        for activity in &mut self.activities {
+            if let Some(status) = activity.on_event(&event) {
+                self.status = Some(status);
+            }
+        }
     }
 
     /// The foreground Activity's name, as the shared strip shows it.
@@ -798,6 +817,9 @@ impl App {
     }
 
     fn log_snapshot(&self) -> Result<Snapshot, String> {
+        if let Some(why) = self.activities[self.foreground].log_blocked() {
+            return Err(why);
+        }
         if !self.connected {
             return Err("not connected: cannot log".to_string());
         }
@@ -910,7 +932,7 @@ impl App {
                 }
                 Outcome::Apply(settings) => {
                     self.config = None;
-                    let mut commands = self.apply_settings(settings);
+                    let mut commands = self.apply_settings(*settings);
                     commands.push(Command::ClearGeocodeCache);
                     commands
                 }
@@ -1273,7 +1295,14 @@ impl App {
     /// Only the foreground Activity is ticked.
     fn tick_foreground(&mut self, now: Instant) -> Vec<Command> {
         let ctx = ctx!(self);
-        self.activities[self.foreground].on_tick(now, &ctx)
+        let mut commands = self.activities[self.foreground].on_tick(now, &ctx);
+        // Doppler correction is the one thing an Activity may do to the dial by itself, and only
+        // on a rig with satellite mode. The foreground Activity is the only one ticked, so this
+        // also means no Doppler command is ever issued from the background.
+        if !self.capabilities().has(Capability::SatMode) {
+            commands.retain(|c| !matches!(c, Command::Doppler(_)));
+        }
+        commands
     }
 
     pub(crate) fn render_body(&self, frame: &mut Frame, area: Rect, panes: Panes) {

@@ -1,23 +1,25 @@
-//! Drawing the app: pass list, live panel, transmitter picker and footer.
+//! Drawing the Satellite body: pass list, live panel, transmitter picker and the data-age footer.
+//! The screens are `sat-tui`'s, unchanged; the title, rig line and clock are the shared strip's.
 
 use chrono::{DateTime, Duration, Utc};
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Borders, Clear, Paragraph};
+use ratatui::widgets::{Block, Borders, Paragraph};
+use sat_tui::cache::format_age;
 
-use crate::app::{App, ContactForm, Countdown, Field, Live, Row};
-use crate::cache::format_age;
+use super::state::{Countdown, Live, Row, SatState};
 
-/// Everything shown that the [`App`] does not own: the clock, data ages and rig connection.
+/// Everything shown that the state does not own: the clock and the ages of the downloaded data.
 #[derive(Debug, Clone)]
 pub struct Footer {
     pub now: DateTime<Utc>,
     pub tle_age: Option<Duration>,
     pub transmitter_age: Option<Duration>,
     pub tles_stale: bool,
-    pub rig: String,
+    /// A download is under way.
+    pub downloading: bool,
 }
 
 /// `145828190` as `145,828,190`.
@@ -92,10 +94,10 @@ fn frequency_lines(live: &Live) -> Vec<Line<'static>> {
     lines
 }
 
-fn render_picker(app: &App, area: Rect, frame: &mut Frame) {
+fn render_picker(app: &SatState, area: Rect, frame: &mut Frame) {
     let block = Block::default()
         .borders(Borders::ALL)
-        .title("Transmitters (Tab, t track, m unsupported)")
+        .title("Transmitters (Tab, t track, u unsupported)")
         .border_style(border(app.picker_focused()));
     let inner = block.inner(area);
     let choices = app.transmitter_choices();
@@ -138,14 +140,8 @@ fn render_picker(app: &App, area: Rect, frame: &mut Frame) {
     frame.render_widget(Paragraph::new(lines).block(block), area);
 }
 
-fn render_footer(app: &App, footer: &Footer, area: Rect, frame: &mut Frame) {
-    let hints = app.status().map_or_else(
-        || {
-            "q quit  r refresh  Tab switch  t track  [ ] { } nudge  s SAT off  m unsupported  l log  L list"
-                .to_string()
-        },
-        str::to_string,
-    );
+/// The one footer line the Satellite keeps: how old the TLEs and the transmitter data are.
+fn render_footer(footer: &Footer, area: Rect, frame: &mut Frame) {
     let age = |name: &str, age: Option<Duration>, stale: bool| match age {
         Some(age) => format!(
             "{name} {}{}",
@@ -154,22 +150,20 @@ fn render_footer(app: &App, footer: &Footer, area: Rect, frame: &mut Frame) {
         ),
         None => format!("{name} never"),
     };
-    let status = format!(
-        "{}Z | {} | {} | rig: {}",
-        footer.now.format("%H:%M:%S"),
+    let mut text = format!(
+        "{} | {}",
         age("TLEs", footer.tle_age, footer.tles_stale),
         age("SatNOGS", footer.transmitter_age, false),
-        footer.rig
     );
-    frame.render_widget(
-        Paragraph::new(vec![Line::from(hints), Line::from(status)]),
-        area,
-    );
+    if footer.downloading {
+        text.push_str(" | downloading...");
+    }
+    frame.render_widget(Paragraph::new(text), area);
 }
 
-pub fn render(app: &App, footer: &Footer, frame: &mut Frame) {
-    let [main, foot] =
-        Layout::vertical([Constraint::Min(8), Constraint::Length(2)]).areas(frame.area());
+/// Draw the body into `area`: the screens of `sat-tui`, less the title, rig line and clock.
+pub fn render(app: &SatState, footer: &Footer, area: Rect, frame: &mut Frame) {
+    let [main, foot] = Layout::vertical([Constraint::Min(8), Constraint::Length(1)]).areas(area);
     let [left, right] = Layout::horizontal([
         Constraint::Length(left_width(main.width)),
         Constraint::Min(30),
@@ -190,136 +184,7 @@ pub fn render(app: &App, footer: &Footer, frame: &mut Frame) {
         render_tracking(app, footer.now, tracking_area, frame);
     }
     render_picker(app, picker_area, frame);
-    render_footer(app, footer, foot, frame);
-    if app.logging_enabled() && app.tracking().is_some() && app.form().is_none() {
-        render_pill(app, frame);
-    }
-    if app.session_open() {
-        render_session(app, frame);
-    }
-    if let Some(form) = app.form() {
-        render_form(app, form, footer.now, frame);
-    }
-}
-
-/// The key hint and Contact count, at the top right.
-fn render_pill(app: &App, frame: &mut Frame) {
-    let text = format!(" l log   L list ({}) ", app.session().len());
-    let area = frame.area();
-    let width = (text.chars().count() as u16).min(area.width);
-    let pill = Rect::new(area.x + area.width - width, area.y, width, 1);
-    frame.render_widget(
-        Paragraph::new(Span::styled(
-            text,
-            Style::default().fg(Color::Black).bg(Color::Cyan),
-        )),
-        pill,
-    );
-}
-
-/// A rectangle of at most `width` x `height`, centred in `area`.
-fn centred(area: Rect, width: u16, height: u16) -> Rect {
-    let (width, height) = (width.min(area.width), height.min(area.height));
-    Rect::new(
-        area.x + (area.width - width) / 2,
-        area.y + (area.height - height) / 2,
-        width,
-        height,
-    )
-}
-
-fn render_session(app: &App, frame: &mut Frame) {
-    let area = centred(frame.area(), 72, 16);
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .title(format!(
-            "Session ({} logged; Up/Down scroll, L or Esc close)",
-            app.session().len()
-        ))
-        .border_style(Style::default().fg(Color::Cyan));
-    let inner = block.inner(area);
-    let session = app.session();
-    let height = inner.height as usize;
-    let end = session.len().saturating_sub(app.session_scroll());
-    let start = end.saturating_sub(height);
-    let mut lines: Vec<Line> = session[start..end]
-        .iter()
-        .map(|c| {
-            Line::from(format!(
-                "{}Z {:<12} {:<6} {:>3} {:>3}  {}",
-                c.time_on.format("%H:%M"),
-                c.call,
-                c.grid,
-                c.rst_sent,
-                c.rst_rcvd,
-                short_name(&c.satellite),
-            ))
-        })
-        .collect();
-    if lines.is_empty() {
-        lines.push(Line::from("nothing logged yet"));
-    }
-    frame.render_widget(Clear, area);
-    frame.render_widget(Paragraph::new(lines).block(block), area);
-}
-
-fn render_form(app: &App, form: &ContactForm, now: DateTime<Utc>, frame: &mut Frame) {
-    let area = centred(frame.area(), 70, 17);
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .title(format!("Log Contact (my grid {})", form.own_grid))
-        .border_style(Style::default().fg(Color::Yellow));
-    let open_for = now - form.started;
-    let mut lines = vec![
-        Line::from(format!("{}  {}", form.satellite, form.transmitter)),
-        Line::from(format!(
-            "ON {}Z  open {}",
-            form.started.format("%H:%M:%S"),
-            format_duration(open_for)
-        )),
-        Line::from(format!(
-            "RX {} Hz  {}    TX {} Hz  {}",
-            grouped(form.rx.hz),
-            form.rx.mode.name(),
-            grouped(form.tx.hz),
-            form.tx.mode.name()
-        )),
-        Line::from(match app.radio_now_rx_hz() {
-            Some(hz) => format!("radio now RX {} Hz", grouped(hz)),
-            None => "radio now: not tracking".to_string(),
-        }),
-        Line::from(""),
-    ];
-    let field = |label: &str, which: Field, value: &str| {
-        let here = form.field == which;
-        format!(
-            "{} {label:<9}{value}{}",
-            if here { ">" } else { " " },
-            if here { "_" } else { "" }
-        )
-    };
-    lines.push(Line::from(field("Call", Field::Call, &form.call)));
-    lines.push(Line::from(field("Grid", Field::Grid, &form.grid)));
-    lines.push(Line::from(field("Name", Field::Name, &form.name)));
-    lines.push(Line::from(format!(
-        "{}    {}",
-        field("RST sent", Field::RstSent, &form.rst_sent),
-        field("RST rcvd", Field::RstRcvd, &form.rst_rcvd)
-    )));
-    lines.push(Line::from(field("Comment", Field::Comment, &form.comment)));
-    lines.push(Line::from(""));
-    if let Some(error) = &form.error {
-        lines.push(Line::from(Span::styled(
-            error.clone(),
-            Style::default().fg(Color::Red),
-        )));
-    }
-    lines.push(Line::from(Span::styled(
-        "Tab next  Shift-Tab back  Enter save  Esc cancel",
-        Style::default().fg(Color::DarkGray),
-    )));
-    frame.render_widget(Clear, area);
-    frame.render_widget(Paragraph::new(lines).block(block), area);
+    render_footer(footer, foot, frame);
 }
 
 /// The pass list takes about 30% of the width: start, length and peak need little room.
@@ -358,7 +223,7 @@ fn list_items(rows: &[Row]) -> Vec<Item> {
     items
 }
 
-fn render_passes(app: &App, area: Rect, frame: &mut Frame) {
+fn render_passes(app: &SatState, area: Rect, frame: &mut Frame) {
     let block = Block::default()
         .borders(Borders::ALL)
         .title("Passes (UTC)")
@@ -419,7 +284,7 @@ fn render_passes(app: &App, area: Rect, frame: &mut Frame) {
 }
 
 /// The selected satellite and pass: who, when, where it is now, and what the radio would use.
-fn render_live(app: &App, now: DateTime<Utc>, area: Rect, frame: &mut Frame) {
+fn render_live(app: &SatState, now: DateTime<Utc>, area: Rect, frame: &mut Frame) {
     let block = Block::default().borders(Borders::ALL).title("Live");
     let mut lines: Vec<Line> = Vec::new();
     if let (Some(row), Some(live)) = (app.selected_pass(), app.live(now)) {
@@ -457,7 +322,7 @@ fn render_live(app: &App, now: DateTime<Utc>, area: Rect, frame: &mut Frame) {
 }
 
 /// What the radio is doing: the tracked transmitter and when its satellite's pass starts and ends.
-fn render_tracking(app: &App, now: DateTime<Utc>, area: Rect, frame: &mut Frame) {
+fn render_tracking(app: &SatState, now: DateTime<Utc>, area: Rect, frame: &mut Frame) {
     let block = Block::default().borders(Borders::ALL).title("Tracking");
     let Some(tracking) = app.tracking() else {
         return;

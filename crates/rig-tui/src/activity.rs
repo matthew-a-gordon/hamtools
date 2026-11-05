@@ -7,6 +7,7 @@
 use std::collections::BTreeMap;
 use std::time::Instant;
 
+use chrono::{DateTime, Utc};
 use ratatui::Frame;
 use ratatui::crossterm::event::KeyEvent;
 use ratatui::layout::Rect;
@@ -34,6 +35,20 @@ pub struct ActivityCtx<'a> {
     pub recent: &'a [String],
     /// The panes the window has room for (see [`crate::layout`]).
     pub panes: Panes,
+    /// The UTC wall clock: the same time the strip shows and Contacts are stamped with.
+    pub utc: DateTime<Utc>,
+    /// The receive frequency in Hz, only if the rig reported it within the last two seconds.
+    pub freq: Option<u64>,
+}
+
+/// News from outside the rig and the keyboard that an Activity may care about. A closed set;
+/// `main` produces these (downloads finishing), the App hands them to every hosted Activity.
+#[derive(Clone)]
+pub enum HostEvent {
+    /// Satellite data was (re)loaded from the cache.
+    SatelliteData(Box<crate::satellite::SatelliteData>),
+    /// A satellite data download started or finished.
+    SatelliteDownloading(bool),
 }
 
 /// What an Activity returns: rig commands from the closed set, and an optional status line.
@@ -111,6 +126,26 @@ pub trait Activity {
     /// Why the Active rig cannot run this Activity, if it cannot. The palette shows the reason
     /// and will not enter it.
     fn unavailable(&self) -> Option<String> {
+        None
+    }
+
+    /// This Activity leaves the foreground (the operator chose another, or the rig it needs went
+    /// away). Stop anything that acts on the rig by itself; the radio is not restored. Returns
+    /// a line for the status line when something was stopped.
+    fn on_leave(&mut self) -> Option<String> {
+        None
+    }
+
+    /// News from outside (see [`HostEvent`]). Delivered to every hosted Activity, foreground or
+    /// not; an Activity ignores what is not its own. May return a status line.
+    fn on_event(&mut self, _event: &HostEvent) -> Option<String> {
+        None
+    }
+
+    /// Why a Contact cannot be logged right now from this Activity, if it cannot (Satellite
+    /// needs a tracked transmitter whose frequencies were sent). Checked before the rig's own
+    /// freshness checks.
+    fn log_blocked(&self) -> Option<String> {
         None
     }
 

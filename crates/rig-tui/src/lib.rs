@@ -21,11 +21,12 @@ pub mod refdata;
 pub mod reference;
 mod rig;
 mod rigs;
+pub mod satellite;
 pub mod softkeys;
 mod style;
 mod ui;
 
-pub use activity::{Activity, ActivityCtx, ActivityOutput};
+pub use activity::{Activity, ActivityCtx, ActivityOutput, HostEvent};
 pub use app::{
     App, Focus, Overlay, OverlayAction, RECONNECT_EVERY, SMETER_POLL_EVERY, STALE_AFTER,
     STATE_POLL_EVERY,

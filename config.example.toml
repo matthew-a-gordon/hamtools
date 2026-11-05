@@ -5,7 +5,7 @@
 callsign = "N0CALL"
 
 # Where you are, as a 6-character Locator (never latitude/longitude). Town-level only; example:
-# Middlebury, IN. rig-tui and sat-tui use it to fill own_grid when logging.
+# Middlebury, IN. rig-tui uses it to fill own_grid when logging and, in the Satellite Activity, as the observer position.
 # [station]
 # locator = "EN71DQ"
 
@@ -33,6 +33,17 @@ kind = "ft847"
 # cw = true
 # split = true
 # sat_mode = true
+
+# The Satellite Activity (Ctrl-G, then Satellite; needs a rig with sat mode, the FT-847).
+# Untested on hardware. Every key is optional; these are the defaults. Your position comes from
+# --grid or --lat/--lon, then station.locator above, then a town-level default.
+# [satellite]
+# watch = [25544, 27607, 44909]   # NORAD ids to show; empty: every satellite with a usable transmitter
+# horizon_hours = 24              # how far ahead the pass list looks (1 to 168)
+# min_elevation_deg = 10          # a pass counts only if it climbs this high (0 to 90)
+# short_pass_secs = 180           # passes shorter than this are marked with !
+# [satellite.names]               # name shown in the UI = name written to the Log as SAT_NAME
+# "ISS (ZARYA)" = "ISS"
 
 # Soft keys F1 to F6 (CW and CWR only). Text is sent as CW when you press the key.
 # {MYCALL} expands to the callsign above.

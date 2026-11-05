@@ -3,9 +3,11 @@
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
-use hamtools_config::{ConfigError, ConfigFile, LicenseClass, RigProfile, Warning};
+use hamtools_config::{
+    ConfigError, ConfigFile, LicenseClass, RigProfile, SatelliteSettings, Warning,
+};
 
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq)]
 pub struct Config {
     /// Operator callsign, uppercase. Substituted for `{CALL}` in text you send.
     pub callsign: Option<String>,
@@ -23,6 +25,8 @@ pub struct Config {
     pub soft_keys: BTreeMap<u8, String>,
     /// Named Soft key sets from `[softkeys.<name>]`.
     pub softkey_sets: BTreeMap<String, BTreeMap<u8, String>>,
+    /// The `[satellite]` table (defaults when absent).
+    pub satellite: SatelliteSettings,
     /// Keys in the file this app does not know. Reported by `main`, never an error.
     pub warnings: Vec<Warning>,
 }
@@ -66,6 +70,7 @@ impl Config {
             log_path: settings.log_path.clone(),
             soft_keys: settings.macros.clone(),
             softkey_sets: settings.softkey_sets.clone(),
+            satellite: settings.satellite.clone(),
             warnings: file.warnings().to_vec(),
         })
     }

@@ -26,6 +26,9 @@
 //! addr = "127.0.0.1:4532"
 //! kind = "kx3"            # "kx3", "ft847" or "generic"
 //! cw = true               # optional capability overrides: cw, split, sat_mode
+//! [satellite]             # optional: watch, horizon_hours, min_elevation_deg, short_pass_secs
+//! watch = [25544]         # NORAD ids; empty or absent: every satellite with a usable transmitter
+//! [satellite.names]       # name shown in the UI = name written as SAT_NAME
 //! [macros]                # F1 to F6: the General Soft key set
 //! F1 = "CQ DE {MYCALL}"
 //! [softkeys.pota]         # a named set, same shape
@@ -95,7 +98,7 @@ impl fmt::Display for LicenseClass {
 }
 
 /// The typed view of the file. `None` and an absent macro mean "not set".
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct Settings {
     pub callsign: Option<Callsign>,
     /// The operator's 6-character Locator.
@@ -113,6 +116,37 @@ pub struct Settings {
     /// Named Soft key sets from `[softkeys.<name>]`, same shape as `macros`. Read only here; the
     /// config dialog does not write them.
     pub softkey_sets: BTreeMap<String, BTreeMap<u8, String>>,
+    /// The `[satellite]` table. Read only here: the config dialog does not write it.
+    pub satellite: SatelliteSettings,
+}
+
+/// The `[satellite]` table: what shapes the Satellite Activity's pass list. Every key is
+/// optional; the defaults are those `sat-tui` had.
+#[derive(Clone, Debug, PartialEq)]
+pub struct SatelliteSettings {
+    /// NORAD ids to show; empty means every satellite with a usable transmitter.
+    pub watch: Vec<u32>,
+    /// How far ahead the pass list looks, 1 to 168 hours.
+    pub horizon_hours: u32,
+    /// A pass counts only if it climbs at least this high, 0 to 90 degrees.
+    pub min_elevation_deg: f64,
+    /// A pass shorter than this many seconds is flagged as short, 1 to 3600.
+    pub short_pass_secs: i64,
+    /// Satellite name as shown in the UI, to the name written as `SAT_NAME`
+    /// (`[satellite.names]`).
+    pub names: BTreeMap<String, String>,
+}
+
+impl Default for SatelliteSettings {
+    fn default() -> Self {
+        Self {
+            watch: Vec::new(),
+            horizon_hours: 24,
+            min_elevation_deg: 10.0,
+            short_pass_secs: 180,
+            names: BTreeMap::new(),
+        }
+    }
 }
 
 /// The kind of radio a profile describes. It keys the capability table in the apps.
@@ -797,8 +831,64 @@ fn read_settings_lenient(root: &Table) -> (Settings, Vec<ConfigError>) {
         }
         Ok(())
     })());
+    match sub_table(root, "satellite").and_then(|t| t.map(read_satellite).transpose()) {
+        Ok(Some(sat)) => s.satellite = sat,
+        Ok(None) => {}
+        Err(e) => errs.push(e),
+    }
     read_rigs(root, &mut s, &mut errs);
     (s, errs)
+}
+
+fn read_satellite(table: &Table) -> Result<SatelliteSettings, ConfigError> {
+    let mut sat = SatelliteSettings::default();
+    if let Some(item) = table.get("watch") {
+        let array = item
+            .as_array()
+            .ok_or_else(|| invalid("satellite.watch", "expected a list of NORAD ids"))?;
+        sat.watch = array
+            .iter()
+            .map(|v| {
+                v.as_integer()
+                    .and_then(|n| u32::try_from(n).ok())
+                    .ok_or_else(|| invalid("satellite.watch", "expected NORAD ids (integers)"))
+            })
+            .collect::<Result<_, _>>()?;
+    }
+    if let Some(item) = table.get("horizon_hours") {
+        let hours = item
+            .as_integer()
+            .filter(|n| (1..=168).contains(n))
+            .ok_or_else(|| invalid("satellite.horizon_hours", "expected 1 to 168"))?;
+        sat.horizon_hours = hours as u32;
+    }
+    if let Some(item) = table.get("min_elevation_deg") {
+        sat.min_elevation_deg = item
+            .as_float()
+            .or_else(|| item.as_integer().map(|n| n as f64))
+            .filter(|d| (0.0..=90.0).contains(d))
+            .ok_or_else(|| invalid("satellite.min_elevation_deg", "expected 0 to 90"))?;
+    }
+    if let Some(item) = table.get("short_pass_secs") {
+        sat.short_pass_secs = item
+            .as_integer()
+            .filter(|n| (1..=3600).contains(n))
+            .ok_or_else(|| invalid("satellite.short_pass_secs", "expected 1 to 3600"))?;
+    }
+    if let Some(item) = table.get("names") {
+        let names = item
+            .as_table()
+            .ok_or_else(|| invalid("satellite.names", "expected a table of names"))?;
+        for (shown, written) in names {
+            let key = format!("satellite.names.{shown}");
+            let written = string(written, &key)?.trim();
+            if written.is_empty() {
+                return Err(invalid(&key, "has no name"));
+            }
+            sat.names.insert(shown.to_string(), written.to_string());
+        }
+    }
+    Ok(sat)
 }
 
 /// F1..F6 messages from one table, uppercased. `prefix` names the table in errors.
@@ -881,7 +971,17 @@ pub fn load_lenient(path: &Path) -> Result<(Settings, Vec<ConfigError>), ConfigE
     Ok((settings, errs))
 }
 
-const KNOWN: [(&str, &[&str]); 5] = [
+const KNOWN: [(&str, &[&str]); 6] = [
+    (
+        "satellite",
+        &[
+            "watch",
+            "horizon_hours",
+            "min_elevation_deg",
+            "short_pass_secs",
+            "names",
+        ],
+    ),
     ("station", &["locator", "license_class"]),
     ("logbook", &["path"]),
     ("rig", &["default"]),

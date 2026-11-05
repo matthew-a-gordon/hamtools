@@ -14,7 +14,7 @@
     in
     {
       packages = forAllSystems (pkgs: rec {
-        # All workspace binaries (rig-tui, sat-tui).
+        # All workspace binaries (rig-tui).
         hamtools = pkgs.rustPlatform.buildRustPackage {
           pname = "hamtools";
           version = "0.1.0";

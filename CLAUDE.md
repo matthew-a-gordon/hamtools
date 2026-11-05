@@ -24,6 +24,7 @@ Verified on the user's KX3 (2026-10-26, hamlib 4.7.2, rigctld model 2045):
 - Mode changes on the KX3 change the passband: `rig-tui`'s mode set sends passband 0, and after cycling CWR to AM to FM and back the radio read CWR 1000 instead of the CWR 450 it started at (the KX3 applies a per-mode filter on a mode change). `M CWR 0` while already in CWR leaves 450. Restore the filter on the radio or with `M CWR 450`.
 
 Still unverified (say "untested on hardware"):
+- The Satellite Activity inside `rig-tui` (pass list, transmitter picker, Doppler tracking that sets the FT-847's satellite mode and receive/transmit frequencies through rigctld, the satellite Contact prefill): untested on hardware, as is every FT-847 behaviour. `sat-tui`'s UI-free code (tracker, cache, SatNOGS parsing) has unit tests only.
 - The S-meter with a real signal (only the quiet-band value was seen), and PTT while transmitting, in `rig-tui`: not tested because both need the transmitter keyed, and what is on the antenna is not known to the agent.
 - Sending CW through `rig-tui` (the CW panel, F1-F6 Soft keys, input line) and the `TB;` decode polling while the panel is active: `rigctld-client` sending and decoding is verified above, `rig-tui`'s use of it is not.
 - The 2 Hz / 4 Hz polling cadences as such: the strip updated, but timing was not measured.
