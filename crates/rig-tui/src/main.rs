@@ -28,10 +28,10 @@ use tokio::runtime::Runtime;
 /// so this is also the CW panel's polling interval.
 const TICK: Duration = Duration::from_millis(100);
 
-const USAGE: &str = "usage: rig-tui [--config PATH] [--grid GRID | --lat DEG --lon DEG] [--alt METRES] [ADDR]
+const USAGE: &str = "usage: rig-tui [--config PATH] [--grid GRID | --lat DEG --lon DEG] [--alt METRES] [--rig NAME]
 
 --offline never asks the network (POTA spots, reference data and address lookups are off; satellite data is not downloaded).
-ADDR is the rigctld of the Active rig; it overrides that profile's address (with no profiles: 127.0.0.1:4532).
+--rig NAME starts on that rig profile ([rig.NAME] in the config) instead of rig.default.
 Config defaults to $XDG_CONFIG_HOME/hamtools/config.toml (see config.example.toml).
 The app starts without a rig and keeps retrying the connection.
 
@@ -50,7 +50,7 @@ fn main() -> ExitCode {
 
 fn try_main() -> Result<(), Box<dyn Error>> {
     let mut config_arg: Option<PathBuf> = None;
-    let mut addr_arg: Option<String> = None;
+    let mut rig_arg: Option<String> = None;
     let mut position = Spec::default();
     let mut offline = false;
     let mut args = std::env::args().skip(1);
@@ -67,10 +67,18 @@ fn try_main() -> Result<(), Box<dyn Error>> {
             "--lat" => position.lat_deg = Some(value("--lat")?.parse()?),
             "--lon" => position.lon_deg = Some(value("--lon")?.parse()?),
             "--alt" => position.alt_m = Some(value("--alt")?.parse()?),
+            "--rig" => rig_arg = Some(value("--rig")?),
             _ if arg.starts_with('-') => {
                 return Err(format!("unknown option {arg}\n{USAGE}").into());
             }
-            _ => addr_arg = Some(arg),
+            _ => {
+                return Err(format!(
+                    "unexpected argument {arg}: a rigctld address is no longer taken on the \
+                     command line; define a [rig.NAME] profile in the config and pick it with \
+                     --rig NAME\n{USAGE}"
+                )
+                .into());
+            }
         }
     }
     let default_path = config_path(
@@ -111,6 +119,9 @@ fn try_main() -> Result<(), Box<dyn Error>> {
         ))
         .with_rigs(&config.rigs, config.rig_default.as_deref())
         .with_config_path(config_arg.or(default_path));
+    if let Some(name) = rig_arg {
+        app = app.with_active_rig(&name)?;
+    }
     // Every reference request goes through this one client; it runs its own network thread.
     // Starting it makes no request: spots are asked for only while the POTA Hunter is in the
     // foreground (ADR 0003).
@@ -132,9 +143,6 @@ fn try_main() -> Result<(), Box<dyn Error>> {
     app.host_activity(Box::new(PotaHunter::new(Arc::clone(&client), !offline)));
     // The SOTA Chaser reads the cached summit list only and makes no SOTA API call.
     app.host_activity(Box::new(SotaChaser::new(refdata, !offline)));
-    if let Some(addr) = addr_arg {
-        app = app.with_rig_addr(addr);
-    }
     // The hosted Activities, after General. `App::launch_plan` finds a plan's Activity by name,
     // so the POTA Hunter (named differently) and the Activators do not clash.
     app.host_activity(Box::new(Activator::sota()));
