@@ -214,7 +214,7 @@ Verified on a KX3 setup: opening the dialog, one live lookup, picking a Locator 
 
 ## 7. Satellites
 
-The Satellite Activity is the satellite pass predictor and Doppler tracker for the FT-847, hosted inside `rig-tui` (the standalone `sat-tui` program is gone). All of it is *untested on hardware*. Open it with `Ctrl-G`, then Satellite. It needs a rig with the `sat_mode` capability: on the KX3 it is listed as unavailable, with the reason. The shared top strip replaces its old title, rig line and clock; the Contact form, session list and rig connection are the app's.
+The Satellite Activity is the satellite pass predictor and Doppler tracker for the FT-847, hosted inside `rig-tui` (the standalone `sat-tui` program is gone). Most of it is *untested on hardware*; `CLAUDE.md` lists what has been seen on the FT-847. Open it with `Ctrl-G`, then Satellite. It needs a rig with the `sat_mode` capability: on the KX3 it is listed as unavailable, with the reason. The shared top strip replaces its old title, rig line and clock; the Contact form, session list and rig connection are the app's.
 
 ```sh
 cargo run -p rig-tui                          # position from station.locator, else a town-level default
@@ -240,7 +240,7 @@ The shared strip keys (`f`, `m`/`M`, `v`, `s`, `S`, Left/Right) mean what they m
 | `t` | Start or stop **tracking** |
 | `[` `]` | Nudge the passband position by 1 kHz |
 | `{` `}` | Nudge it by 100 Hz |
-| `Z` | Switch the radio's SAT mode off |
+| `Z` | Switch the radio's SAT mode off (while tracking this does not hold yet, see #81) |
 | `u` | Show transmitters the radio cannot demodulate |
 | `r` | Refresh TLEs and transmitters |
 | `l` / `L` | Log a Contact / list this session's Contacts |
@@ -254,7 +254,7 @@ While tracking with a connected rig, `l` opens the shared Contact form prefilled
 
 ### Open questions on the FT-847
 
-Serial is 4800 to 57600 baud, 8N2, but the actual CAT baud is unknown (menu item 14). Split and the Sub transmit side were seen working through `rigctld` on 2026-11-04 (`s` reads `1 Sub`, `i` and `x` return the transmit side, and tracking set both frequencies, read back with nothing received or transmitted). How Hamlib's `ft847` backend exposes SAT mode (it has no read-back), whether the Satellite Activity engages it, the passband nudge keys, and whether correcting both uplink and downlink is right for its SAT mode on the air are not yet checked. `v` is not implemented by the backend, so the strip shows "VFO not supported".
+The FT-847's CAT rate is 9600 baud here (the radio answered at 9600 and not at 4800 or 57600 on 2026-11-05). Hamlib's `ft847` backend has no SAT mode function and no read-back; turning split on turns SAT mode on, and `S 0 VFOA` (what `Z` sends) turns it off. Split and the Sub transmit side, SAT mode on and off, tracking an RS-44 transponder, the nudge keys and the Contact prefill were seen working on 2026-11-05 (see `CLAUDE.md`), with commanded frequencies read back and nothing received. `Z` while tracking does not work yet: tracking turns SAT mode back on (#81). Whether correcting both uplink and downlink is right for its SAT mode on the air is not yet checked. `v` is not implemented by the backend, so the strip shows "VFO not supported".
 
 ---
 

@@ -33,15 +33,25 @@ Verified on the user's FT-847 (2026-11-04, `rig-tui` from `integration/spec-54` 
 - Doppler during the ISS pass of 02:03:47Z to 02:08:51Z: sampled every 20 s through `rigctld`, receive moved from +2.4 kHz to about +0.3 kHz and transmit mirrored it (-2.38 kHz to -0.29 kHz) as the satellite neared closest approach. This shows the commanded frequencies only; nothing was received.
 - With no antenna the strip read `S9+60`; that says nothing about the meter's scale.
 
+Verified on the user's FT-847 (2026-11-05, `rig-tui` from `main` at 06b45c5, a temporary `rigctld` model 1001 on `127.0.0.1:4533` started by the agent, a dummy load on the HF port only and nothing on VHF/UHF, nothing transmitted except the HF keys below; the agent drove `rig-tui` in tmux with a scratch config and Log, and restored the radio's state afterwards: RX 144.300 MHz FM 9000, split off):
+- The CAT baud is 9600: `f` answered at 9600 and timed out (`RPRT -5`) at 4800 and 57600.
+- PTT through raw `rigctld` on HF into the dummy load (14.200 MHz USB, three keys of 2 s, one of 1 s): `T 1` returned `RPRT 0`, `t` read 1 during and 0 after, and the user heard the fan spool up for TX. During a key `l ALC` read 0, `l STRENGTH` 60 and `l RAWSTR` 31; on receive with the dummy load `STRENGTH` was -54 and `RAWSTR` 0. The user did not report the TX indicator or any RF output.
+- SAT mode: hamlib's ft847 backend lists no SATMODE function. Split on turns it on (raw `S 1 Sub`, and tracking, which sends `S 1 VFOB`) and `S 0 VFOA` (what `Z` sends) turns it off; the user saw the SAT indicator follow each on the display. `S 0 Sub` returns `RPRT -11`.
+- Tracking (`t`) RS-44 "Mode V/U - Transponder" before AOS: split went from `0 Sub` to `1 Sub`, receive 435.640000 MHz USB and transmit 145.965000 MHz LSB, matching the strip and live panel, read back through raw `rigctld`. The nudge keys `]` `[` `}` `{` (1 kHz and 100 Hz): about 2 s after a key the radio showed receive at nominal + n and transmit at nominal - n (+1900 Hz gave 435.641900 and 145.963100 MHz).
+- The satellite Contact prefill: `l` while tracking, saved to a scratch Log: `FREQ` 145.965000 (`BAND` 2m), `MODE` SSB, `SUBMODE` LSB, `PROP_MODE` SAT, `SAT_NAME` "RS-44 & BREEZE-KM R/B", `SAT_MODE` V/U, `FREQ_RX` 435.640000 (`BAND_RX` 70cm).
+- `Z` while tracking is broken (#81): the SAT indicator went off, then came back within seconds, because tracking kept running and read the radio's receive frequency falling back to 144.300 MHz as a dial turn (the panel showed `nudge -5794310000 Hz`).
+- The status message "not a frequency:" comes from `f` then `Enter` on empty text. The earlier appearance was a stray keystroke, not a defect.
+- Reconnect: with `rigctld` stopped the strip showed dashes and "disconnected" at once, and about 4 s after restarting it the strip showed "connected" and refilled by itself.
+- Right after the `rigctld` restart `s` read `0 Sub` and `i` read 0 although the radio had last been in split; the user did not look at its display then. Hamlib's ft847 backend has no split read-back.
+- Config dialog on a scratch config: editing the callsign and `Ctrl-S` changed only the `callsign` line; a change made outside the app to another part of the file was kept; a change outside to the same field showed "file W9EXT | yours N0CALLXYZ" and the file was not overwritten.
+
 Still unverified (say "untested on hardware"):
-- In the Satellite Activity: whether it engages the FT-847's SAT mode (hamlib has no read-back, and the radio was already in split before the test), the linear-transponder nudge keys (`[ ] { }`), `Z` (SAT off), the satellite Contact prefill, and the "not a frequency:" message that showed once in the status line (not traced). `sat-tui`'s UI-free code (tracker, cache, SatNOGS parsing) has unit tests only. Every other FT-847 behaviour not listed above is untested too.
-- The S-meter with a real signal (the KX3's quiet-band value and the FT-847's no-antenna value were the only ones seen), and PTT while transmitting, in `rig-tui`: not tested because both need the transmitter keyed and a real signal.
+- In the Satellite Activity: `Z` while tracking (#81 is open), and Doppler correction with a real pass on air. `sat-tui`'s UI-free code (tracker, cache, SatNOGS parsing) has unit tests only. Every other FT-847 behaviour not listed above is untested too.
+- The S-meter with a real signal (the KX3's quiet-band value, and the FT-847's no-antenna `S9+60` and dummy-load -54, were the only ones seen), the TX indicator and RF output during PTT (only the fan was heard), and `rig-tui`'s display while the transmitter is keyed: PTT was keyed through raw `rigctld`, not the app.
 - Sending CW through `rig-tui` (the CW panel, F1-F6 Soft keys, input line) and the `TB;` decode polling while the panel is active: `rigctld-client` sending and decoding is verified above, `rig-tui`'s use of it is not.
-- The 2 Hz / 4 Hz polling cadences as such: the strip updated, but timing was not measured.
-- The config dialog's edit-and-save, conflict, read-only and parse-error paths and the discard prompt: on the radio setup it was only opened, an address looked up and a Locator picked, and `Ctrl-S` closed it with the file unchanged (the Locator was the same value).
+- The 2 Hz / 4 Hz polling cadences as such: the strip updated, but timing was not measured (a count of reads in `rigctld`'s `-vvvvv` log could not separate the app's reads from the test's own).
+- The config dialog's read-only and parse-error paths and the discard prompt: `Esc` did not close the dialog after a conflict on the FT-847 setup, and that was not traced.
 - Sending when the text exceeds the KX3's 24-char `KY` packet or its buffer (hamlib is expected to chunk it).
-- FT-847: serial is 4800..57600, 8N2 in hamlib, but the actual CAT baud is unknown (menu item 14).
-- How hamlib's ft847 backend exposes sat mode (split and the Sub transmit side are seen above; SAT mode has no read-back).
 - Whether correcting both uplink and downlink is what the FT-847's sat mode needs on air: the sign of the correction is as expected, but only commanded frequencies were read back.
 
 ## Rules
