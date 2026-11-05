@@ -69,6 +69,23 @@ fn open_preview(app: &mut App) {
 }
 
 #[test]
+fn chords_stay_blocked_over_the_export_modal() {
+    let fx = Fx::new("blocked");
+    let mut app = fx.app();
+    open_preview(&mut app);
+    assert!(has(&screen(&app, 100, 30), "K9TST@US-1234-20261105.adi"));
+    for c in ['o', 'r', 'g', 'k', 'j'] {
+        app.on_key(ctrl(c));
+        let rows = screen(&app, 100, 30);
+        assert!(
+            has(&rows, "K9TST@US-1234-20261105.adi"),
+            "Ctrl-{c} closed the export modal"
+        );
+        assert!(!has(&rows, "Config") && !has(&rows, "Rigs"), "Ctrl-{c}");
+    }
+}
+
+#[test]
 fn the_preview_shows_files_exclusions_and_help_before_anything_is_written() {
     let fx = Fx::new("preview");
     let mut app = fx.app();

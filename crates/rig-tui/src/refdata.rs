@@ -26,6 +26,21 @@ use std::time::Duration;
 
 use crate::reference::{Feed, Pace, ReferenceClient, Snapshot};
 
+/// The `CC-SS` locations in a park's `locationDesc`: one (`US-IN`) or a comma list
+/// (`US-IN,US-MI`), upper case, in order. Two letters, a dash, two letters is the one rule
+/// (`docs/research/missing-data.md`); anything else in the list is dropped.
+pub fn parse_locations(location: &str) -> Vec<String> {
+    location
+        .split(',')
+        .filter_map(|part| {
+            let (country, state) = part.trim().split_once('-')?;
+            let two_letters = |s: &str| s.len() == 2 && s.bytes().all(|b| b.is_ascii_alphabetic());
+            (two_letters(country) && two_letters(state))
+                .then(|| format!("{country}-{state}").to_ascii_uppercase())
+        })
+        .collect()
+}
+
 pub const SUMMIT_LIST_URL: &str = "https://www.sotadata.org.uk/summitslist.csv";
 const POTA_BASE: &str = "https://api.pota.app";
 const SUMMITS_KEY: &str = "sota-summits";

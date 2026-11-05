@@ -373,15 +373,42 @@ fn sota_band_names_are_mhz_style_or_the_frequency() {
 }
 
 #[test]
-fn sota_writes_one_file_per_utc_day_of_the_summit() {
+fn a_night_sota_activation_across_utc_midnight_stays_in_one_file() {
+    let late = row(&[
+        ("CALL", "W7XYZ"),
+        ("TIME_ON", "233000"),
+        ("MY_SOTA_REF", "W7W/KG-001"),
+    ]);
+    let after = row(&[
+        ("CALL", "W7ABC"),
+        ("QSO_DATE", "20261106"),
+        ("TIME_ON", "003000"),
+        ("MY_SOTA_REF", "W7W/KG-001"),
+    ]);
+    let log = records(&[&after, &late]);
+    let plan = plan(PlanActivity::Sota, &["W7W/KG-001"], "2026-11-05");
+    let p = export::build(&request(&plan, &log, true));
+    assert_eq!(p.files.len(), 1);
+    assert_eq!(p.files[0].name, "K9TST_P@W7W_KG-001-20261105.csv");
+    assert_eq!(p.files[0].contacts, 2);
+    assert!(p.files[0].contents.contains("W7XYZ") && p.files[0].contents.contains("W7ABC"));
+}
+
+#[test]
+fn sota_splits_the_file_only_when_the_summit_changes() {
     let day1 = row(&[("CALL", "W7XYZ"), ("MY_SOTA_REF", "W7W/KG-001")]);
+    let elsewhere = row(&[
+        ("CALL", "W7OTH"),
+        ("TIME_ON", "160000"),
+        ("MY_SOTA_REF", "W7W/KG-002"),
+    ]);
     let day2 = row(&[
         ("CALL", "W7ABC"),
         ("QSO_DATE", "20261106"),
         ("TIME_ON", "160000"),
         ("MY_SOTA_REF", "W7W/KG-001"),
     ]);
-    let log = records(&[&day2, &day1]);
+    let log = records(&[&day2, &elsewhere, &day1]);
     let plan = plan(PlanActivity::Sota, &["W7W/KG-001"], "2026-11-05");
     let p = export::build(&request(&plan, &log, true));
     let names: Vec<&str> = p.files.iter().map(|f| f.name.as_str()).collect();

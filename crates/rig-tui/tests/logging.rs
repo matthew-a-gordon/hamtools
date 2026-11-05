@@ -139,6 +139,19 @@ mod gate {
         assert!(has(&screen(&app, 80, 24), "Log contact"));
     }
 
+    #[test]
+    fn chords_stay_blocked_over_the_log_form() {
+        let log = temp_log("blocked");
+        let mut app = app_in("USB", &log);
+        open_form(&mut app);
+        for c in ['o', 'r', 'g', 'k', 'j'] {
+            assert_eq!(app.on_key(ctrl(c)), vec![]);
+            let rows = screen(&app, 80, 24);
+            assert!(has(&rows, "Log contact"), "Ctrl-{c} closed the form");
+            assert!(!has(&rows, "Config") && !has(&rows, "Rigs"), "Ctrl-{c}");
+        }
+    }
+
     fn cw_app_with_logging(log: &Path) -> App {
         focus_input(app_in("CW", log))
     }

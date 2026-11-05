@@ -18,7 +18,7 @@ use ratatui::style::{Modifier, Style};
 use ratatui::text::Line;
 use ratatui::widgets::{Paragraph, Wrap};
 
-use crate::refdata::{Lookup, RefEntry, ReferenceData};
+use crate::refdata::{Lookup, RefEntry, ReferenceData, parse_locations};
 use crate::softkeys;
 use crate::style::{dim, red, yellow};
 
@@ -239,9 +239,7 @@ pub(crate) fn snapshot_all(plan: &mut Plan, data: Option<&ReferenceData>, now_un
         if i == 0 {
             primary = snap;
         } else if let Some(s) = snap
-            && !others
-                .iter()
-                .any(|o| o.reference.eq_ignore_ascii_case(&s.reference))
+            && !others.iter().any(|o| same_ref(&o.reference, &s.reference))
         {
             others.push(s);
         }
@@ -266,10 +264,12 @@ pub(crate) fn state_of(plan: &Plan, data: &ReferenceData, now_unix: u64) -> Opti
         Lookup::Found(hit) => hit.entry.location,
         Lookup::NotCached => None,
     })?;
-    let first = location.split(',').next()?.trim().to_ascii_uppercase();
-    let (country, state) = first.split_once('-')?;
-    let ok = |s: &str| (2..=3).contains(&s.len()) && s.chars().all(|c| c.is_ascii_alphabetic());
-    (ok(country) && ok(state)).then_some(first)
+    parse_locations(&location).into_iter().next()
+}
+
+/// Reference codes match regardless of case (`us-1234` is `US-1234`).
+pub(crate) fn same_ref(a: &str, b: &str) -> bool {
+    a.eq_ignore_ascii_case(b)
 }
 
 /// What to show for a plan's reference: its own snapshot first, then the cache, so a wiped cache
@@ -708,11 +708,7 @@ fn plan_from_form(editing: &Editing, ids: &[String]) -> Result<Plan, (usize, Str
         snapshot: editing.carry.snapshot.clone(),
         other_snapshots: editing.carry.other_snapshots.clone(),
     };
-    let kept = |s: &RefSnapshot| {
-        plan.references
-            .iter()
-            .any(|r| r.eq_ignore_ascii_case(&s.reference))
-    };
+    let kept = |s: &RefSnapshot| plan.references.iter().any(|r| same_ref(r, &s.reference));
     plan.other_snapshots.retain(kept);
     if plan.snapshot.as_ref().is_some_and(|s| !kept(s)) {
         plan.snapshot = None;

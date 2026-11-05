@@ -42,7 +42,7 @@ Run the app from the dev shell:
 ```sh
 nix develop
 cargo run -p rig-tui                      # uses the address in your config
-cargo run -p rig-tui -- --rig ft847       # start on the [rig.ft847] profile (a bare address is rejected)
+cargo run -p rig-tui -- --rig NAME        # start on the [rig.NAME] profile from your config (a bare address is rejected)
 cargo run -p rig-tui -- --config ./my.toml
 ```
 

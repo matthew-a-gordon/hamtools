@@ -275,6 +275,59 @@ fn the_summit_list_download_follows_a_redirect_to_another_host() {
 }
 
 #[test]
+fn the_redirect_hop_sends_the_stored_validators_so_the_final_host_can_answer_304() {
+    type Seen = (String, Option<String>, Option<String>);
+    struct Revalidating(Mutex<Vec<Seen>>);
+    impl Transport for Revalidating {
+        fn get(&self, req: &HttpRequest) -> Result<HttpResponse, String> {
+            self.0.lock().unwrap().push((
+                req.url.clone(),
+                req.if_none_match.clone(),
+                req.if_modified_since.clone(),
+            ));
+            if req.url.starts_with("https://www.sotadata.org.uk/") {
+                return Ok(HttpResponse {
+                    status: 302,
+                    location: Some("https://storage.sota.org.uk/summitslist.csv".into()),
+                    ..Default::default()
+                });
+            }
+            if req.if_none_match.as_deref() == Some("\"v1\"") {
+                return Ok(HttpResponse {
+                    status: 304,
+                    ..Default::default()
+                });
+            }
+            Ok(HttpResponse {
+                status: 200,
+                body: SUMMITS.as_bytes().to_vec(),
+                etag: Some("\"v1\"".into()),
+                last_modified: Some("Tue, 03 Nov 2026 00:00:00 GMT".into()),
+                ..Default::default()
+            })
+        }
+    }
+    let t = Arc::new(Revalidating(Mutex::new(vec![])));
+    let (client, data, clock, dir) = client_over(t.clone(), "redirect-304");
+    data.refresh_summits();
+    client.sync();
+    // A day later the list is requested again; the hop carries the validators.
+    clock.0.fetch_add(25 * 60 * 60 * 1000, Ordering::SeqCst);
+    data.refresh_summits();
+    client.sync();
+    let seen = t.0.lock().unwrap().clone();
+    assert_eq!(seen.len(), 4, "{seen:?}");
+    assert_eq!(seen[3].0, "https://storage.sota.org.uk/summitslist.csv");
+    assert_eq!(seen[3].1.as_deref(), Some("\"v1\""));
+    assert_eq!(seen[3].2.as_deref(), Some("Tue, 03 Nov 2026 00:00:00 GMT"));
+    assert!(matches!(
+        data.lookup("W4C/CM-001", clock.unix()),
+        Lookup::Found(_)
+    ));
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
 fn nothing_is_fetched_at_startup_or_by_a_lookup() {
     let f = fx("startup");
     assert_eq!(f.calls(), 0);

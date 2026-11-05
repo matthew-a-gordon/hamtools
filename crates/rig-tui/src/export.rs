@@ -14,6 +14,7 @@ use chrono::{DateTime, Datelike, NaiveDate, Timelike, Utc};
 use hamtools_config::{Plan, PlanActivity};
 use logbook::Record;
 
+use crate::refdata::parse_locations;
 use crate::tracker::{POTA_TARGET, Program, SOTA_TARGET, my_refs};
 
 /// What the preview help says nobody has checked yet. Shown in the modal and kept in step with
@@ -244,20 +245,6 @@ fn adi_header() -> String {
     out
 }
 
-/// The locations of a park: `US-IN` gives `US-IN`; `US-IN,US-MI` gives both (upper case).
-fn states_of(location: &str) -> Vec<String> {
-    location
-        .split(',')
-        .filter_map(|part| {
-            let (country, state) = part.trim().split_once('-')?;
-            let ok = country.len() == 2
-                && state.len() == 2
-                && state.bytes().all(|b| b.is_ascii_alphabetic());
-            ok.then(|| format!("{country}-{state}").to_ascii_uppercase())
-        })
-        .collect()
-}
-
 fn pota_record(r: &Record, operator: &str, park: &str, state: Option<&str>) -> String {
     let mut out = String::new();
     let get = |n: &str| r.get(n).map(str::trim).unwrap_or_default();
@@ -356,7 +343,7 @@ fn build_pota(req: &Request<'_>, refs: &[String], selected: &Selected<'_>, previ
             ));
         }
         let location = (req.location_of)(park);
-        let states = location.as_deref().map(states_of).unwrap_or_default();
+        let states = location.as_deref().map(parse_locations).unwrap_or_default();
         if states.is_empty() {
             preview.warnings.push(format!(
                 "{park}: no cached state, so MY_STATE is left out (cache the park with a refresh)"
@@ -425,8 +412,22 @@ pub fn sota_mode(mode: &str) -> &'static str {
 }
 
 /// SOTA's band names (the frequency column): its list, else the actual frequency in MHz.
-fn sota_band(band: &str, freq: &str) -> String {
-    let listed = match band.trim().to_ascii_lowercase().as_str() {
+fn sota_band_column(band: &str, freq: &str) -> String {
+    if let Some(listed) = sota_band(band) {
+        return listed.to_string();
+    }
+    match freq.trim().parse::<f64>() {
+        Ok(mhz) if mhz > 0.0 => {
+            let text = format!("{mhz:.6}");
+            format!("{}MHz", text.trim_end_matches('0').trim_end_matches('.'))
+        }
+        _ => band.trim().to_ascii_lowercase(),
+    }
+}
+
+/// The band's name in SOTA's own list, if it has one.
+fn sota_band(band: &str) -> Option<&'static str> {
+    Some(match band.trim().to_ascii_lowercase().as_str() {
         "160m" => "1.8MHz",
         "80m" => "3.5MHz",
         "60m" => "5MHz",
@@ -441,18 +442,8 @@ fn sota_band(band: &str, freq: &str) -> String {
         "2m" => "144MHz",
         "70cm" => "432MHz",
         "23cm" => "1240MHz",
-        _ => "",
-    };
-    if !listed.is_empty() {
-        return listed.to_string();
-    }
-    match freq.trim().parse::<f64>() {
-        Ok(mhz) if mhz > 0.0 => {
-            let text = format!("{mhz:.6}");
-            format!("{}MHz", text.trim_end_matches('0').trim_end_matches('.'))
-        }
-        _ => band.trim().to_ascii_lowercase(),
-    }
+        _ => return None,
+    })
 }
 
 fn csv_quote(s: &str) -> String {
@@ -474,7 +465,7 @@ fn sota_line(r: &Record, start: DateTime<Utc>, operator: &str, summit: &str) -> 
         start.year() % 100,
         start.hour(),
         start.minute(),
-        sota_band(get("BAND"), get("FREQ")),
+        sota_band_column(get("BAND"), get("FREQ")),
         sota_mode(get("MODE")),
         get("CALL").to_ascii_uppercase(),
         get("SOTA_REF").to_ascii_uppercase(),
@@ -512,23 +503,49 @@ fn build_sota(req: &Request<'_>, summit: &str, selected: &Selected<'_>, preview:
             calls.len()
         ));
     }
-    // An activation ends when the summit changes, and several days at one summit must be
-    // separate files: one file per UTC day.
-    let days: BTreeSet<NaiveDate> = selected.iter().map(|(_, s, _)| s.date_naive()).collect();
-    for date in days {
-        let lines: Vec<String> = selected
+    // An activation ends when the summit changes, never at UTC midnight: a night activation is
+    // one file. Contacts from another summit in between start a new file.
+    let elsewhere: Vec<DateTime<Utc>> = req
+        .records
+        .iter()
+        .filter(|r| {
+            let listed = my_refs(Program::Sota, r);
+            !listed.is_empty() && !listed.iter().any(|l| l == summit)
+        })
+        .filter_map(Record::start)
+        .collect();
+    let mut groups: Vec<Vec<usize>> = Vec::new();
+    let mut previous: Option<DateTime<Utc>> = None;
+    for (i, (_, start, _)) in selected.iter().enumerate() {
+        let changed = previous.is_some_and(|p| elsewhere.iter().any(|e| *e > p && *e < *start));
+        if changed || groups.is_empty() {
+            groups.push(Vec::new());
+        }
+        groups.last_mut().expect("a group").push(i);
+        previous = Some(*start);
+    }
+    let mut used: BTreeSet<String> = BTreeSet::new();
+    for group in groups {
+        let first = selected[group[0]].1;
+        let lines: Vec<String> = group
             .iter()
-            .filter(|(_, start, _)| start.date_naive() == date)
-            .map(|(r, start, _)| sota_line(r, *start, req.operator, summit))
+            .map(|&i| sota_line(selected[i].0, selected[i].1, req.operator, summit))
             .collect();
         let contents = lines.iter().map(|l| format!("{l}\n")).collect::<String>();
+        let base = format!(
+            "{}@{}-{}",
+            safe(req.operator),
+            safe(summit),
+            first.format("%Y%m%d")
+        );
+        let mut stem = base.clone();
+        let mut n = 2;
+        while !used.insert(stem.clone()) {
+            stem = format!("{base}-{n}");
+            n += 1;
+        }
         preview.files.push(ExportFile {
-            name: format!(
-                "{}@{}-{}.csv",
-                safe(req.operator),
-                safe(summit),
-                date.format("%Y%m%d")
-            ),
+            name: format!("{stem}.csv"),
             contents,
             contacts: lines.len(),
             head: lines.into_iter().take(3).collect(),

@@ -4,6 +4,10 @@
 //! The spot shape is taken from a third-party client (no official documentation was found), so
 //! every field is read defensively: a spot missing its activator, frequency or reference is
 //! skipped, and anything else missing is just blank.
+//!
+//! UNVERIFIED as a stable contract, like [`crate::refdata`]: the shape matches what
+//! `https://api.pota.app/spot/activator` returned on 2026-11-04 (see
+//! `docs/research/missing-data.md`), but POTA does not document it.
 
 use std::collections::BTreeMap;
 

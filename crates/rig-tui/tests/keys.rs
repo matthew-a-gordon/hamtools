@@ -269,6 +269,21 @@ mod quit {
     }
 
     #[test]
+    fn ctrl_c_asks_over_every_modal_that_gives_way_to_chords() {
+        for opener in ['g', 'k', 'b', 'r', 'j'] {
+            let mut app = connected_app_in(App::new(), "CW");
+            assert_eq!(app.on_key(ctrl(opener)), vec![]);
+            assert!(app.has_overlay(), "Ctrl-{opener} opened nothing");
+            assert_eq!(app.on_key(ctrl('c')), vec![], "Ctrl-{opener}");
+            assert!(
+                has(&screen(&app, 80, 24), "Quit rig-tui"),
+                "over Ctrl-{opener}"
+            );
+            assert_eq!(app.on_key(ctrl('c')), vec![Command::Quit], "Ctrl-{opener}");
+        }
+    }
+
+    #[test]
     fn y_or_a_second_ctrl_c_quits() {
         let mut app = App::new();
         app.on_key(ctrl('c'));

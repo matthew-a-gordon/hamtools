@@ -423,7 +423,7 @@ impl Inner {
         };
         let mut result = self.transport.get(&req);
         // Follow redirects here (the SOTA summit list answers 302 to another host). Each hop is a
-        // request in its own right, so it waits out the global gap; it carries no validators.
+        // request in its own right, so it waits out the global gap and carries the same validators.
         let mut hops = 0;
         while let Ok(r) = &result
             && matches!(r.status, 301 | 302 | 303 | 307 | 308)
@@ -436,10 +436,9 @@ impl Inner {
             }
             self.clock.sleep(self.limits.gap);
             self.lock().last_start_any = Some(self.clock.now());
+            // The stored validators go along: the final host is the one that can answer 304.
             let hop = HttpRequest {
                 url: next,
-                if_none_match: None,
-                if_modified_since: None,
                 ..req.clone()
             };
             result = self.transport.get(&hop);
