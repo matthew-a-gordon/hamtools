@@ -2,8 +2,9 @@
 
 use ratatui::Frame;
 use ratatui::layout::Rect;
-use ratatui::style::{Color, Style};
-use ratatui::widgets::{Block, Borders, Clear};
+use ratatui::widgets::Clear;
+
+use crate::theme;
 
 /// A rectangle of at most `width` x `height`, centred in `area`.
 pub fn centred(area: Rect, width: u16, height: u16) -> Rect {
@@ -36,10 +37,7 @@ impl Modal {
     /// for the caller's content.
     pub fn render(&self, frame: &mut Frame, area: Rect) -> Rect {
         let rect = centred(area, self.width, self.height);
-        let block = Block::default()
-            .borders(Borders::ALL)
-            .title(self.title.as_str())
-            .border_style(Style::default().fg(Color::Cyan));
+        let block = theme::dialog(format!(" {} ", self.title));
         let inner = block.inner(rect);
         frame.render_widget(Clear, rect);
         frame.render_widget(block, rect);

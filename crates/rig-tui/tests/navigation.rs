@@ -219,7 +219,7 @@ mod keybindings_modal {
         // The box is 78 wide, centred: borders at columns 1 and 78, and nothing spills past.
         for r in &rows[top + 1..top + 21] {
             let c: Vec<char> = r.chars().collect();
-            assert_eq!((c[1], c[78]), ('│', '│'), "{r}");
+            assert_eq!((c[1], c[78]), ('┃', '┃'), "{r}");
         }
         assert!(has(&rows, "Ctrl-G"), "{rows:#?}");
     }

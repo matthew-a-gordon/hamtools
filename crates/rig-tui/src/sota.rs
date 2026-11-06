@@ -12,9 +12,9 @@ use std::time::{Duration, Instant};
 use ratatui::Frame;
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::layout::{Constraint, Layout, Rect};
-use ratatui::style::{Modifier, Style};
+use ratatui::style::Style;
 use ratatui::text::Line;
-use ratatui::widgets::{Block, Borders, Paragraph};
+use ratatui::widgets::Paragraph;
 
 use crate::activity::{Activity, ActivityCtx, ActivityOutput, HostRequest, LogPrefill};
 use crate::general::General;
@@ -280,9 +280,7 @@ impl Activity for SotaChaser {
         ])
         .areas(area);
 
-        let block = Block::default()
-            .borders(Borders::ALL)
-            .title("SOTA Chaser")
+        let block = crate::style::panel("SOTA Chaser", true)
             .title(Line::from(self.list_state(unix(ctx))).right_aligned());
         let inner = block.inner(list_area);
         let width = usize::from(inner.width);
@@ -305,7 +303,7 @@ impl Activity for SotaChaser {
             let first = (self.selected + 1).saturating_sub(room.max(1));
             for (i, hit) in self.results.iter().enumerate().skip(first).take(room) {
                 let style = if i == self.selected {
-                    Style::default().add_modifier(Modifier::REVERSED)
+                    crate::style::selected()
                 } else if hit.stale {
                     yellow()
                 } else {

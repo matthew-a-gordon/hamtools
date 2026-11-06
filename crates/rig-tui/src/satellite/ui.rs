@@ -6,7 +6,7 @@ use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Borders, Paragraph};
+use ratatui::widgets::Paragraph;
 use sat_tui::cache::format_age;
 
 use super::state::{Countdown, Live, Row, SatState};
@@ -51,14 +51,6 @@ pub fn format_duration(d: Duration) -> String {
     format!("{}:{:02}", secs / 60, secs % 60)
 }
 
-fn border(active: bool) -> Style {
-    if active {
-        Style::default().fg(Color::Cyan)
-    } else {
-        Style::default()
-    }
-}
-
 /// Green while the satellite is above the minimum elevation and the frequencies carry Doppler
 /// correction; yellow below the
 /// minimum elevation, where they are the transponder centre or published frequency.
@@ -95,10 +87,10 @@ fn frequency_lines(live: &Live) -> Vec<Line<'static>> {
 }
 
 fn render_picker(app: &SatState, area: Rect, frame: &mut Frame) {
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .title("Transmitters (Tab, t track, u unsupported)")
-        .border_style(border(app.picker_focused()));
+    let block = crate::style::panel(
+        "Transmitters (Tab, t track, u unsupported)",
+        app.picker_focused(),
+    );
     let inner = block.inner(area);
     let choices = app.transmitter_choices();
     let selected = app.selected_transmitter().unwrap_or(0);
@@ -126,10 +118,12 @@ fn render_picker(app: &SatState, area: Rect, frame: &mut Frame) {
                 Some(plan) if plan.uplink_hz.is_none() => "  RX only",
                 Some(_) => "",
             };
-            let style = if choice.supported {
+            let style = if cursor == ">" {
+                crate::style::selected()
+            } else if choice.supported {
                 Style::default()
             } else {
-                Style::default().fg(Color::DarkGray)
+                crate::style::dim()
             };
             Line::from(Span::styled(
                 format!("{cursor}{mark}{}{note}", choice.description),
@@ -224,10 +218,7 @@ fn list_items(rows: &[Row]) -> Vec<Item> {
 }
 
 fn render_passes(app: &SatState, area: Rect, frame: &mut Frame) {
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .title("Passes (UTC)")
-        .border_style(border(!app.picker_focused()));
+    let block = crate::style::panel("Passes (UTC)", !app.picker_focused());
     let inner = block.inner(area);
     let rows = app.rows();
     let selected = app.selected_row().unwrap_or(0);
@@ -285,7 +276,7 @@ fn render_passes(app: &SatState, area: Rect, frame: &mut Frame) {
 
 /// The selected satellite and pass: who, when, where it is now, and what the radio would use.
 fn render_live(app: &SatState, now: DateTime<Utc>, area: Rect, frame: &mut Frame) {
-    let block = Block::default().borders(Borders::ALL).title("Live");
+    let block = crate::style::panel("Live", false);
     let mut lines: Vec<Line> = Vec::new();
     if let (Some(row), Some(live)) = (app.selected_pass(), app.live(now)) {
         let pass = &row.pass;
@@ -323,7 +314,7 @@ fn render_live(app: &SatState, now: DateTime<Utc>, area: Rect, frame: &mut Frame
 
 /// What the radio is doing: the tracked transmitter and when its satellite's pass starts and ends.
 fn render_tracking(app: &SatState, now: DateTime<Utc>, area: Rect, frame: &mut Frame) {
-    let block = Block::default().borders(Borders::ALL).title("Tracking");
+    let block = crate::style::panel("Tracking", false);
     let Some(tracking) = app.tracking() else {
         return;
     };

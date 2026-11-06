@@ -3,7 +3,6 @@
 use ratatui::Frame;
 use ratatui::crossterm::event::{KeyCode, KeyEvent};
 use ratatui::layout::Rect;
-use ratatui::style::{Modifier, Style};
 use ratatui::text::Line;
 use ratatui::widgets::Paragraph;
 
@@ -63,10 +62,7 @@ impl ListOverlay {
             .take(height)
             .map(|(i, item)| {
                 if i == self.selected {
-                    Line::styled(
-                        format!("> {item}"),
-                        Style::default().add_modifier(Modifier::REVERSED),
-                    )
+                    Line::styled(format!("> {item}"), crate::theme::selected())
                 } else {
                     Line::from(format!("  {item}"))
                 }

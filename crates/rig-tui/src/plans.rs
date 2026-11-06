@@ -623,7 +623,12 @@ impl PlansModal {
                 Status::Planned => Style::default(),
             };
             if i == self.selected {
-                style = style.add_modifier(Modifier::REVERSED);
+                // Keep "overdue" red on the highlight; everything else reads black on yellow.
+                let fg = (row.status == Status::Overdue).then_some(ratatui::style::Color::Red);
+                style = crate::style::selected();
+                if let Some(fg) = fg {
+                    style = style.fg(fg);
+                }
             }
             lines.push(Line::styled(text, style));
         }

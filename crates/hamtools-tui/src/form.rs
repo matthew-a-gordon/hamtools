@@ -3,7 +3,7 @@
 use ratatui::Frame;
 use ratatui::crossterm::event::{KeyCode, KeyEvent};
 use ratatui::layout::Rect;
-use ratatui::style::{Color, Modifier, Style};
+use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
 
@@ -133,7 +133,7 @@ impl Form {
                 ));
             }
             let style = if focused {
-                Style::default().add_modifier(Modifier::BOLD | Modifier::REVERSED)
+                crate::theme::selected().add_modifier(Modifier::BOLD)
             } else {
                 Style::default()
             };
@@ -142,10 +142,7 @@ impl Form {
                 Span::raw(field.value.clone()),
             ]));
             if let Some(error) = &field.error {
-                lines.push(Line::styled(
-                    format!("  {error}"),
-                    Style::default().fg(Color::Red),
-                ));
+                lines.push(Line::styled(format!("  {error}"), crate::theme::error()));
             }
         }
         frame.render_widget(Paragraph::new(lines), area);

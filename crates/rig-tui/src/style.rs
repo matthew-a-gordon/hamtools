@@ -1,27 +1,16 @@
-//! The few styles every screen shares, so a colour is chosen in one place.
+//! The styles every screen shares. The look itself lives in `hamtools_tui::theme`; this
+//! re-exports the short names rig-tui uses.
 
-use ratatui::style::{Color, Style};
-
-/// Secondary text: hints, hairline notes, placeholders.
-pub(crate) fn dim() -> Style {
-    Style::default().fg(Color::DarkGray)
-}
+use hamtools_tui::theme;
+pub(crate) use hamtools_tui::theme::{chip, dim, focus_border, hint_line, panel, selected};
+use ratatui::style::Style;
 
 /// Errors.
 pub(crate) fn red() -> Style {
-    Style::default().fg(Color::Red)
+    theme::error()
 }
 
 /// Warnings, and text sent on the air.
 pub(crate) fn yellow() -> Style {
-    Style::default().fg(Color::Yellow)
-}
-
-/// The border of the focused pane.
-pub(crate) fn focus_border(focused: bool) -> Style {
-    if focused {
-        Style::default().fg(Color::Cyan)
-    } else {
-        Style::default()
-    }
+    theme::warn()
 }

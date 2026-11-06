@@ -209,7 +209,9 @@ fn enter_opens_the_form_with_their_ref_and_never_tunes() {
     // The Call is left empty for the operator to type.
     assert!(
         rows.iter().any(|r| r.contains("Call:")
-            && r.trim_matches(|c: char| c == '│' || c == ' ').trim_end() == "Call:"),
+            && r.trim_matches(|c: char| c == '│' || c == '┃' || c == ' ')
+                .trim_end()
+                == "Call:"),
         "{rows:#?}"
     );
 }

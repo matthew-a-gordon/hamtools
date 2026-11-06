@@ -38,9 +38,9 @@ fn modal_clears_what_is_underneath_and_draws_title_and_border() {
         [
             "xxxxxxxxxxxxxxxxxxxx",
             "xxxxxxxxxxxxxxxxxxxx",
-            "xxxxx┌Hi──────┐xxxxx",
-            "xxxxx│        │xxxxx",
-            "xxxxx└────────┘xxxxx",
+            "xxxxx┏ Hi ━━━━┓xxxxx",
+            "xxxxx┃        ┃xxxxx",
+            "xxxxx┗━━━━━━━━┛xxxxx",
             "xxxxxxxxxxxxxxxxxxxx",
             "xxxxxxxxxxxxxxxxxxxx",
         ]

@@ -13,7 +13,7 @@ use logbook::Band;
 use ratatui::Frame;
 use ratatui::crossterm::event::{KeyCode, KeyEvent};
 use ratatui::layout::Rect;
-use ratatui::style::{Color, Modifier, Style};
+use ratatui::style::{Color, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
 
@@ -292,7 +292,7 @@ impl BandplanModal {
             let mut spans = vec![Span::styled(format!("{label:<GUTTER$}"), dim())];
             for (c, (ch, style)) in cells.into_iter().enumerate() {
                 let style = if rx_col == Some(c) {
-                    style.add_modifier(Modifier::REVERSED)
+                    crate::style::selected()
                 } else {
                     style
                 };

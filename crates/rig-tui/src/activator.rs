@@ -14,7 +14,7 @@ use ratatui::Frame;
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::text::Line;
-use ratatui::widgets::{Block, Borders, Paragraph};
+use ratatui::widgets::Paragraph;
 
 use crate::activity::{Activity, ActivityCtx, ActivityOutput, FormRoute};
 use crate::general::General;
@@ -23,7 +23,7 @@ use crate::panel::{LogDefaults, LogMode, Role};
 use crate::reference::ReferenceClient;
 use crate::rig::{Command, RigMode};
 use crate::spotwatch::SpotWatch;
-use crate::style::{dim, yellow};
+use crate::style::{dim, panel, yellow};
 use crate::tracker::Program;
 use crate::ui::format_hz;
 
@@ -150,10 +150,7 @@ impl Activator {
 
     fn render_banner(&self, frame: &mut Frame, area: Rect, lines: Vec<Line<'static>>) {
         let title = format!("{} Activator", self.name_of());
-        frame.render_widget(
-            Paragraph::new(lines).block(Block::default().borders(Borders::ALL).title(title)),
-            area,
-        );
+        frame.render_widget(Paragraph::new(lines).block(panel(title, false)), area);
     }
 
     /// The plan picker, shown in place of the recent list's space when no plan of this program
@@ -170,8 +167,7 @@ impl Activator {
             lines.push(Line::raw(format!("Alt-{} {}", n + 1, choice.label)));
         }
         frame.render_widget(
-            Paragraph::new(lines)
-                .block(Block::default().borders(Borders::ALL).title("Pick a plan")),
+            Paragraph::new(lines).block(panel("Pick a plan", true)),
             area,
         );
     }
@@ -189,11 +185,9 @@ impl Activator {
                 .join("\n")
         };
         frame.render_widget(
-            Paragraph::new(text).style(dim()).block(
-                Block::default()
-                    .borders(Borders::ALL)
-                    .title("Recent contacts"),
-            ),
+            Paragraph::new(text)
+                .style(dim())
+                .block(panel("Recent contacts", false)),
             area,
         );
     }
@@ -212,8 +206,7 @@ impl Activator {
             lines.into_iter().take(rows).collect::<Vec<_>>().join("\n")
         };
         frame.render_widget(
-            Paragraph::new(text)
-                .block(Block::default().borders(Borders::ALL).title("Nearby spots")),
+            Paragraph::new(text).block(panel("Nearby spots", false)),
             area,
         );
     }
@@ -229,9 +222,7 @@ impl Activator {
                 None => "No mode reported yet".to_string(),
             };
             frame.render_widget(
-                Paragraph::new(text)
-                    .style(dim())
-                    .block(Block::default().borders(Borders::ALL).title("CW")),
+                Paragraph::new(text).style(dim()).block(panel("CW", false)),
                 area,
             );
         }
@@ -268,7 +259,7 @@ impl Activator {
         frame.render_widget(
             Paragraph::new(text)
                 .style(dim())
-                .block(Block::default().borders(Borders::ALL).title("Keys")),
+                .block(panel("Keys", false)),
             area,
         );
     }

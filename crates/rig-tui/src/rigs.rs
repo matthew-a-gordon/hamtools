@@ -14,7 +14,7 @@ use hamtools_tui::modal::Modal;
 use ratatui::Frame;
 use ratatui::crossterm::event::{KeyCode, KeyEvent};
 use ratatui::layout::Rect;
-use ratatui::style::{Modifier, Style};
+use ratatui::style::Style;
 use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
 
@@ -343,7 +343,7 @@ impl Switcher {
                 _ => String::new(),
             };
             let style = if i == self.cursor {
-                Style::default().add_modifier(Modifier::REVERSED)
+                crate::style::selected()
             } else {
                 Style::default()
             };

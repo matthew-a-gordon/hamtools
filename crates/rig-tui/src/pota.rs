@@ -15,9 +15,9 @@ use logbook::band_for_hz;
 use ratatui::Frame;
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::layout::{Constraint, Layout, Rect};
-use ratatui::style::{Modifier, Style};
+use ratatui::style::Style;
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Borders, Paragraph};
+use ratatui::widgets::Paragraph;
 
 use crate::activity::{
     Activity, ActivityCtx, ActivityOutput, HostRequest, LogPrefill, TuneRequest, Worked,
@@ -613,9 +613,7 @@ impl Activity for PotaHunter {
         let rows = self.rows(ctx);
         let has_distance = ctx.observer.is_some();
         let selected = self.selected_index(&rows);
-        let block = Block::default()
-            .borders(Borders::ALL)
-            .title(self.title())
+        let block = crate::style::panel(self.title(), true)
             .title(Line::from(self.feed_state()).right_aligned());
         let inner = block.inner(list_area);
         let width = usize::from(inner.width);
@@ -627,7 +625,7 @@ impl Activity for PotaHunter {
             let first = (selected + 1).saturating_sub(room);
             for (i, row) in rows.iter().enumerate().skip(first).take(room) {
                 let style = if i == selected {
-                    Style::default().add_modifier(Modifier::REVERSED)
+                    crate::style::selected()
                 } else if row.stale {
                     dim()
                 } else {

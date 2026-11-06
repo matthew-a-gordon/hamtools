@@ -113,7 +113,7 @@ impl Palette {
                 line = format!("{marker} {:<10} {reason}", row.name);
                 style = dim();
             } else if i == self.selected {
-                style = style.add_modifier(Modifier::BOLD);
+                style = crate::style::selected().add_modifier(Modifier::BOLD);
             }
             text.push(Line::styled(line, style));
         }

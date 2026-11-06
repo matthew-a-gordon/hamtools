@@ -11,12 +11,12 @@ use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line as TextLine, Span};
-use ratatui::widgets::{Block, Borders, Paragraph};
+use ratatui::widgets::Paragraph;
 
 use crate::panel::{LogMode, ModePanel, PanelCommand, PanelCtx};
 use crate::rig::RigMode;
 use crate::softkeys::{Layer, Live, ResolvedKey, expand, preview};
-use crate::style::{focus_border, yellow};
+use crate::style::{panel, yellow};
 
 /// Decoded form of a KX3 `TB;` reply.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -203,7 +203,7 @@ impl ModePanel for CwPanel {
         ])
         .areas(area);
 
-        let transcript_block = Block::default().borders(Borders::ALL).title("CW");
+        let transcript_block = panel("CW", false);
         let inner = transcript_block.inner(transcript_area);
         let mut rows: Vec<TextLine> = Vec::new();
         for line in &self.lines {
@@ -221,13 +221,8 @@ impl ModePanel for CwPanel {
             transcript_area,
         );
 
-        let border = focus_border(ctx.focused);
-        let input = Paragraph::new(format!("> {}", self.input)).block(
-            Block::default()
-                .borders(Borders::ALL)
-                .border_style(border)
-                .title("Send (Enter)"),
-        );
+        let input =
+            Paragraph::new(format!("> {}", self.input)).block(panel("Send (Enter)", ctx.focused));
         frame.render_widget(input, input_area);
 
         if bar_area.height > 0 {

@@ -6,14 +6,14 @@ use std::time::Instant;
 use ratatui::Frame;
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::layout::{Constraint, Layout, Rect};
-use ratatui::widgets::{Block, Borders, Paragraph};
+use ratatui::widgets::Paragraph;
 
 use crate::activity::{Activity, ActivityCtx, ActivityOutput};
 use crate::cw::CwPanel;
 use crate::logging::default_log_mode;
 use crate::panel::{LogDefaults, LogMode, ModePanel, PanelCommand, PanelCtx};
 use crate::rig::{Command, RigMode};
-use crate::style::dim;
+use crate::style::{dim, panel};
 
 pub struct General {
     panels: Vec<Box<dyn ModePanel>>,
@@ -243,11 +243,9 @@ pub(crate) fn render_todays_contacts(ctx: &ActivityCtx, frame: &mut Frame, area:
             .join("\n")
     };
     frame.render_widget(
-        Paragraph::new(text).style(dim()).block(
-            Block::default()
-                .borders(Borders::ALL)
-                .title("Today's contacts"),
-        ),
+        Paragraph::new(text)
+            .style(dim())
+            .block(panel("Today's contacts", false)),
         area,
     );
 }

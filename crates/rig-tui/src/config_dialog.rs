@@ -746,7 +746,7 @@ impl ConfigDialog {
             let label = format!("  {:<LABEL_WIDTH$}", field.label());
             let value = self.form.value(index);
             let label_style = if focused {
-                Style::default().add_modifier(Modifier::BOLD | Modifier::REVERSED)
+                crate::style::selected().add_modifier(Modifier::BOLD)
             } else {
                 Style::default()
             };
@@ -840,7 +840,7 @@ impl ConfigDialog {
         ];
         for (i, c) in conflicts.iter().enumerate() {
             let style = if i == next {
-                Style::default().add_modifier(Modifier::BOLD | Modifier::REVERSED)
+                crate::style::selected().add_modifier(Modifier::BOLD)
             } else {
                 dim()
             };

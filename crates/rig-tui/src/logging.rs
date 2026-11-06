@@ -548,7 +548,6 @@ impl Logging {
     /// Draw the open form inside `area` (a bordered block of at least 6 rows): the fields in
     /// two columns, the rig's frequency and mode and the start time in the title.
     pub fn render_embedded(&self, frame: &mut Frame, area: Rect, focused: bool) {
-        let border = crate::style::focus_border(focused);
         let Some(form) = &self.form else {
             frame.render_widget(
                 Paragraph::new(
@@ -557,12 +556,7 @@ impl Logging {
                         .unwrap_or_else(|| "waiting for the rig's frequency and mode".to_string()),
                 )
                 .style(dim())
-                .block(
-                    ratatui::widgets::Block::default()
-                        .borders(ratatui::widgets::Borders::ALL)
-                        .border_style(border)
-                        .title("Contact"),
-                ),
+                .block(crate::style::panel("Contact", focused)),
                 area,
             );
             return;
@@ -581,10 +575,7 @@ impl Logging {
         if let Some(message) = &form.error {
             title.push(ratatui::text::Span::styled(format!(" | {message}"), red()));
         }
-        let block = ratatui::widgets::Block::default()
-            .borders(ratatui::widgets::Borders::ALL)
-            .border_style(border)
-            .title(Line::from(title));
+        let block = crate::style::panel(Line::from(title), focused);
         let inner = block.inner(area);
         frame.render_widget(block, area);
         let [left, right] =
@@ -600,9 +591,7 @@ impl Logging {
             }
             let label = format!("{}: ", form.label(*kind));
             let style = if focused && i == focus {
-                ratatui::style::Style::default().add_modifier(
-                    ratatui::style::Modifier::BOLD | ratatui::style::Modifier::REVERSED,
-                )
+                crate::style::selected().add_modifier(ratatui::style::Modifier::BOLD)
             } else {
                 ratatui::style::Style::default()
             };
