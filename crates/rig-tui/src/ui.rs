@@ -52,7 +52,14 @@ pub fn render(app: &App, frame: &mut Frame) {
     app.render_body(frame, body_area, panes);
 
     if let Some(status) = app.status() {
-        frame.render_widget(Paragraph::new(status).style(red()), status_area);
+        // A standing condition is marked and yellow (the strip already says "disconnected" in
+        // red); a one-off message is red and times out.
+        let (text, style) = if app.status_is_standing() {
+            (format!("\u{26a0} {status}"), yellow())
+        } else {
+            (status.to_string(), red())
+        };
+        frame.render_widget(Paragraph::new(text).style(style), status_area);
     }
     frame.render_widget(Paragraph::new(hint_lines(hint(app))), hint_area);
     app.render_overlay(frame, frame.area());

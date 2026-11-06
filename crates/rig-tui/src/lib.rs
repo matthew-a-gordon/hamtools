@@ -47,7 +47,7 @@ pub use activity::{
 };
 pub use app::{
     App, Focus, Overlay, OverlayAction, RECONNECT_EVERY, SMETER_POLL_EVERY, STALE_AFTER,
-    STATE_POLL_EVERY,
+    STATE_POLL_EVERY, STATUS_TTL,
 };
 pub use config::{Config, config_path, default_log_path};
 pub use cw::{Line, Source, TbError, TbReply, parse_tb};

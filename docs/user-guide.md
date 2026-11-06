@@ -71,7 +71,7 @@ Two rows across the top show the radio's state, polled a few times a second:
 | S-meter | `S0` to `S9`, then `S9+dB`, from the rig's `STRENGTH` reading |
 | Clock | UTC |
 
-A hint line at the bottom lists the keys that apply to the current focus. A status line above it explains refusals, such as "not connected" or "split is off".
+A hint line at the bottom lists the keys that apply to the current focus. A status line above it explains refusals, such as "not connected" or "split is off". A message fades after about six seconds. The one exception is why the rig cannot be reached: it stays, with a `⚠` in front and in yellow, for as long as the rig is unreachable, and goes when it connects.
 
 The S-meter was seen only on a quiet band (`S0` at -54 dB). It is *untested on hardware* with a real signal.
 

@@ -52,6 +52,10 @@ pub const STATE_POLL_EVERY: Duration = Duration::from_millis(500);
 /// How often the S-meter is read (about four times a second). Untested on hardware.
 pub const SMETER_POLL_EVERY: Duration = Duration::from_millis(250);
 /// A reading older than this shows as a dash. A starting value, untested on hardware.
+/// How long a status message stays on screen. The reason the rig is unreachable is not subject
+/// to it: that stays for as long as the rig is.
+pub const STATUS_TTL: Duration = Duration::from_secs(6);
+
 pub const STALE_AFTER: Duration = Duration::from_secs(2);
 
 /// How often an Activator screen re-reads the Log for its tracker.
@@ -233,6 +237,10 @@ pub struct App {
     /// Today's Contacts as last read, valid while the Log file and the date are unchanged.
     worked_cache: RefCell<Option<(WorkedKey, Vec<Worked>)>>,
     status: Option<String>,
+    /// The message as last seen by `tick`, and when, so it can be timed out.
+    status_seen: Option<(String, Instant)>,
+    /// Why the rig is unreachable, kept while it is, so the line can fall back to it.
+    disconnect_note: Option<String>,
     /// The status came from a failing poll, so the next good poll clears it.
     poll_failed: bool,
     callsign: Option<String>,
@@ -328,6 +336,8 @@ impl App {
             worked_cache: RefCell::new(None),
             status: None,
             poll_failed: false,
+            status_seen: None,
+            disconnect_note: None,
             callsign: None,
             logging: Logging::new(),
             soft_keys: BTreeMap::new(),
@@ -813,6 +823,14 @@ impl App {
     }
 
     /// Message shown in the status line, e.g. the last rig error. `None` clears it.
+    /// Whether the status line is showing why the rig is unreachable (a standing condition,
+    /// kept while it holds) rather than a one-off message that times out.
+    pub fn status_is_standing(&self) -> bool {
+        !self.connected
+            && self.status.is_some()
+            && self.status.as_deref() == self.disconnect_note.as_deref()
+    }
+
     pub fn set_status(&mut self, status: Option<String>) {
         self.status = status;
     }
@@ -2039,11 +2057,13 @@ impl App {
                 self.last_smeter = None;
                 self.unsupported.clear();
                 self.status = None;
+                self.disconnect_note = None;
                 self.poll_failed = false;
             }
             RigEvent::Disconnected(why) => {
                 self.connected = false;
                 self.entry = None;
+                self.disconnect_note = Some(why.clone());
                 self.status = Some(why);
             }
             RigEvent::Freq(hz) => self.freq = self.stamp(hz),
@@ -2080,8 +2100,32 @@ impl App {
 
     /// Rig work due at `now`: a reconnect attempt while disconnected; while connected the state
     /// poll, the S-meter poll and the active panel's requests (the CW panel's `TB;` every tick).
+    /// Time out the status message: it stays [`STATUS_TTL`] from when `tick` first sees it. While
+    /// the rig is unreachable the line falls back to why, instead of going blank.
+    fn expire_status(&mut self, now: Instant) {
+        let Some(text) = self.status.clone() else {
+            self.status_seen = None;
+            return;
+        };
+        match &self.status_seen {
+            Some((seen, at)) if *seen == text => {
+                let standing = !self.connected && self.disconnect_note.as_deref() == Some(&text);
+                if !standing && now.duration_since(*at) >= STATUS_TTL {
+                    self.status = if self.connected {
+                        None
+                    } else {
+                        self.disconnect_note.clone()
+                    };
+                    self.status_seen = self.status.clone().map(|t| (t, now));
+                }
+            }
+            _ => self.status_seen = Some((text, now)),
+        }
+    }
+
     pub fn tick(&mut self, now: Instant) -> Vec<Command> {
         self.now = now;
+        self.expire_status(now);
         self.tick_plans(now);
         self.sync_embedded();
         if !self.connected {

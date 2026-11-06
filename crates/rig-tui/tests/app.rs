@@ -10,6 +10,7 @@ use ratatui::layout::Rect;
 use rig_tui::softkeys::Exchange;
 use rig_tui::{
     App, Command, Focus, Overlay, OverlayAction, RECONNECT_EVERY, RigEvent, STATE_POLL_EVERY,
+    STATUS_TTL,
 };
 
 fn has(rows: &[String], needle: &str) -> bool {
@@ -621,5 +622,85 @@ mod connection {
         assert!(has(&rows, "14.074.000"), "{rows:#?}");
         assert!(has(&rows, "CW 500"), "{rows:#?}");
         assert!(!has(&rows, "disconnected"), "{rows:#?}");
+    }
+}
+
+mod status_line {
+    use super::*;
+
+    #[test]
+    fn a_message_goes_away_by_itself() {
+        let mut app = App::new();
+        let t0 = Instant::now();
+        app.tick(t0);
+        app.set_status(Some("split is off".to_string()));
+        app.tick(t0);
+        app.tick(t0 + STATUS_TTL - Duration::from_millis(1));
+        assert_eq!(app.status(), Some("split is off"));
+
+        app.tick(t0 + STATUS_TTL);
+
+        assert_eq!(app.status(), None);
+    }
+
+    #[test]
+    fn a_newer_message_gets_its_own_full_time() {
+        let mut app = App::new();
+        let t0 = Instant::now();
+        app.set_status(Some("first".to_string()));
+        app.tick(t0);
+        let later = t0 + STATUS_TTL - Duration::from_secs(1);
+        app.on_rig(RigEvent::SetFailed("set frequency failed".to_string()));
+        app.tick(later);
+
+        // The first message's time is up, but the second has only just appeared.
+        app.tick(t0 + STATUS_TTL + Duration::from_secs(1));
+        assert_eq!(app.status(), Some("set frequency failed"));
+
+        app.tick(later + STATUS_TTL);
+        assert_eq!(app.status(), None);
+    }
+
+    #[test]
+    fn why_the_rig_is_unreachable_stays_while_it_is_and_goes_when_it_connects() {
+        let mut app = App::new();
+        let t0 = Instant::now();
+        let why = "cannot reach rigctld at 127.0.0.1:4532: connection refused";
+        app.on_rig(RigEvent::Disconnected(why.to_string()));
+        app.tick(t0);
+
+        app.tick(t0 + STATUS_TTL * 10);
+        assert_eq!(app.status(), Some(why));
+
+        app.on_rig(RigEvent::Connected);
+        assert_eq!(app.status(), None);
+    }
+
+    #[test]
+    fn a_standing_reason_is_marked_and_a_one_off_message_is_not() {
+        let mut app = App::new();
+        app.on_rig(RigEvent::Disconnected("cannot reach rigctld".to_string()));
+        let rows = screen(&app, 100, 30);
+        assert!(has(&rows, "\u{26a0} cannot reach rigctld"), "{rows:#?}");
+
+        app.set_status(Some("split is off".to_string()));
+        let rows = screen(&app, 100, 30);
+        assert!(has(&rows, "split is off"), "{rows:#?}");
+        assert!(!has(&rows, "\u{26a0} split is off"), "{rows:#?}");
+    }
+
+    #[test]
+    fn a_message_about_something_else_does_not_outlive_its_time_while_disconnected() {
+        let mut app = App::new();
+        let t0 = Instant::now();
+        app.on_rig(RigEvent::Disconnected("cannot reach rigctld".to_string()));
+        app.tick(t0);
+        app.set_status(Some("not connected".to_string()));
+        app.tick(t0);
+
+        app.tick(t0 + STATUS_TTL);
+
+        // It falls back to the standing reason rather than blanking the line.
+        assert_eq!(app.status(), Some("cannot reach rigctld"));
     }
 }
