@@ -17,7 +17,9 @@ It started as separate tools (a KX3 CW sender, then `sat-tui`) and was folded in
 
 ## What it does
 
-**Rig control (every Activity).** A two-row strip shows frequency, mode and passband, step, connection state, VFO, split with the transmit frequency, RX/TX, S-meter and a UTC clock. You can tune by key or direct entry, cycle modes, switch VFO, and set split. The app starts with no rig, shows "disconnected" with the error, and reconnects by itself.
+**Rig control (every Activity).** A two-row strip shows frequency, mode and passband, step, connection state, your location, VFO, split with the transmit frequency, RX/TX, S-meter and a UTC clock. You can tune by key or direct entry, cycle modes, switch VFO, and set split. The app starts with no rig, shows "disconnected" with the error, and reconnects by itself.
+
+**Location from GPS.** If `gpsd` has a GPS (for example the ClockworkPi uConsole's HackerGadgets AIO v2 board), the strip shows your Locator and the GPS coordinates, and `Ctrl-P` fills the Locator from the fix: in the config dialog to save it, anywhere else for this session only. Only the 6-character Locator is ever saved.
 
 **Two rigs at once.** Rigs are named profiles in the config (`[rig.kx3]`, `[rig.ft847]`). Both stay connected, `Ctrl-R` switches between them (refused while one is transmitting), and `--rig NAME` picks the one to start on. A static capability table decides what each rig can run, rather than asking `rigctld` what it claims.
 
@@ -33,7 +35,7 @@ It started as separate tools (a KX3 CW sender, then `sat-tui`) and was folded in
 
 **Small screens.** It works from 80x24 and adds panes at wider and taller sizes. Below 80x24 it says "Window too small" rather than drawing garbage.
 
-Navigation is `Ctrl-G` (a go-to palette that lists upcoming plans and Activities), `Ctrl-K` (context-aware keybindings, so you never have to remember), and the other chords `Ctrl-B`, `Ctrl-R`, `Ctrl-L`, `Ctrl-J`, `Ctrl-O`. Quitting always asks, and the prompt defaults to cancel.
+Navigation is `Ctrl-G` (a go-to palette that lists upcoming plans and Activities), `Ctrl-K` (context-aware keybindings, so you never have to remember), and the other chords `Ctrl-B`, `Ctrl-R`, `Ctrl-D`, `Ctrl-L`, `Ctrl-J`, `Ctrl-O`, `Ctrl-P`. Quitting always asks, and the prompt defaults to cancel.
 
 ## What I have actually tested
 
@@ -41,6 +43,7 @@ Short version: the KX3 side is in decent shape and the FT-847 side is mostly not
 
 - **KX3:** rig control through `rigctld` (tuning, VFO, split, mode cycling, S-meter read), sending CW and decoding with `TB;`, logging, the config dialog and address lookup have all run against the radio. `rig-tui`'s CW panel and Soft keys have not yet.
 - **FT-847:** the strip, the Satellite Activity's pass list and transmitter list, and Doppler-corrected tracking were driven against the radio with commanded frequencies read back. Nothing was received (no antenna was connected) and nothing was transmitted. Satellite-mode engagement, the passband nudge keys and a real signal on the S-meter are still untested.
+- **GPS:** the uConsole's AIO v2 GPS through `gpsd`, with a 3D fix: the strip, `Ctrl-P` and saving the Locator. Losing the fix while running is untested.
 - **Never tested:** PTT while transmitting, and SOTA and POTA on the air. The reference-data fetching and the export files are covered by tests with fixtures, not by a real activation.
 
 ## Safety and good manners
@@ -49,7 +52,7 @@ Short version: the KX3 side is in decent shape and the FT-847 side is mostly not
 - Nothing transmits except an explicit CW send from a key press. Nothing repeats or sends on its own.
 - Reference data (parks, summits, spots) is cached on disk and fetched only through one rate-limited client; nothing is fetched at startup, and `--offline` turns all of it off.
 - The SOTA API's terms bar AI-generated software without the owner's approval. I designed this software and made its design decisions myself, but I used AI coding assistants to help build it, so I am not assuming the terms don't apply. No SOTA API call is made until the owner approves. The published summit list file is a download, not an API call, and is allowed under the same rule ([ADR 0003](docs/adr/0003-reference-data-is-offline-first-behind-one-client.md)).
-- Your position is runtime input (config, flags), never hard-coded. An address lookup turns a town into a Locator with one request when you ask, and the address is not stored.
+- Your position is runtime input (config, flags, `gpsd`), never hard-coded. An address lookup turns a town into a Locator with one request when you ask, and the address is not stored. The GPS is read through `gpsd` over TCP, not its serial port, and its coordinates are shown but never stored.
 
 ## Install and run
 
@@ -72,7 +75,7 @@ rigctld -m 1 -t 4532
 | KX3 | `127.0.0.1:4532` | 2045 |
 | FT-847 | `127.0.0.1:4533` | 1001 |
 
-Copy `config.example.toml` to `~/.config/hamtools/config.toml` and set your callsign, Locator and rig profiles. The config is edited in place from the app (`Ctrl-O`), and a field-level save keeps your comments and unknown keys. `--offline` and `--grid` are in `rig-tui --help`.
+Copy `config.example.toml` to `~/.config/hamtools/config.toml` and set your callsign, Locator and rig profiles. The config is edited in place from the app (`Ctrl-O`), and a field-level save keeps your comments and unknown keys. `--offline`, `--grid`, `--gpsd` and `--no-gps` are in `rig-tui --help`.
 
 ## The crates
 

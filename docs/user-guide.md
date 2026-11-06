@@ -50,6 +50,8 @@ cargo run -p rig-tui -- --config ./my.toml
 
 On a KX3 over USB the user must be in the `dialout` group, and a login session started before joining the group does not have it.
 
+If `gpsd` is running on `127.0.0.1:2947` with a GPS, the app reads your position from it (section 6, "Finding your Locator"). Without it nothing changes. `--gpsd HOST:PORT` names another gpsd, and `--no-gps` turns it off.
+
 Quit with `q` (when no input has focus) or `Ctrl-C`. Both ask first (see section 8).
 
 ## 2. The rig strip
@@ -227,7 +229,7 @@ cargo run -p rig-tui                          # position from station.locator, e
 cargo run -p rig-tui -- --grid EN71           # or --lat DEG --lon DEG, and --alt METRES
 ```
 
-Your position comes from the command line, then `station.locator` in the shared config, then a town-level default. It is never hard-coded. Satellite settings are the `[satellite]` table of the shared config (see `config.example.toml`).
+Your position comes from the command line, then `station.locator` in the shared config, then a town-level default. It is never hard-coded. The Satellite Activity reads it once at start-up: it does not follow the GPS. A Locator saved in the config dialog applies there after a restart; a session Locator from `Ctrl-P` does not. Satellite settings are the `[satellite]` table of the shared config (see `config.example.toml`).
 
 It works with no rig, as a pass viewer. TLEs (CelesTrak) and transmitters (SatNOGS) download into `~/.cache/hamtools/` when you enter the Activity and they are stale (and with `r`), and their ages are shown in its footer, so it keeps working offline.
 
@@ -279,7 +281,7 @@ Everything from here on is the spec in [#54](https://github.com/matthew-a-gordon
 | SOTA | Activator and "chaser" **Roles** |
 | POTA | Activator and Hunter **Roles** |
 
-One shared top strip (Activity, rig, frequency and mode, UTC clock) is always visible, and each Activity fills the body below. Leaving an Activity keeps its in-memory state, and only the foreground Activity is ticked or asks the rig for anything. Leaving Satellite stops Doppler tracking and the strip says so. The radio is not retuned.
+One shared top strip (Activity, rig, frequency and mode, location, UTC clock) is always visible, and each Activity fills the body below. Leaving an Activity keeps its in-memory state, and only the foreground Activity is ticked or asks the rig for anything. Leaving Satellite stops Doppler tracking and the strip says so. The radio is not retuned.
 
 ### Navigation: the go-to palette
 
@@ -496,6 +498,7 @@ Hunter row markers use characters, not color: `✓` worked today, `~` stale, `P`
 | "split is off" when pressing `S` | Press `s` first. |
 | Logging refuses to open | Set `callsign`; make sure the rig is connected and reporting a recent frequency. |
 | Config dialog will not save | Read-only file (`Ctrl-A` applies for this run), unparsable file (fix and `Ctrl-R`), or a conflict to settle first. |
+| Strip shows "unknown location" or `GPS no fix` | Set `station.locator`, or check gpsd: `cgps` should show a fix, and `/etc/default/gpsd` must name the GPS port in `DEVICES` (on the uConsole AIO v2, `/dev/ttyS0`, with `gpio=27=op,dh` to power it). A cold start indoors can take minutes. |
 | The Satellite Activity shows old data | The footer shows the TLE and transmitter ages. `r` refreshes when online. |
 
 ## Maintaining this guide
