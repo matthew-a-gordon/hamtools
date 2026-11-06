@@ -8,7 +8,7 @@ use std::time::Instant;
 
 use common::*;
 use ratatui::crossterm::event::KeyCode;
-use rig_tui::{App, Command, Feature, Rig, RigMode};
+use rig_tui::{App, Command, Feature, Rig, RigMode, Split};
 
 fn has(rows: &[String], needle: &str) -> bool {
     rows.iter().any(|r| r.contains(needle))
@@ -47,7 +47,7 @@ async fn polling_reads_vfo_split_ptt_and_the_s_meter() {
     let (_rig, app) = ready(&fake).await;
 
     assert_eq!(app.vfo(), Some("VFOB"));
-    assert_eq!(app.split(), Some((false, "VFOA")));
+    assert_eq!(app.split(), Some(&Split::new(false, "VFOA")));
     assert_eq!(app.ptt(), Some(false));
     assert_eq!(app.strength(), Some(20));
     let rows = screen(&app, 80, 24);
@@ -147,7 +147,7 @@ async fn split_on_then_a_transmit_frequency_is_read_back_and_shown() {
 
     let commands = press(&mut app, "s");
     dispatch(&mut rig, &mut app, commands).await;
-    assert_eq!(app.split(), Some((true, "VFOB")));
+    assert_eq!(app.split(), Some(&Split::new(true, "VFOB")));
 
     press(&mut app, "S14080");
     let commands = app.on_key(key(KeyCode::Enter));
@@ -173,12 +173,12 @@ async fn split_off_is_read_back() {
     )
     .await;
     let (mut rig, mut app) = ready(&fake).await;
-    assert_eq!(app.split(), Some((true, "VFOB")));
+    assert_eq!(app.split(), Some(&Split::new(true, "VFOB")));
 
     let commands = press(&mut app, "s");
     dispatch(&mut rig, &mut app, commands).await;
 
-    assert_eq!(app.split(), Some((false, "VFOA")));
+    assert_eq!(app.split(), Some(&Split::new(false, "VFOA")));
     assert!(has(&screen(&app, 80, 24), "split off"));
     assert!(fake.commands().contains(&"+S 0 VFOA".to_string()));
 }

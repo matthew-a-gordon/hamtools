@@ -14,6 +14,7 @@ use crate::app::{App, Entry, Focus};
 use crate::gps::Gps;
 use crate::layout::{self, Fit};
 use crate::rig::Feature;
+use crate::rigs::Split;
 use crate::style::{chip, dim, focus_border, hint_line, panel, red, yellow};
 
 /// Group a frequency in Hz as `14.074.000`.
@@ -203,8 +204,11 @@ fn row_two(app: &App) -> Line<'static> {
     } else {
         match app.split() {
             None => kv("split", Span::styled("-", dim())),
-            Some((false, _)) => kv("split", Span::styled("off", dim())),
-            Some((true, tx_vfo)) => {
+            Some(Split { enabled: false, .. }) => kv("split", Span::styled("off", dim())),
+            Some(Split {
+                enabled: true,
+                tx_vfo,
+            }) => {
                 let tx = tx_vfo.trim_start_matches("VFO");
                 let text = if app.is_unsupported(Feature::SplitFreq) {
                     format!("{tx} (transmit frequency not supported)")

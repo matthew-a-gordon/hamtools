@@ -54,7 +54,9 @@ pub use panel::{LogDefaults, LogMode, Role};
 pub use pota::{PotaHunter, SPOTS_KEY, SPOTS_URL, spots_feed};
 pub use rig::{Command, Feature, Rig, RigEvent, RigMode};
 pub use rig_pool::RigPool;
-pub use rigs::{Capabilities, Capability, LIGHT_POLL_EVERY, Support, table as capability_table};
+pub use rigs::{
+    Capabilities, Capability, LIGHT_POLL_EVERY, Split, Support, table as capability_table,
+};
 pub use sota::{NOTICE as SOTA_SPOTS_NOTICE, SotaChaser};
 pub use tracker::{ActivationView, PlanBanner, Program, Tracker};
 pub use ui::render;

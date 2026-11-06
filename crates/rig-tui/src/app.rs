@@ -3,7 +3,7 @@
 //! terminal.
 
 use std::cell::RefCell;
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime};
@@ -36,7 +36,7 @@ use crate::panel::{LogDefaults, LogMode, Role};
 use crate::plans::{self, PlanRow, Plans, PlansModal, PlansOutcome};
 use crate::refdata::ReferenceData;
 use crate::rig::{Command, Feature, RigEvent, RigMode};
-use crate::rigs::{Capability, RigSlot, Switcher};
+use crate::rigs::{Capability, RigSlot, RigState, Split, Switcher};
 use crate::softkeys::{Exchange, Layers, NamedSet, Resolved, resolve};
 use crate::style::{dim, red};
 use crate::tracker::{self, ActivationView, PlanBanner, Program, Tracker};
@@ -143,11 +143,18 @@ macro_rules! ctx {
     };
     ($self:ident, $recent:expr, $panes:expr, $worked:expr) => {
         ActivityCtx {
-            connected: $self.connected,
-            live: $self.exchange.live($self.callsign.as_deref()),
+            connected: $self.rigs[$self.active].state.connected,
+            live: $self
+                .exchange
+                .live($self.callsign.as_ref().map(Callsign::as_str)),
             soft_keys: &$self.resolved.keys,
-            rig_mode: $self.mode.as_ref().map(|r| &r.value.0),
-            fresh_mode: $self
+            rig_mode: $self.rigs[$self.active]
+                .state
+                .mode
+                .as_ref()
+                .map(|r| &r.value.0),
+            fresh_mode: $self.rigs[$self.active]
+                .state
                 .mode
                 .as_ref()
                 .filter(|r| $self.now.saturating_duration_since(r.at) <= STALE_AFTER)
@@ -158,17 +165,52 @@ macro_rules! ctx {
             activation: $self.activation.as_ref(),
             plans: &[],
             utc: $self.clock(),
-            observer: $self.locator.as_deref().and_then(crate::geo::grid_center),
+            observer: $self
+                .locator
+                .as_ref()
+                .and_then(|g| crate::geo::grid_center(g.as_str())),
             license_class: $self.license_class,
             worked: $worked,
             logged: $self.logging.count(),
-            freq: $self
+            freq: $self.rigs[$self.active]
+                .state
                 .freq
                 .as_ref()
                 .filter(|r| $self.now.saturating_duration_since(r.at) <= STALE_AFTER)
                 .map(|r| r.value),
         }
     };
+}
+
+/// A modal that can be open over the Activity. `App::open_modals` lists the open ones in the
+/// order they take keys; this is the one place that order is written down.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum OpenModal {
+    Config,
+    Switcher,
+    Palette,
+    Export,
+    Plans,
+    Keybindings,
+    Overlay,
+    Bandplan,
+    /// The Contact form, drawn as a modal (an embedded form is not one).
+    LogForm,
+    SessionList,
+}
+
+impl OpenModal {
+    /// Closing it, or opening a Chord's target over it, loses nothing the operator typed.
+    fn holds_nothing_to_lose(self) -> bool {
+        matches!(
+            self,
+            OpenModal::Switcher
+                | OpenModal::Palette
+                | OpenModal::Keybindings
+                | OpenModal::Bandplan
+                | OpenModal::SessionList
+        )
+    }
 }
 
 /// What a cached read of the Log stands for: the file, its modified time and size, and the date.
@@ -212,18 +254,8 @@ pub struct App {
     activation_stale: bool,
     refdata: Option<Arc<ReferenceData>>,
     last_resolve: Option<Instant>,
-    connected: bool,
     now: Instant,
     utc: Option<SystemTime>,
-    freq: Option<Reading<u64>>,
-    mode: Option<Reading<(RigMode, i64)>>,
-    vfo: Option<Reading<String>>,
-    split: Option<Reading<(bool, String)>>,
-    split_freq: Option<Reading<u64>>,
-    ptt: Option<Reading<bool>>,
-    strength: Option<Reading<i32>>,
-    unsupported: BTreeSet<Feature>,
-    step: usize,
     entry: Option<Entry>,
     /// Leaving an Activity stopped Doppler tracking; the strip says so until Satellite is back.
     doppler_stopped: bool,
@@ -236,7 +268,7 @@ pub struct App {
     disconnect_note: Option<String>,
     /// The status came from a failing poll, so the next good poll clears it.
     poll_failed: bool,
-    callsign: Option<String>,
+    callsign: Option<Callsign>,
     logging: Logging,
     /// The General Soft key set (`[macros]`).
     soft_keys: BTreeMap<u8, String>,
@@ -250,7 +282,7 @@ pub struct App {
     exchange_saved: Option<Exchange>,
     /// The layered Soft keys, recomputed whenever a layer changes.
     resolved: Resolved,
-    locator: Option<String>,
+    locator: Option<Grid>,
     /// What gpsd last said (`main` feeds it with [`App::on_gps`]).
     gps: crate::gps::Gps,
     log_path: Option<PathBuf>,
@@ -260,9 +292,6 @@ pub struct App {
     /// The Ctrl-B band plan modal, when open.
     bandplan: Option<BandplanModal>,
     license_class: Option<LicenseClass>,
-    last_connect: Option<Instant>,
-    last_poll: Option<Instant>,
-    last_smeter: Option<Instant>,
     /// The terminal size, once the loop has reported it.
     size: Option<(u16, u16)>,
 }
@@ -274,6 +303,15 @@ impl Default for App {
 }
 
 impl App {
+    /// The Active rig's readings and timers (the one place they live).
+    pub(crate) fn rig(&self) -> &RigState {
+        &self.rigs[self.active].state
+    }
+
+    pub(crate) fn rig_mut(&mut self) -> &mut RigState {
+        &mut self.rigs[self.active].state
+    }
+
     /// An app with no rig yet: disconnected, strip focused, the CW panel registered.
     pub fn new() -> Self {
         Self {
@@ -284,8 +322,8 @@ impl App {
                     name: DEFAULT_RIG_ADDR.to_string(),
                     addr: DEFAULT_RIG_ADDR.to_string(),
                     kind: RigKind::Kx3,
-                    cw: None,
                     split: None,
+                    cw: None,
                     sat_mode: None,
                     bands: None,
                 },
@@ -308,19 +346,9 @@ impl App {
             activation_stale: true,
             refdata: None,
             last_resolve: None,
-            connected: false,
             // Only the starting point for staleness; every tick replaces it.
             now: Instant::now(),
             utc: None,
-            freq: None,
-            mode: None,
-            vfo: None,
-            split: None,
-            split_freq: None,
-            ptt: None,
-            strength: None,
-            unsupported: BTreeSet::new(),
-            step: DEFAULT_STEP,
             entry: None,
             doppler_stopped: false,
             worked_cache: RefCell::new(None),
@@ -346,19 +374,20 @@ impl App {
             config: None,
             bandplan: None,
             license_class: None,
-            last_connect: None,
-            last_poll: None,
-            last_smeter: None,
             size: None,
         }
     }
 
-    /// An app whose `{MYCALL}` is `callsign`.
+    /// An app whose `{MYCALL}` is `callsign`. A callsign that is not valid is left out, and the
+    /// status line says so.
     pub fn with_callsign(callsign: Option<String>) -> Self {
-        Self {
-            callsign,
-            ..Self::new()
+        let mut app = Self::new();
+        match callsign.as_deref().map(Callsign::new) {
+            Some(Ok(call)) => app.callsign = Some(call),
+            Some(Err(e)) => app.status = Some(format!("ignoring the configured callsign: {e}")),
+            None => {}
         }
+        app
     }
 
     /// Bind F1..F6 to canned messages: the General Soft key set (text is uppercase and may hold
@@ -472,8 +501,13 @@ impl App {
     }
 
     /// The Locator in use (6 characters, uppercase), if any.
+    /// A Locator that is not valid is left out, and the status line says so.
     pub fn with_locator(mut self, locator: Option<String>) -> Self {
-        self.locator = locator;
+        match locator.as_deref().map(Grid::new) {
+            Some(Ok(grid)) => self.locator = Some(grid),
+            Some(Err(e)) => self.status = Some(format!("ignoring the configured Locator: {e}")),
+            None => {}
+        }
         self
     }
 
@@ -548,7 +582,7 @@ impl App {
     }
 
     pub fn locator(&self) -> Option<&str> {
-        self.locator.as_deref()
+        self.locator.as_ref().map(Grid::as_str)
     }
 
     /// What gpsd last said about the position.
@@ -571,7 +605,7 @@ impl App {
         self.status = Some(match self.gps {
             Gps::Fix(fix) => {
                 let grid = fix.locator();
-                let message = if self.locator.as_deref() == Some(grid.as_str()) {
+                let message = if self.locator.as_ref() == Some(&grid) {
                     format!("Locator {} already matches the GPS", grid.as_str())
                 } else {
                     format!(
@@ -579,7 +613,7 @@ impl App {
                         grid.as_str()
                     )
                 };
-                self.locator = Some(grid.as_str().to_string());
+                self.locator = Some(grid);
                 message
             }
             Gps::NoFix => "GPS has no fix yet; the Locator is unchanged".to_string(),
@@ -658,24 +692,30 @@ impl App {
         self.logging.form_open() && !self.embedded()
     }
 
-    /// At least one modal is open, and every open one holds nothing to lose: the go-to palette,
-    /// keybindings, bandplan, rig switcher and session list.
-    fn only_no_loss_modals_open(&self) -> bool {
-        let any = self.palette.is_some()
-            || self.keybindings.is_some()
-            || self.bandplan.is_some()
-            || self.switcher_open()
-            || self.logging.list_open();
-        any && self.config.is_none()
-            && self.export_modal.is_none()
-            && self.plans_modal.is_none()
-            && self.overlay.is_none()
-            && !self.form_modal_open()
+    /// The modals that are open, in the order they take keys (the first has the keyboard). The
+    /// quit confirmation is not here: it sits above all of them.
+    fn open_modals(&self) -> Vec<OpenModal> {
+        [
+            (self.config.is_some(), OpenModal::Config),
+            (self.switcher_open(), OpenModal::Switcher),
+            (self.palette.is_some(), OpenModal::Palette),
+            (self.export_modal.is_some(), OpenModal::Export),
+            (self.plans_modal.is_some(), OpenModal::Plans),
+            (self.keybindings.is_some(), OpenModal::Keybindings),
+            (self.overlay.is_some(), OpenModal::Overlay),
+            (self.bandplan.is_some(), OpenModal::Bandplan),
+            (self.form_modal_open(), OpenModal::LogForm),
+            (self.logging.list_open(), OpenModal::SessionList),
+        ]
+        .into_iter()
+        .filter_map(|(open, modal)| open.then_some(modal))
+        .collect()
     }
 
-    /// A Logging modal has the keyboard: the form as a modal, or the session list.
-    fn logging_modal_open(&self) -> bool {
-        self.form_modal_open() || self.logging.list_open()
+    /// At least one modal is open, and every open one holds nothing to lose.
+    fn only_no_loss_modals_open(&self) -> bool {
+        let open = self.open_modals();
+        !open.is_empty() && open.iter().all(|m| m.holds_nothing_to_lose())
     }
 
     /// Stored plans of the program `name` that are not done, soonest first, for a picker.
@@ -772,7 +812,10 @@ impl App {
                 .zip(s.lon)
                 .or_else(|| s.grid.as_deref().and_then(crate::geo::grid_center))
         });
-        let mine = self.locator.as_deref().and_then(crate::geo::grid_center);
+        let mine = self
+            .locator
+            .as_ref()
+            .and_then(|g| crate::geo::grid_center(g.as_str()));
         self.activation = Some(ActivationView {
             banner: Some(PlanBanner {
                 program,
@@ -815,7 +858,7 @@ impl App {
     /// The name of a rig that is not the Active one but is connected, while the Active rig is
     /// not: where the operator probably wants to be.
     pub fn connected_elsewhere(&self) -> Option<&str> {
-        if self.connected {
+        if self.rig().connected {
             return None;
         }
         self.rigs
@@ -828,7 +871,7 @@ impl App {
     /// Whether the status line is showing why the rig is unreachable (a standing condition,
     /// kept while it holds) rather than a one-off message that times out.
     pub fn status_is_standing(&self) -> bool {
-        !self.connected
+        !self.rig().connected
             && self.status.is_some()
             && self.status.as_deref() == self.disconnect_note.as_deref()
     }
@@ -838,7 +881,7 @@ impl App {
     }
 
     pub fn connected(&self) -> bool {
-        self.connected
+        self.rig().connected
     }
 
     /// The UTC wall clock, as last given to [`App::set_utc`]. The strip shows it and the log form
@@ -858,52 +901,45 @@ impl App {
             .map(|r| &r.value)
     }
 
-    fn stamp<T>(&self, value: T) -> Option<Reading<T>> {
-        Some(Reading {
-            value,
-            at: self.now,
-        })
-    }
-
     /// The receive frequency in Hz, if the rig reported it within the last two seconds.
     pub fn frequency(&self) -> Option<u64> {
-        self.fresh(&self.freq).copied()
+        self.fresh(&self.rig().freq).copied()
     }
 
     /// The rig's mode, if reported within the last two seconds.
     pub fn rig_mode(&self) -> Option<&RigMode> {
-        self.fresh(&self.mode).map(|(mode, _)| mode)
+        self.fresh(&self.rig().mode).map(|(mode, _)| mode)
     }
 
     pub fn passband(&self) -> Option<i64> {
-        self.fresh(&self.mode).map(|(_, passband)| *passband)
+        self.fresh(&self.rig().mode).map(|(_, passband)| *passband)
     }
 
     /// The selected VFO's hamlib name (e.g. `VFOA`), if current.
     pub fn vfo(&self) -> Option<&str> {
-        self.fresh(&self.vfo).map(String::as_str)
+        self.fresh(&self.rig().vfo).map(String::as_str)
     }
 
     /// Whether split is on and the transmit VFO, if current.
-    pub fn split(&self) -> Option<(bool, &str)> {
-        self.fresh(&self.split).map(|(on, vfo)| (*on, vfo.as_str()))
+    pub fn split(&self) -> Option<&Split> {
+        self.fresh(&self.rig().split)
     }
 
     pub fn ptt(&self) -> Option<bool> {
-        self.fresh(&self.ptt).copied()
+        self.fresh(&self.rig().ptt).copied()
     }
 
     /// S-meter in dB relative to S9, if current.
     pub fn strength(&self) -> Option<i32> {
-        self.fresh(&self.strength).copied()
+        self.fresh(&self.rig().strength).copied()
     }
 
     pub fn tuning_step(&self) -> u64 {
-        STEPS[self.step]
+        STEPS[self.rig().step]
     }
 
     pub fn is_unsupported(&self, feature: Feature) -> bool {
-        self.unsupported.contains(&feature)
+        self.rig().unsupported.contains(&feature)
     }
 
     pub(crate) fn entry(&self) -> Option<&Entry> {
@@ -920,8 +956,8 @@ impl App {
     /// `Rig::read_tx_frequency`.
     pub fn transmit_frequency(&self) -> Option<u64> {
         match self.split() {
-            Some((true, _)) => self.fresh(&self.split_freq).copied(),
-            Some((false, _)) => self.frequency(),
+            Some(Split { enabled: true, .. }) => self.fresh(&self.rig().split_freq).copied(),
+            Some(Split { enabled: false, .. }) => self.frequency(),
             // Split not readable at all (unsupported): the rig transmits where it receives.
             None if self.is_unsupported(Feature::Split) => self.frequency(),
             None => None,
@@ -929,7 +965,7 @@ impl App {
     }
 
     pub fn callsign(&self) -> Option<&str> {
-        self.callsign.as_deref()
+        self.callsign.as_ref().map(Callsign::as_str)
     }
 
     pub fn soft_keys(&self) -> &BTreeMap<u8, String> {
@@ -937,16 +973,7 @@ impl App {
     }
 
     pub fn has_overlay(&self) -> bool {
-        self.overlay.is_some()
-            || self.config.is_some()
-            || self.switcher_open()
-            || self.bandplan.is_some()
-            || self.logging_modal_open()
-            || self.quit_confirm.is_some()
-            || self.palette.is_some()
-            || self.plans_modal.is_some()
-            || self.export_modal.is_some()
-            || self.keybindings.is_some()
+        self.quit_confirm.is_some() || !self.open_modals().is_empty()
     }
 
     /// Why tuning from the band plan is refused right now (the foreground Activity is
@@ -1286,7 +1313,7 @@ impl App {
         let Some(plan) = self.plans.list().iter().find(|p| p.id == id).cloned() else {
             return;
         };
-        let Some(operator) = self.callsign.clone() else {
+        let Some(operator) = self.callsign.as_ref().map(|c| c.as_str().to_string()) else {
             return self.plans_notice("no callsign: set `callsign` in the config file".into());
         };
         let records = match self
@@ -1417,8 +1444,7 @@ impl App {
     fn current_log(&self) -> Result<Log, String> {
         let operator = self
             .callsign
-            .as_deref()
-            .and_then(|c| Callsign::new(c).ok())
+            .clone()
             .ok_or("no callsign: set `callsign` in the config file to log")?;
         let path = self
             .log_path
@@ -1430,7 +1456,7 @@ impl App {
 
     /// The Locator for `MY_GRIDSQUARE`, if one is set and valid.
     fn own_grid(&self) -> Option<Grid> {
-        self.locator.as_deref().and_then(|g| Grid::new(g).ok())
+        self.locator.clone()
     }
 
     /// The `l` gate. Opens the form with a snapshot of the rig, or says in the status line which
@@ -1493,7 +1519,7 @@ impl App {
         if let Some(why) = self.activities[self.foreground].log_blocked() {
             return Err(why);
         }
-        if !self.connected {
+        if !self.rig().connected {
             return Err("not connected: cannot log".to_string());
         }
         let (Some(_), Some(rig_mode)) = (self.frequency(), self.rig_mode().cloned()) else {
@@ -1570,7 +1596,7 @@ impl App {
 
     /// The last mode the rig reported, however old: the panel stays put while the link is down.
     fn last_mode(&self) -> Option<&RigMode> {
-        self.mode.as_ref().map(|r| &r.value.0)
+        self.rig().mode.as_ref().map(|r| &r.value.0)
     }
 
     /// Tell the app the terminal size, so keys are ignored while the window is too small.
@@ -1619,88 +1645,8 @@ impl App {
             self.entry = None;
             return self.perform(action);
         }
-        if let Some(dialog) = &mut self.config {
-            return match dialog.on_key(key) {
-                Outcome::Stay => Vec::new(),
-                Outcome::Lookup(address) => vec![Command::Lookup(address)],
-                Outcome::Close => {
-                    self.config = None;
-                    vec![Command::ClearGeocodeCache]
-                }
-                Outcome::Apply(settings) => {
-                    self.config = None;
-                    let mut commands = self.apply_settings(*settings);
-                    commands.push(Command::ClearGeocodeCache);
-                    commands
-                }
-            };
-        }
-        if self.switcher_open() {
-            self.on_switcher_key(key);
-            return Vec::new();
-        }
-        if let Some(palette) = &mut self.palette {
-            match palette.on_key(key) {
-                PaletteOutcome::Keep => {}
-                PaletteOutcome::Close => self.palette = None,
-                PaletteOutcome::Choose(target) => {
-                    self.palette = None;
-                    match target {
-                        Target::Activity(index) => self.set_foreground(index),
-                        Target::Plan(index) => self.launch_plan(index),
-                        Target::ManagePlans => self.open_plans(),
-                    }
-                }
-            }
-            return Vec::new();
-        }
-        if let Some(modal) = &mut self.export_modal {
-            if modal.on_key(key) {
-                self.export_modal = None;
-            }
-            return Vec::new();
-        }
-        if self.plans_modal.is_some() {
-            self.on_plans_key(key);
-            return Vec::new();
-        }
-        if let Some(modal) = &mut self.keybindings {
-            if modal.on_key(key) == OverlayAction::Close {
-                self.keybindings = None;
-            }
-            return Vec::new();
-        }
-        if let Some(overlay) = &mut self.overlay {
-            if overlay.on_key(key) == OverlayAction::Close {
-                self.overlay = None;
-            }
-            return Vec::new();
-        }
-        if let Some(modal) = &mut self.bandplan {
-            let rx = self.freq.as_ref().map(|r| r.value);
-            let action = modal.on_key(key, rx);
-            return self.on_bandplan_action(action);
-        }
-        if self.logging_modal_open() {
-            // The session list holds nothing to lose, so a Chord may open over it.
-            if let (true, Some(action)) = (!self.form_modal_open(), chord) {
-                return self.perform(action);
-            }
-            // Soft keys work while the form has the keyboard; the Activity sees what is typed.
-            if self.form_modal_open() && matches!(key.code, KeyCode::F(1..=6)) {
-                let ctx = ctx!(self);
-                return match self.activities[self.foreground].on_key(key, &ctx) {
-                    Some(out) => {
-                        if out.status.is_some() {
-                            self.status = out.status;
-                        }
-                        out.commands
-                    }
-                    None => Vec::new(),
-                };
-            }
-            self.feed_form(key);
-            return Vec::new();
+        if let Some(modal) = self.open_modals().first().copied() {
+            return self.on_modal_key(modal, key, chord);
         }
         if let Some(action) = chord {
             self.entry = None;
@@ -1729,6 +1675,114 @@ impl App {
             return commands;
         }
         self.on_strip_key(key)
+    }
+
+    /// A key for the modal that has the keyboard.
+    fn on_modal_key(
+        &mut self,
+        modal: OpenModal,
+        key: KeyEvent,
+        chord: Option<Action>,
+    ) -> Vec<Command> {
+        match modal {
+            OpenModal::Config => {
+                let Some(dialog) = &mut self.config else {
+                    return Vec::new();
+                };
+                match dialog.on_key(key) {
+                    Outcome::Stay => Vec::new(),
+                    Outcome::Lookup(address) => vec![Command::Lookup(address)],
+                    Outcome::Close => {
+                        self.config = None;
+                        vec![Command::ClearGeocodeCache]
+                    }
+                    Outcome::Apply(settings) => {
+                        self.config = None;
+                        let mut commands = self.apply_settings(*settings);
+                        commands.push(Command::ClearGeocodeCache);
+                        commands
+                    }
+                }
+            }
+            OpenModal::Switcher => {
+                self.on_switcher_key(key);
+                Vec::new()
+            }
+            OpenModal::Palette => {
+                if let Some(palette) = &mut self.palette {
+                    match palette.on_key(key) {
+                        PaletteOutcome::Keep => {}
+                        PaletteOutcome::Close => self.palette = None,
+                        PaletteOutcome::Choose(target) => {
+                            self.palette = None;
+                            match target {
+                                Target::Activity(index) => self.set_foreground(index),
+                                Target::Plan(index) => self.launch_plan(index),
+                                Target::ManagePlans => self.open_plans(),
+                            }
+                        }
+                    }
+                }
+                Vec::new()
+            }
+            OpenModal::Export => {
+                if let Some(modal) = &mut self.export_modal
+                    && modal.on_key(key)
+                {
+                    self.export_modal = None;
+                }
+                Vec::new()
+            }
+            OpenModal::Plans => {
+                self.on_plans_key(key);
+                Vec::new()
+            }
+            OpenModal::Keybindings => {
+                if let Some(modal) = &mut self.keybindings
+                    && modal.on_key(key) == OverlayAction::Close
+                {
+                    self.keybindings = None;
+                }
+                Vec::new()
+            }
+            OpenModal::Overlay => {
+                if let Some(overlay) = &mut self.overlay
+                    && overlay.on_key(key) == OverlayAction::Close
+                {
+                    self.overlay = None;
+                }
+                Vec::new()
+            }
+            OpenModal::Bandplan => {
+                let rx = self.rigs[self.active].state.freq.as_ref().map(|r| r.value);
+                let Some(modal) = &mut self.bandplan else {
+                    return Vec::new();
+                };
+                let action = modal.on_key(key, rx);
+                self.on_bandplan_action(action)
+            }
+            OpenModal::SessionList | OpenModal::LogForm => {
+                // The session list holds nothing to lose, so a Chord may open over it.
+                if let (OpenModal::SessionList, Some(action)) = (modal, chord) {
+                    return self.perform(action);
+                }
+                // Soft keys work while the form has the keyboard; the Activity sees what is typed.
+                if modal == OpenModal::LogForm && matches!(key.code, KeyCode::F(1..=6)) {
+                    let ctx = ctx!(self);
+                    return match self.activities[self.foreground].on_key(key, &ctx) {
+                        Some(out) => {
+                            if out.status.is_some() {
+                                self.status = out.status;
+                            }
+                            out.commands
+                        }
+                        None => Vec::new(),
+                    };
+                }
+                self.feed_form(key);
+                Vec::new()
+            }
+        }
     }
 
     /// Give a key to the Contact form (modal or embedded) and act on a save.
@@ -1894,11 +1948,13 @@ impl App {
             Action::TuneUp => self.tune(true),
             Action::TuneDown => self.tune(false),
             Action::StepUp => {
-                self.step = (self.step + 1).min(STEPS.len() - 1);
+                let step = &mut self.rig_mut().step;
+                *step = (*step + 1).min(STEPS.len() - 1);
                 Vec::new()
             }
             Action::StepDown => {
-                self.step = self.step.saturating_sub(1);
+                let step = &mut self.rig_mut().step;
+                *step = step.saturating_sub(1);
                 Vec::new()
             }
             Action::ModeNext => self.cycle_mode(true),
@@ -1911,10 +1967,10 @@ impl App {
 
     /// Whether a control can be used now; if not, say why in the status line.
     fn ready(&mut self) -> bool {
-        if !self.connected {
+        if !self.rig().connected {
             self.status = Some("not connected".to_string());
         }
-        self.connected
+        self.rig().connected
     }
 
     /// `ready`, and the feature is not known to be unsupported.
@@ -1931,8 +1987,8 @@ impl App {
 
     fn require_split_on(&mut self) -> bool {
         match self.split() {
-            Some((true, _)) => true,
-            Some((false, _)) => {
+            Some(Split { enabled: true, .. }) => true,
+            Some(Split { enabled: false, .. }) => {
                 self.status = Some("split is off".to_string());
                 false
             }
@@ -2028,7 +2084,7 @@ impl App {
         if !self.require(Feature::Split) {
             return Vec::new();
         }
-        let Some((on, _)) = self.split() else {
+        let Some(on) = self.split().map(|s| s.enabled) else {
             self.status = Some("split state not known yet".to_string());
             return Vec::new();
         };
@@ -2046,51 +2102,43 @@ impl App {
     }
 
     pub fn on_rig(&mut self, event: RigEvent) {
-        match event {
+        // Panel replies are the one event the Active rig's state does not take in.
+        if let RigEvent::PanelReply { request, reply } = event {
+            match self.activities[self.foreground].on_reply(&request, reply) {
+                Ok(()) => {
+                    if self.poll_failed {
+                        self.status = None;
+                        self.poll_failed = false;
+                    }
+                }
+                Err(why) => {
+                    self.status = Some(why);
+                    self.poll_failed = true;
+                }
+            }
+            return;
+        }
+        // What only the Active rig does with an event, besides recording the reading.
+        let is_mode = matches!(event, RigEvent::Mode { .. });
+        match &event {
             RigEvent::Connected => {
-                self.connected = true;
-                self.last_poll = None;
-                self.last_smeter = None;
-                self.unsupported.clear();
                 self.status = None;
                 self.disconnect_note = None;
                 self.poll_failed = false;
             }
             RigEvent::Disconnected(why) => {
-                self.connected = false;
                 self.entry = None;
                 self.disconnect_note = Some(why.clone());
-                self.status = Some(why);
+                self.status = Some(why.clone());
             }
-            RigEvent::Freq(hz) => self.freq = self.stamp(hz),
-            RigEvent::Mode { mode, passband } => {
-                self.mode = self.stamp((mode, passband));
-                let ctx = ctx!(self);
-                self.activities[self.foreground].on_mode(&ctx);
-            }
-            RigEvent::Vfo(vfo) => self.vfo = self.stamp(vfo),
-            RigEvent::Split { enabled, tx_vfo } => self.split = self.stamp((enabled, tx_vfo)),
-            RigEvent::SplitFreq(hz) => self.split_freq = self.stamp(hz),
-            RigEvent::Ptt(on) => self.ptt = self.stamp(on),
-            RigEvent::Strength(db) => self.strength = self.stamp(db),
-            RigEvent::Unsupported(feature) => {
-                self.unsupported.insert(feature);
-            }
-            RigEvent::SetFailed(why) | RigEvent::SendFailed(why) => self.status = Some(why),
-            RigEvent::PanelReply { request, reply } => {
-                match self.activities[self.foreground].on_reply(&request, reply) {
-                    Ok(()) => {
-                        if self.poll_failed {
-                            self.status = None;
-                            self.poll_failed = false;
-                        }
-                    }
-                    Err(why) => {
-                        self.status = Some(why);
-                        self.poll_failed = true;
-                    }
-                }
-            }
+            RigEvent::SetFailed(why) | RigEvent::SendFailed(why) => self.status = Some(why.clone()),
+            _ => {}
+        }
+        let now = self.now;
+        self.rig_mut().apply(event, now);
+        if is_mode {
+            let ctx = ctx!(self);
+            self.activities[self.foreground].on_mode(&ctx);
         }
     }
 
@@ -2105,9 +2153,10 @@ impl App {
         };
         match &self.status_seen {
             Some((seen, at)) if *seen == text => {
-                let standing = !self.connected && self.disconnect_note.as_deref() == Some(&text);
+                let standing =
+                    !self.rig().connected && self.disconnect_note.as_deref() == Some(&text);
                 if !standing && now.duration_since(*at) >= STATUS_TTL {
-                    self.status = if self.connected {
+                    self.status = if self.rig().connected {
                         None
                     } else {
                         self.disconnect_note.clone()
@@ -2124,13 +2173,14 @@ impl App {
         self.expire_status(now);
         self.tick_plans(now);
         self.sync_embedded();
-        if !self.connected {
+        if !self.rig().connected {
             let due = self
+                .rig()
                 .last_connect
                 .is_none_or(|at| now.duration_since(at) >= RECONNECT_EVERY);
             let mut commands = self.tick_foreground(now);
             if due {
-                self.last_connect = Some(now);
+                self.rig_mut().last_connect = Some(now);
                 commands.insert(0, Command::Connect);
             }
             commands.extend(self.tick_inactive(now));
@@ -2138,17 +2188,19 @@ impl App {
         }
         let mut commands = self.tick_inactive(now);
         if self
+            .rig()
             .last_poll
             .is_none_or(|at| now.duration_since(at) >= STATE_POLL_EVERY)
         {
-            self.last_poll = Some(now);
+            self.rig_mut().last_poll = Some(now);
             commands.push(Command::PollState);
         }
         if self
+            .rig()
             .last_smeter
             .is_none_or(|at| now.duration_since(at) >= SMETER_POLL_EVERY)
         {
-            self.last_smeter = Some(now);
+            self.rig_mut().last_smeter = Some(now);
             commands.push(Command::PollSMeter);
         }
         commands.extend(self.tick_foreground(now));
@@ -2202,7 +2254,7 @@ impl App {
             let view = BandView {
                 rx: self.frequency(),
                 tx: match self.split() {
-                    Some((true, _)) => self.transmit_frequency(),
+                    Some(Split { enabled: true, .. }) => self.transmit_frequency(),
                     _ => None,
                 },
                 class: self.license_class,

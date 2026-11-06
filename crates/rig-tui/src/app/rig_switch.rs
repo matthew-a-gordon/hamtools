@@ -1,15 +1,14 @@
 //! Rig profiles on `App`: the Active rig, switching, the light poll of the inactive rig and the
 //! rig-related settings. A child of `app` so it can reach `App`'s private readings.
 
-use std::mem;
 use std::time::Instant;
 
-use hamtools_config::{Callsign, Grid, Settings};
+use hamtools_config::Settings;
 
 use super::{App, Reading};
 use crate::rig::{Command, RigEvent};
 use crate::rigs::{
-    Capabilities, Capability, LIGHT_POLL_EVERY, RigState, Switcher, SwitcherOutcome, SwitcherRow,
+    Capabilities, Capability, LIGHT_POLL_EVERY, Switcher, SwitcherOutcome, SwitcherRow,
 };
 
 use ratatui::crossterm::event::KeyEvent;
@@ -67,7 +66,8 @@ impl App {
     /// A rig that is not connected cannot be transmitting as far as the app can tell, so a dead
     /// radio never blocks a switch.
     pub fn transmitting(&self) -> bool {
-        self.connected && (self.ptt() == Some(true) || self.activities[self.foreground].sending())
+        self.rig().connected
+            && (self.ptt() == Some(true) || self.activities[self.foreground].sending())
     }
 
     /// What the app is using now, as config settings.
@@ -89,8 +89,8 @@ impl App {
                 .collect()
         };
         Settings {
-            callsign: self.callsign.as_deref().and_then(|c| Callsign::new(c).ok()),
-            locator: self.locator.as_deref().and_then(|g| Grid::new(g).ok()),
+            callsign: self.callsign.clone(),
+            locator: self.locator.clone(),
             log_path: self.log_path.clone(),
             export_dir: self.export_dir.clone(),
             license_class: self.license_class,
@@ -107,8 +107,8 @@ impl App {
     /// Use saved settings now, with no restart. Profiles can be edited (address) but not added
     /// or removed here. Returns what the rig side must do.
     pub(super) fn apply_settings(&mut self, settings: Settings) -> Vec<Command> {
-        self.callsign = settings.callsign.map(|c| c.as_str().to_string());
-        self.locator = settings.locator.map(|g| g.as_str().to_string());
+        self.callsign = settings.callsign;
+        self.locator = settings.locator;
         self.log_path = settings.log_path;
         self.license_class = settings.license_class;
         self.soft_keys = settings.macros;
@@ -130,36 +130,16 @@ impl App {
                 continue;
             }
             self.rigs[index].addr = profile.addr.clone();
-            if index == self.active {
-                self.connected = false;
-                self.last_connect = None;
-            } else {
-                self.rigs[index].state.connected = false;
-                self.rigs[index].state.last_light = None;
-            }
+            let state = &mut self.rigs[index].state;
+            state.connected = false;
+            state.last_connect = None;
+            state.last_light = None;
             commands.push(Command::SetRigAddr {
                 rig: index,
                 addr: profile.addr.clone(),
             });
         }
         commands
-    }
-
-    /// Exchange the Active rig's readings with `other` (the parked state of another rig).
-    fn swap_rig_state(&mut self, other: &mut RigState) {
-        mem::swap(&mut self.connected, &mut other.connected);
-        mem::swap(&mut self.freq, &mut other.freq);
-        mem::swap(&mut self.mode, &mut other.mode);
-        mem::swap(&mut self.vfo, &mut other.vfo);
-        mem::swap(&mut self.split, &mut other.split);
-        mem::swap(&mut self.split_freq, &mut other.split_freq);
-        mem::swap(&mut self.ptt, &mut other.ptt);
-        mem::swap(&mut self.strength, &mut other.strength);
-        mem::swap(&mut self.unsupported, &mut other.unsupported);
-        mem::swap(&mut self.step, &mut other.step);
-        mem::swap(&mut self.last_connect, &mut other.last_connect);
-        mem::swap(&mut self.last_poll, &mut other.last_poll);
-        mem::swap(&mut self.last_smeter, &mut other.last_smeter);
     }
 
     /// Make rig `to` the Active rig, keeping each rig's own state. Refused while transmitting.
@@ -177,10 +157,7 @@ impl App {
             return;
         }
         let from = self.active;
-        let mut parked = mem::replace(&mut self.rigs[to].state, RigState::new(0));
-        self.swap_rig_state(&mut parked);
-        parked.last_light = Some(self.now);
-        self.rigs[from].state = parked;
+        self.rigs[from].state.last_light = Some(self.now);
         self.active = to;
         self.entry = None;
         self.poll_failed = false;
@@ -258,7 +235,7 @@ impl App {
             .map(|(i, slot)| {
                 let active = i == self.active;
                 let (connected, freq, mode) = if active {
-                    (self.connected, &self.freq, &self.mode)
+                    (self.rig().connected, &self.rig().freq, &self.rig().mode)
                 } else {
                     (slot.state.connected, &slot.state.freq, &slot.state.mode)
                 };

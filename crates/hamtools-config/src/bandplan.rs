@@ -16,6 +16,28 @@ use toml_edit::{DocumentMut, Item, Table, Value};
 
 use crate::LicenseClass;
 
+/// A band plan layer that failed its checks: which layer, and what is wrong with it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct BandPlanError {
+    pub layer: String,
+    pub message: String,
+}
+
+impl std::fmt::Display for BandPlanError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}: {}", self.layer, self.message)
+    }
+}
+
+impl std::error::Error for BandPlanError {}
+
+fn bad(layer: &str, message: impl Into<String>) -> BandPlanError {
+    BandPlanError {
+        layer: layer.to_string(),
+        message: message.into(),
+    }
+}
+
 const PRIVILEGES: &str = include_str!("../data/privileges.toml");
 const ARRL: &str = include_str!("../data/arrl.toml");
 const SATELLITE: &str = include_str!("../data/satellite.toml");
@@ -72,7 +94,7 @@ impl BandPlan {
     }
 
     /// Parse and check the three layer files.
-    pub fn parse(privileges: &str, arrl: &str, satellite: &str) -> Result<Self, String> {
+    pub fn parse(privileges: &str, arrl: &str, satellite: &str) -> Result<Self, BandPlanError> {
         let (privilege, channels) = read_layer(privileges, "privileges", true)?;
         let (arrl, _) = read_layer(arrl, "arrl", false)?;
         let (satellite, _) = read_layer(satellite, "satellite", false)?;
@@ -117,18 +139,24 @@ impl BandPlan {
     }
 }
 
-fn read_layer(text: &str, name: &str, privilege: bool) -> Result<(Layer, Vec<Channel>), String> {
-    let doc: DocumentMut = text.parse().map_err(|e| format!("{name}: {e}"))?;
+fn read_layer(
+    text: &str,
+    name: &str,
+    privilege: bool,
+) -> Result<(Layer, Vec<Channel>), BandPlanError> {
+    let doc: DocumentMut = text
+        .parse()
+        .map_err(|e: toml_edit::TomlError| bad(name, e.to_string()))?;
     let as_of = doc
         .get("meta")
         .and_then(Item::as_table_like)
         .and_then(|t| t.get("as_of"))
         .and_then(Item::as_str)
-        .ok_or_else(|| format!("{name}: meta.as_of is missing"))?
+        .ok_or_else(|| bad(name, "meta.as_of is missing"))?
         .to_string();
     let b = as_of.as_bytes();
     if b.len() != 10 || b[4] != b'-' || b[7] != b'-' {
-        return Err(format!("{name}: meta.as_of must be YYYY-MM-DD"));
+        return Err(bad(name, "meta.as_of must be YYYY-MM-DD"));
     }
 
     let mut rows = Vec::new();
@@ -139,9 +167,12 @@ fn read_layer(text: &str, name: &str, privilege: bool) -> Result<(Layer, Vec<Cha
     }
     for pair in rows.windows(2) {
         if pair[0].hi_hz > pair[1].lo_hz {
-            return Err(format!(
-                "{name}: rows overlap or are not sorted: {}-{} then {}-{}",
-                pair[0].lo_hz, pair[0].hi_hz, pair[1].lo_hz, pair[1].hi_hz
+            return Err(bad(
+                name,
+                format!(
+                    "rows overlap or are not sorted: {}-{} then {}-{}",
+                    pair[0].lo_hz, pair[0].hi_hz, pair[1].lo_hz, pair[1].hi_hz
+                ),
             ));
         }
     }
@@ -164,33 +195,33 @@ fn read_layer(text: &str, name: &str, privilege: bool) -> Result<(Layer, Vec<Cha
             .windows(2)
             .any(|p| p[0].carrier_hz >= p[1].carrier_hz)
         {
-            return Err(format!("{name}: channels are not sorted"));
+            return Err(bad(name, "channels are not sorted"));
         }
     }
     Ok((Layer { as_of, rows }, channels))
 }
 
 /// The inline tables of an array-of-inline-tables key.
-fn tables(doc: &DocumentMut, key: &str, name: &str) -> Result<Vec<Table>, String> {
+fn tables(doc: &DocumentMut, key: &str, name: &str) -> Result<Vec<Table>, BandPlanError> {
     let Some(item) = doc.get(key) else {
         return Ok(Vec::new());
     };
     let array = item
         .as_array()
-        .ok_or_else(|| format!("{name}: {key} must be an array of tables"))?;
+        .ok_or_else(|| bad(name, format!("{key} must be an array of tables")))?;
     array
         .iter()
         .map(|v| match v {
             Value::InlineTable(t) => Ok(t.clone().into_table()),
-            _ => Err(format!("{name}: {key} must hold tables")),
+            _ => Err(bad(name, format!("{key} must hold tables"))),
         })
         .collect()
 }
 
-fn read_row(t: &Table, name: &str, privilege: bool) -> Result<Row, String> {
+fn read_row(t: &Table, name: &str, privilege: bool) -> Result<Row, BandPlanError> {
     let (lo_hz, hi_hz) = (int_of(t, "lo_hz", name)?, int_of(t, "hi_hz", name)?);
     if lo_hz > hi_hz {
-        return Err(format!("{name}: lo_hz {lo_hz} is above hi_hz {hi_hz}"));
+        return Err(bad(name, format!("lo_hz {lo_hz} is above hi_hz {hi_hz}")));
     }
     Ok(Row {
         band: text_of(t, "band", name)?,
@@ -211,30 +242,30 @@ fn read_row(t: &Table, name: &str, privilege: bool) -> Result<Row, String> {
     })
 }
 
-fn text_of(t: &Table, key: &str, name: &str) -> Result<String, String> {
+fn text_of(t: &Table, key: &str, name: &str) -> Result<String, BandPlanError> {
     t.get(key)
         .and_then(Item::as_str)
         .map(str::to_string)
-        .ok_or_else(|| format!("{name}: a row is missing {key}"))
+        .ok_or_else(|| bad(name, format!("a row is missing {key}")))
 }
 
-fn int_of(t: &Table, key: &str, name: &str) -> Result<u64, String> {
+fn int_of(t: &Table, key: &str, name: &str) -> Result<u64, BandPlanError> {
     t.get(key)
         .and_then(Item::as_integer)
         .and_then(|n| u64::try_from(n).ok())
-        .ok_or_else(|| format!("{name}: a row is missing a whole-number {key}"))
+        .ok_or_else(|| bad(name, format!("a row is missing a whole-number {key}")))
 }
 
-fn source_of(t: &Table, name: &str) -> Result<String, String> {
+fn source_of(t: &Table, name: &str) -> Result<String, BandPlanError> {
     let source = text_of(t, "source", name)?;
     if source.trim().is_empty() {
-        return Err(format!("{name}: a row has an empty source"));
+        return Err(bad(name, "a row has an empty source"));
     }
     Ok(source)
 }
 
 /// `x` extra, `a` advanced, `g` general, `t` technician, `n` novice.
-fn classes_of(t: &Table, name: &str) -> Result<Vec<LicenseClass>, String> {
+fn classes_of(t: &Table, name: &str) -> Result<Vec<LicenseClass>, BandPlanError> {
     text_of(t, "classes", name)?
         .chars()
         .map(|c| match c {
@@ -243,20 +274,23 @@ fn classes_of(t: &Table, name: &str) -> Result<Vec<LicenseClass>, String> {
             'g' => Ok(LicenseClass::General),
             't' => Ok(LicenseClass::Technician),
             'n' => Ok(LicenseClass::Novice),
-            other => Err(format!("{name}: unknown class letter {other:?}")),
+            other => Err(bad(name, format!("unknown class letter {other:?}"))),
         })
         .collect()
 }
 
-fn check_band(band: &str, lo_hz: u64, hi_hz: u64, name: &str) -> Result<(), String> {
+fn check_band(band: &str, lo_hz: u64, hi_hz: u64, name: &str) -> Result<(), BandPlanError> {
     let known = BANDS
         .iter()
         .find(|b| b.name == band)
-        .ok_or_else(|| format!("{name}: unknown band {band}"))?;
+        .ok_or_else(|| bad(name, format!("unknown band {band}")))?;
     if lo_hz < known.lower_hz || hi_hz > known.upper_hz {
-        return Err(format!(
-            "{name}: {lo_hz}-{hi_hz} is outside band {band} ({}-{})",
-            known.lower_hz, known.upper_hz
+        return Err(bad(
+            name,
+            format!(
+                "{lo_hz}-{hi_hz} is outside band {band} ({}-{})",
+                known.lower_hz, known.upper_hz
+            ),
         ));
     }
     Ok(())

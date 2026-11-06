@@ -134,19 +134,22 @@ const SAT: &str = include_str!("../data/satellite.toml");
 fn a_row_with_no_source_is_rejected() {
     let bad = SAT.replacen("source = \"fcc-97.207(c)\"", "source = \"\"", 1);
     let err = BandPlan::parse(PRIV, ARRL, &bad).unwrap_err();
-    assert!(err.contains("source"), "{err}");
+    assert!(err.to_string().contains("source"), "{err}");
 }
 
 #[test]
 fn overlapping_or_unsorted_rows_are_rejected() {
     let bad = ARRL.replacen("lo_hz = 28_150_000", "lo_hz = 28_050_000", 1);
     let err = BandPlan::parse(PRIV, &bad, SAT).unwrap_err();
-    assert!(err.contains("overlap") || err.contains("sorted"), "{err}");
+    assert!(
+        err.to_string().contains("overlap") || err.to_string().contains("sorted"),
+        "{err}"
+    );
 }
 
 #[test]
 fn an_edge_outside_its_band_is_rejected() {
     let bad = SAT.replacen("hi_hz = 14_250_000", "hi_hz = 14_400_000", 1);
     let err = BandPlan::parse(PRIV, ARRL, &bad).unwrap_err();
-    assert!(err.contains("band"), "{err}");
+    assert!(err.to_string().contains("band"), "{err}");
 }

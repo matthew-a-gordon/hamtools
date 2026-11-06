@@ -1,7 +1,7 @@
 //! Rig profiles, the static capability table, per-rig state and the Ctrl-R switcher.
 //!
 //! Both rigs stay connected. The Active rig's readings live in `App`'s own fields; when the
-//! operator switches, `App` swaps them with the [`RigState`] parked in the slot, so each rig
+//! operator switches, `App` points at another slot's [`RigState`], so each rig
 //! keeps its connection, last readings and tuning step. Capabilities are a static table keyed
 //! by the profile's kind, not probed from `rigctld` (ADR 0004): hamlib's claims and reality
 //! differ. A row not verified on hardware says so.
@@ -200,15 +200,31 @@ impl Capabilities {
     }
 }
 
+/// Whether the rig is in split, and the VFO it transmits on.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Split {
+    pub enabled: bool,
+    pub tx_vfo: String,
+}
+
+impl Split {
+    pub fn new(enabled: bool, tx_vfo: impl Into<String>) -> Self {
+        Split {
+            enabled,
+            tx_vfo: tx_vfo.into(),
+        }
+    }
+}
+
 /// What the app keeps per rig besides the profile: the readings and timers that belong to one
-/// radio. `App` holds the Active rig's in its own fields and swaps on a switch.
+/// radio. The Active rig's lives here too, in its [`RigSlot`]; there is no second copy.
 #[derive(Debug, Clone)]
 pub(crate) struct RigState {
     pub connected: bool,
     pub freq: Option<Reading<u64>>,
     pub mode: Option<Reading<(RigMode, i64)>>,
     pub vfo: Option<Reading<String>>,
-    pub split: Option<Reading<(bool, String)>>,
+    pub split: Option<Reading<Split>>,
     pub split_freq: Option<Reading<u64>>,
     pub ptt: Option<Reading<bool>>,
     pub strength: Option<Reading<i32>>,
@@ -241,7 +257,8 @@ impl RigState {
         }
     }
 
-    /// Take in what a light poll of this (inactive) rig reported.
+    /// Take in what the rig reported (a light poll for an inactive rig, or any event for the
+    /// Active one).
     pub fn apply(&mut self, event: RigEvent, now: Instant) {
         fn stamp<T>(value: T, at: Instant) -> Option<Reading<T>> {
             Some(Reading { value, at })
@@ -249,13 +266,17 @@ impl RigState {
         match event {
             RigEvent::Connected => {
                 self.connected = true;
+                self.last_poll = None;
+                self.last_smeter = None;
                 self.unsupported.clear();
             }
             RigEvent::Disconnected(_) => self.connected = false,
             RigEvent::Freq(hz) => self.freq = stamp(hz, now),
             RigEvent::Mode { mode, passband } => self.mode = stamp((mode, passband), now),
             RigEvent::Vfo(vfo) => self.vfo = stamp(vfo, now),
-            RigEvent::Split { enabled, tx_vfo } => self.split = stamp((enabled, tx_vfo), now),
+            RigEvent::Split { enabled, tx_vfo } => {
+                self.split = stamp(Split { enabled, tx_vfo }, now)
+            }
             RigEvent::SplitFreq(hz) => self.split_freq = stamp(hz, now),
             RigEvent::Ptt(on) => self.ptt = stamp(on, now),
             RigEvent::Strength(db) => self.strength = stamp(db, now),
