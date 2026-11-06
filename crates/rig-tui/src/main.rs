@@ -154,7 +154,7 @@ fn try_main() -> Result<(), Box<dyn Error>> {
     )));
     // The Satellite Activity is built from whatever the cache holds (nothing is fine). It stays
     // in the background until chosen from the go-to palette. Untested on hardware.
-    let mut downloads = Downloads::new(default_cache_dir(), offline);
+    let downloads = Downloads::new(default_cache_dir(), offline);
     let data = downloads
         .cache()
         .map(|cache| load_data(&cache))
@@ -180,11 +180,7 @@ fn try_main() -> Result<(), Box<dyn Error>> {
         &mut terminal,
         &pool,
         app,
-        &geocoder,
-        Services {
-            downloads: &mut downloads,
-            gps: &gps_rx,
-        },
+        Services::new(downloads, geocoder, gps_rx),
     );
     ratatui::restore();
     result
@@ -303,11 +299,53 @@ impl Downloads {
     }
 }
 
-/// What `dispatch` runs besides the rigs: satellite downloads and the gpsd watcher.
-struct Services<'a> {
-    downloads: &'a mut Downloads,
+/// Everything that works off the screen's thread besides the rigs: satellite downloads, address
+/// lookups and the gpsd watcher. Each hands its answers back through a channel, so `App` stays
+/// free of threads; `poll` is the one place the loop folds them in.
+struct Services {
+    downloads: Downloads,
+    geocoder: Geocoder,
+    lookups: Sender<GeocodeResult>,
+    answers: Receiver<GeocodeResult>,
     /// Changes of GPS state from the gpsd watcher.
-    gps: &'a Receiver<rig_tui::gps::Gps>,
+    gps: Receiver<rig_tui::gps::Gps>,
+}
+
+impl Services {
+    fn new(downloads: Downloads, geocoder: Geocoder, gps: Receiver<rig_tui::gps::Gps>) -> Self {
+        let (lookups, answers) = mpsc::channel();
+        Services {
+            downloads,
+            geocoder,
+            lookups,
+            answers,
+            gps,
+        }
+    }
+
+    /// Fold whatever the services have finished into the app.
+    fn poll(&mut self, app: &mut App) {
+        while let Ok(answer) = self.answers.try_recv() {
+            app.on_geocode(answer);
+        }
+        while let Ok(state) = self.gps.try_recv() {
+            app.on_gps(state);
+        }
+        self.downloads.poll(app);
+    }
+
+    /// Run a command that belongs to a service. Returns false when it is not one of theirs.
+    fn handle(&mut self, app: &mut App, command: &Command) -> bool {
+        match command {
+            Command::Lookup(address) => self
+                .geocoder
+                .lookup_in_background(address.clone(), self.lookups.clone()),
+            Command::ClearGeocodeCache => self.geocoder.clear_cache(),
+            Command::SatelliteRefresh { force } => self.downloads.refresh(app, *force),
+            _ => return false,
+        }
+        true
+    }
 }
 
 /// Run each command against the rig and feed what it reports back to the app. Returns true when
@@ -315,27 +353,15 @@ struct Services<'a> {
 fn dispatch(
     pool: &RigPool,
     app: &mut App,
-    geocoder: &Geocoder,
-    lookups: &Sender<GeocodeResult>,
     services: &mut Services,
     commands: Vec<Command>,
 ) -> bool {
     for command in commands {
-        match &command {
-            Command::Quit => return true,
-            Command::Lookup(address) => {
-                geocoder.lookup_in_background(address.clone(), lookups.clone());
-                continue;
-            }
-            Command::ClearGeocodeCache => {
-                geocoder.clear_cache();
-                continue;
-            }
-            Command::SatelliteRefresh { force } => {
-                services.downloads.refresh(app, *force);
-                continue;
-            }
-            _ => {}
+        if matches!(command, Command::Quit) {
+            return true;
+        }
+        if services.handle(app, &command) {
+            continue;
         }
         // Ordinary commands go to the Active rig; a light poll and an address change name
         // their rig. The pool runs them off this thread; their events come back through
@@ -353,13 +379,8 @@ fn run(
     terminal: &mut DefaultTerminal,
     pool: &RigPool,
     mut app: App,
-    geocoder: &Geocoder,
-    services: Services,
+    mut services: Services,
 ) -> Result<(), Box<dyn Error>> {
-    // The address lookup runs on a short-lived thread; its answer comes back here, like the
-    // satellite downloads, so `App` stays free of threads.
-    let (lookups, answers) = mpsc::channel();
-    let mut services = services;
     let mut active = app.active_rig();
     loop {
         app.set_utc(SystemTime::now());
@@ -372,7 +393,7 @@ fn run(
             && key.kind == KeyEventKind::Press
         {
             let commands = app.on_key(key);
-            if dispatch(pool, &mut app, geocoder, &lookups, &mut services, commands) {
+            if dispatch(pool, &mut app, &mut services, commands) {
                 return Ok(());
             }
         }
@@ -388,16 +409,10 @@ fn run(
             app.on_rig_at(rig, event);
         }
 
-        while let Ok(answer) = answers.try_recv() {
-            app.on_geocode(answer);
-        }
-        while let Ok(state) = services.gps.try_recv() {
-            app.on_gps(state);
-        }
-        services.downloads.poll(&mut app);
+        services.poll(&mut app);
 
         let commands = app.tick(Instant::now());
-        if dispatch(pool, &mut app, geocoder, &lookups, &mut services, commands) {
+        if dispatch(pool, &mut app, &mut services, commands) {
             return Ok(());
         }
     }
