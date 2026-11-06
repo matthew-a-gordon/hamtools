@@ -474,3 +474,47 @@ fn the_switcher_shows_ft847_split_and_sat_mode_verified_while_cw_stays_untested(
 fn rig_flag_with_no_profiles_errors() {
     assert!(App::new().with_active_rig("kx3").is_err());
 }
+
+mod another_rig_is_up {
+    use super::*;
+
+    #[test]
+    fn the_standing_reason_points_at_a_connected_rig_that_is_not_active() {
+        let mut app = two_rigs(); // kx3 is the Active rig
+        app.on_rig(RigEvent::Disconnected("cannot reach rigctld".to_string()));
+        let rows = screen(&app, 100, 30);
+        assert!(!has(&rows, "is connected"), "{rows:#?}");
+
+        app.on_rig_at(1, RigEvent::Connected);
+        let rows = screen(&app, 100, 30);
+
+        assert!(
+            has(
+                &rows,
+                "ft847 is connected (Ctrl-R to switch). cannot reach rigctld"
+            ),
+            "{rows:#?}"
+        );
+
+        // The hint leads, so it survives the narrowest window with a long reason.
+        app.on_rig(RigEvent::Disconnected(
+            "cannot reach rigctld at 127.0.0.1:4532: i/o error: Connection refused (os error 111)"
+                .to_string(),
+        ));
+        let rows = screen(&app, 80, 24);
+        assert!(
+            has(&rows, "ft847 is connected (Ctrl-R to switch)"),
+            "{rows:#?}"
+        );
+    }
+
+    #[test]
+    fn nothing_is_added_while_the_active_rig_is_connected() {
+        let mut app = two_rigs();
+        app.on_rig(RigEvent::Connected);
+        app.on_rig_at(1, RigEvent::Connected);
+        app.set_status(Some("split is off".to_string()));
+        let rows = screen(&app, 100, 30);
+        assert!(!has(&rows, "is connected"), "{rows:#?}");
+    }
+}

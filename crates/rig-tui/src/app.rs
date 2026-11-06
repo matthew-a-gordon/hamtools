@@ -823,6 +823,19 @@ impl App {
     }
 
     /// Message shown in the status line, e.g. the last rig error. `None` clears it.
+    /// The name of a rig that is not the Active one but is connected, while the Active rig is
+    /// not: where the operator probably wants to be.
+    pub fn connected_elsewhere(&self) -> Option<&str> {
+        if self.connected {
+            return None;
+        }
+        self.rigs
+            .iter()
+            .enumerate()
+            .find(|(i, slot)| *i != self.active && slot.state.connected)
+            .map(|(_, slot)| slot.name.as_str())
+    }
+
     /// Whether the status line is showing why the rig is unreachable (a standing condition,
     /// kept while it holds) rather than a one-off message that times out.
     pub fn status_is_standing(&self) -> bool {

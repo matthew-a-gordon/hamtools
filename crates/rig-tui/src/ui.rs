@@ -55,7 +55,11 @@ pub fn render(app: &App, frame: &mut Frame) {
         // A standing condition is marked and yellow (the strip already says "disconnected" in
         // red); a one-off message is red and times out.
         let (text, style) = if app.status_is_standing() {
-            (format!("\u{26a0} {status}"), yellow())
+            let elsewhere = app
+                .connected_elsewhere()
+                .map(|name| format!("{name} is connected (Ctrl-R to switch). "))
+                .unwrap_or_default();
+            (format!("\u{26a0} {elsewhere}{status}"), yellow())
         } else {
             (status.to_string(), red())
         };
