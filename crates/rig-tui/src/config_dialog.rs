@@ -19,6 +19,7 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Paragraph, Wrap};
 
 use crate::geocode::{Candidate, GeocodeResult};
+use crate::gps::Gps;
 use crate::softkeys::{Live, preview, validate};
 use crate::style::{dim, red, yellow};
 
@@ -72,6 +73,8 @@ pub(crate) struct ConfigDialog {
     looking_up: bool,
     note: Option<String>,
     message: Option<String>,
+    /// What gpsd says now; `Ctrl-P` fills the Locator from its fix.
+    gps: Gps,
 }
 
 fn key_plain(code: KeyCode) -> KeyEvent {
@@ -333,7 +336,30 @@ impl ConfigDialog {
             looking_up: false,
             note: None,
             message: None,
+            gps: Gps::Absent,
         }
+    }
+
+    /// The GPS state now, kept current by `App` while the dialog is open.
+    pub(crate) fn set_gps(&mut self, gps: Gps) {
+        self.gps = gps;
+    }
+
+    /// `Ctrl-P`: put the GPS fix's Locator in the Locator field (saved only with `Ctrl-S`).
+    fn locator_from_gps(&mut self) -> Outcome {
+        match self.gps {
+            Gps::Fix(fix) => {
+                let index = Field::Locator.index();
+                self.form.set_value(index, fix.locator().as_str());
+                self.form.set_focus(index);
+                self.validate_field(index);
+            }
+            Gps::NoFix => self.message = Some("GPS has no fix yet.".to_string()),
+            Gps::Absent => {
+                self.message = Some("No GPS (gpsd not running or no device).".to_string())
+            }
+        }
+        Outcome::Stay
     }
 
     fn warnings(&self) -> &[Warning] {
@@ -435,6 +461,7 @@ impl ConfigDialog {
         if key.modifiers.contains(KeyModifiers::CONTROL) {
             return match key.code {
                 KeyCode::Char('s') => self.save(),
+                KeyCode::Char('p') => self.locator_from_gps(),
                 KeyCode::Char('a') => self.apply_unsaved(),
                 KeyCode::Char('r') => {
                     self.reload();
@@ -754,6 +781,20 @@ impl ConfigDialog {
                 }
                 for warning in &report.warnings {
                     lines.push(Line::styled(format!("    {warning}"), yellow()));
+                }
+            }
+            if field == Field::Locator {
+                let gps = match self.gps {
+                    Gps::Fix(fix) => Some(format!(
+                        "GPS: {} ({}D fix); Ctrl-P fills it in",
+                        fix.locator().as_str(),
+                        fix.mode
+                    )),
+                    Gps::NoFix => Some("GPS: no fix yet".to_string()),
+                    Gps::Absent => None,
+                };
+                if let Some(text) = gps {
+                    lines.push(Line::styled(format!("    {text}"), dim()));
                 }
             }
             if field == Field::Address {

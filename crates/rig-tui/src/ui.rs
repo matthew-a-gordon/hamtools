@@ -8,6 +8,7 @@ use ratatui::widgets::{Block, Borders, Paragraph, Wrap};
 
 use crate::activity::ActivityCtx;
 use crate::app::{App, Entry, Focus};
+use crate::gps::Gps;
 use crate::layout::{self, Fit};
 use crate::rig::Feature;
 use crate::style::{dim, focus_border, red};
@@ -105,9 +106,34 @@ fn row_one(app: &App) -> String {
         ""
     };
     format!(
-        "{freq}  {mode}  step {}  {connection}{stopped}",
-        format_step(app.tuning_step())
+        "{freq}  {mode}  step {}  {connection}{stopped}  {}",
+        format_step(app.tuning_step()),
+        format_location(app.locator(), app.gps())
     )
+}
+
+/// The Locator in use and, when gpsd has a fix, the coordinates (4 decimals, about 11 m). A
+/// GPS Locator that differs from the one in use is shown so the operator knows to refresh it.
+fn format_location(locator: Option<&str>, gps: Gps) -> String {
+    let coords = |fix: &crate::gps::Fix| {
+        let ns = if fix.lat_deg < 0.0 { 'S' } else { 'N' };
+        let ew = if fix.lon_deg < 0.0 { 'W' } else { 'E' };
+        format!("{:.4}{ns} {:.4}{ew}", fix.lat_deg.abs(), fix.lon_deg.abs())
+    };
+    match (locator, gps) {
+        (Some(grid), Gps::Fix(fix)) => {
+            let gps_grid = fix.locator();
+            if gps_grid.as_str() == grid {
+                format!("{grid}  {}", coords(&fix))
+            } else {
+                format!("{grid} (GPS {})  {}", gps_grid.as_str(), coords(&fix))
+            }
+        }
+        (None, Gps::Fix(fix)) => format!("GPS {}  {}", fix.locator().as_str(), coords(&fix)),
+        (Some(grid), Gps::NoFix) => format!("{grid}  GPS no fix"),
+        (Some(grid), Gps::Absent) => grid.to_string(),
+        (None, Gps::NoFix | Gps::Absent) => "unknown location".to_string(),
+    }
 }
 
 fn row_two(app: &App) -> String {
@@ -208,4 +234,42 @@ fn hint(app: &App) -> &'static str {
         return "digits kHz, or MHz with '.'  Enter set  Esc cancel  Ctrl-C quit";
     }
     app.activity_hint()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::gps::Fix;
+
+    // Town-level Middlebury, IN only.
+    const FIX: Gps = Gps::Fix(Fix {
+        lat_deg: 41.67,
+        lon_deg: -85.71,
+        alt_m: None,
+        mode: 3,
+    });
+
+    #[test]
+    fn location_shows_locator_and_coordinates() {
+        assert_eq!(
+            format_location(Some("EN71DQ"), FIX),
+            "EN71DQ  41.6700N 85.7100W"
+        );
+        assert_eq!(
+            format_location(Some("EN71DR"), FIX),
+            "EN71DR (GPS EN71DQ)  41.6700N 85.7100W"
+        );
+        assert_eq!(format_location(None, FIX), "GPS EN71DQ  41.6700N 85.7100W");
+    }
+
+    #[test]
+    fn location_without_a_fix() {
+        assert_eq!(format_location(Some("EN71DQ"), Gps::Absent), "EN71DQ");
+        assert_eq!(
+            format_location(Some("EN71DQ"), Gps::NoFix),
+            "EN71DQ  GPS no fix"
+        );
+        assert_eq!(format_location(None, Gps::NoFix), "unknown location");
+        assert_eq!(format_location(None, Gps::Absent), "unknown location");
+    }
 }

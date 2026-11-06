@@ -28,6 +28,7 @@ pub enum Action {
     LogForm,
     SessionList,
     Config,
+    LocatorFromGps,
     Quit,
     FreqEntry,
     FreqDigit(char),
@@ -124,7 +125,7 @@ const fn soft(n: u8, label: &'static str) -> KeyEntry {
     )
 }
 
-const SHARED: [KeyEntry; 41] = [
+const SHARED: [KeyEntry; 42] = [
     chord('g', Action::GoTo, "go to"),
     chord('k', Action::Keybindings, "keybindings"),
     chord('b', Action::Bandplan, "bandplan"),
@@ -133,6 +134,11 @@ const SHARED: [KeyEntry; 41] = [
     chord('l', Action::LogForm, "log form"),
     chord('j', Action::SessionList, "session list"),
     chord('o', Action::Config, "config"),
+    chord(
+        'p',
+        Action::LocatorFromGps,
+        "Locator from GPS (this session)",
+    ),
     chord('c', Action::Quit, "quit"),
     alias('l', Action::LogForm, "log form"),
     alias('L', Action::SessionList, "session list"),

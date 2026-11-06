@@ -699,3 +699,67 @@ mod lookup {
         assert!(!shows(&app, "looking up"));
     }
 }
+
+// Town-level Middlebury, IN only (EN71DQ).
+fn gps_fix() -> rig_tui::gps::Gps {
+    rig_tui::gps::Gps::Fix(rig_tui::gps::Fix {
+        lat_deg: 41.67,
+        lon_deg: -85.71,
+        alt_m: Some(250.0),
+        mode: 3,
+    })
+}
+
+#[test]
+fn ctrl_p_fills_the_locator_from_the_gps_and_ctrl_s_saves_it() {
+    let path = file_with("gps", SAMPLE);
+    let mut app = app_for(&path);
+    app.on_gps(gps_fix());
+    open(&mut app);
+    assert!(shows(&app, "GPS: EN71DQ (3D fix); Ctrl-P fills it in"));
+
+    app.on_key(ctrl('p'));
+    app.on_key(ctrl('s'));
+
+    assert_eq!(app.locator(), Some("EN71DQ"));
+    assert!(
+        read(&path).contains("locator = \"EN71DQ\""),
+        "{}",
+        read(&path)
+    );
+    assert!(
+        !read(&path).contains("41.67"),
+        "coordinates are never stored"
+    );
+}
+
+#[test]
+fn ctrl_p_without_a_fix_leaves_the_locator_alone() {
+    let path = file_with("gps-nofix", SAMPLE);
+    let mut app = app_for(&path);
+    app.on_gps(rig_tui::gps::Gps::NoFix);
+    open(&mut app);
+    assert!(shows(&app, "GPS: no fix yet"));
+
+    app.on_key(ctrl('p'));
+
+    assert!(shows(&app, "GPS has no fix yet."));
+    app.on_key(ctrl('s'));
+    assert_eq!(app.locator(), None);
+}
+
+#[test]
+fn ctrl_p_outside_the_dialog_sets_the_session_locator_without_saving() {
+    let path = file_with("gps-session", SAMPLE);
+    let mut app = app_for(&path);
+
+    app.on_key(ctrl('p'));
+    assert_eq!(app.locator(), None);
+    assert!(app.status().unwrap().contains("no GPS"));
+
+    app.on_gps(gps_fix());
+    app.on_key(ctrl('p'));
+
+    assert_eq!(app.locator(), Some("EN71DQ"));
+    assert_eq!(read(&path), SAMPLE);
+}

@@ -30,9 +30,11 @@ use tokio::runtime::Runtime;
 const TICK: Duration = Duration::from_millis(100);
 
 const USAGE: &str = "usage: rig-tui [--config PATH] [--grid GRID | --lat DEG --lon DEG] [--alt METRES] [--rig NAME]
+               [--gpsd HOST:PORT | --no-gps]
 
 --offline never asks the network (POTA spots, reference data and address lookups are off; satellite data is not downloaded).
 --rig NAME starts on that rig profile ([rig.NAME] in the config) instead of rig.default.
+--gpsd HOST:PORT reads the position from that gpsd (default 127.0.0.1:2947); --no-gps does not.
 Config defaults to $XDG_CONFIG_HOME/hamtools/config.toml (see config.example.toml).
 The app starts without a rig and keeps retrying the connection.
 
@@ -54,6 +56,7 @@ fn try_main() -> Result<(), Box<dyn Error>> {
     let mut rig_arg: Option<String> = None;
     let mut position = Spec::default();
     let mut offline = false;
+    let mut gpsd: Option<String> = Some(rig_tui::gps::DEFAULT_ADDR.to_string());
     let mut args = std::env::args().skip(1);
     while let Some(arg) = args.next() {
         let mut value = |name: &str| args.next().ok_or(format!("{name} needs a value"));
@@ -69,6 +72,8 @@ fn try_main() -> Result<(), Box<dyn Error>> {
             "--lon" => position.lon_deg = Some(value("--lon")?.parse()?),
             "--alt" => position.alt_m = Some(value("--alt")?.parse()?),
             "--rig" => rig_arg = Some(value("--rig")?),
+            "--gpsd" => gpsd = Some(value("--gpsd")?),
+            "--no-gps" => gpsd = None,
             _ if arg.starts_with('-') => {
                 return Err(format!("unknown option {arg}\n{USAGE}").into());
             }
@@ -169,6 +174,12 @@ fn try_main() -> Result<(), Box<dyn Error>> {
     // One connection per configured rig; both stay up.
     let mut rigs: Vec<Rig> = app.rig_addrs().into_iter().map(Rig::new).collect();
     let geocoder = Geocoder::new().with_offline(offline);
+    // gpsd is local, so `--offline` leaves it on. With no gpsd (or no device) the state stays
+    // Absent and nothing changes in the app.
+    let (gps_tx, gps_rx) = mpsc::channel();
+    if let Some(addr) = gpsd {
+        rig_tui::gps::watch_in_background(addr, gps_tx);
+    }
 
     // Daemons we start are children; dropping this (after the terminal is restored) kills them.
     let mut daemons = Daemons::default();
@@ -179,8 +190,11 @@ fn try_main() -> Result<(), Box<dyn Error>> {
         &mut rigs,
         app,
         &geocoder,
-        &mut downloads,
-        &mut daemons,
+        Services {
+            downloads: &mut downloads,
+            daemons: &mut daemons,
+            gps: &gps_rx,
+        },
     );
     ratatui::restore();
     result
@@ -303,6 +317,8 @@ impl Downloads {
 struct Services<'a> {
     downloads: &'a mut Downloads,
     daemons: &'a mut Daemons,
+    /// Changes of GPS state from the gpsd watcher.
+    gps: &'a Receiver<rig_tui::gps::Gps>,
 }
 
 /// Run each command against the rig and feed what it reports back to the app. Returns true when
@@ -372,13 +388,12 @@ fn run(
     rigs: &mut [Rig],
     mut app: App,
     geocoder: &Geocoder,
-    downloads: &mut Downloads,
-    daemons: &mut Daemons,
+    services: Services,
 ) -> Result<(), Box<dyn Error>> {
     // The address lookup runs on a short-lived thread; its answer comes back here, like the
     // satellite downloads, so `App` stays free of threads.
     let (lookups, answers) = mpsc::channel();
-    let mut services = Services { downloads, daemons };
+    let mut services = services;
     loop {
         app.set_utc(SystemTime::now());
         let size = terminal.size()?;
@@ -405,6 +420,9 @@ fn run(
 
         while let Ok(answer) = answers.try_recv() {
             app.on_geocode(answer);
+        }
+        while let Ok(state) = services.gps.try_recv() {
+            app.on_gps(state);
         }
         services.downloads.poll(&mut app);
         if let Some(message) = services.daemons.poll().pop() {

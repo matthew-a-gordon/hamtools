@@ -62,6 +62,7 @@ Two rows across the top show the radio's state, polled a few times a second:
 | Mode and passband | For example `CWR 450` |
 | Step | The size of one Left/Right tuning step |
 | Connection | connected, or "disconnected" with the error |
+| Location | The Locator in use and, with a GPS fix, the coordinates (`EN71DQ  41.6700N 85.7100W`); `EN71DQ (GPS EN71DR)` when the fix lies in another square; `GPS no fix`, or "unknown location" with neither a Locator nor a fix |
 | VFO | `VFOA` or `VFOB` |
 | Split | Off, or `split B 7.071.000` showing the transmit frequency |
 | RX/TX | Whether the radio is receiving or transmitting (PTT, read only) |
@@ -201,6 +202,7 @@ Press `c` (or open it from the hint line) to edit the config without leaving the
 | --- | --- |
 | `Tab` / `Shift-Tab` | Move between fields |
 | `Enter` on Address | Look up the typed address |
+| `Ctrl-P` | Fill the Locator from the GPS fix |
 | `Ctrl-S` | Save and close |
 | `Esc` | Close (asks before discarding edits) |
 
@@ -209,6 +211,10 @@ Saves change only the fields you edited, so your comments and ordering survive. 
 ### Finding your Locator
 
 Type a town in the Address field and press `Enter`. One request goes to OpenStreetMap Nominatim, and candidates appear with 6-character Locators (Middlebury, Elkhart County, gives EN71DQ). Pick one. Only the Locator is stored; the address you typed is not. A Locator is coarse by design (about 4.6 by 3.5 km) so it does not pin a home.
+
+With a GPS, the line under Locator shows the fix's Locator; `Ctrl-P` fills the field and `Ctrl-S` saves it. Outside the dialog, `Ctrl-P` uses the GPS Locator for this session only, for example when operating portable. The position comes from `gpsd` on `127.0.0.1:2947` (`--gpsd HOST:PORT` for another, `--no-gps` for none); rig-tui never opens the GPS's serial port. Only the 6-character Locator is ever saved, never the coordinates. The Satellite Activity keeps the position it started with. Seen working on a uConsole with the AIO v2 GPS on 2026-11-05: the strip with a 3D fix, `Ctrl-P` in and outside the dialog, and saving. *Untested on hardware*: losing the fix or gpsd while running.
+
+On the HackerGadgets uConsole AIO v2 the GPS is powered by GPIO 27 (`gpio=27=op,dh` in `/boot/firmware/config.txt`) and talks NMEA at 9600 baud on `/dev/ttyS0` with a CM4; set `DEVICES="/dev/ttyS0"` and `GPSD_OPTIONS="-n"` in `/etc/default/gpsd`.
 
 Verified on a KX3 setup: opening the dialog, one live lookup, picking a Locator and closing with `Ctrl-S` on an unchanged file. *Untested on hardware*: the edit-and-save, conflict, read-only and parse-error paths, and the discard prompt.
 
@@ -295,6 +301,7 @@ A **text-entering area** (the CW input, a form field, the palette filter, freque
 | `Ctrl-L` | Contact form |
 | `Ctrl-J` | Session list |
 | `Ctrl-O` | Config |
+| `Ctrl-P` | Use the GPS fix's Locator for this session (not saved) |
 | `Ctrl-C` | Quit confirmation |
 
 Plain `l`, `L` and `c` remain as aliases. The strip keys in section 3 mean the same in every Activity. One change: in Satellite, the SAT-mode key moves from `s` to `Z`, so `s` is split everywhere. There is no key rebinding.

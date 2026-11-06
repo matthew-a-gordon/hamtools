@@ -250,6 +250,8 @@ pub struct App {
     /// The layered Soft keys, recomputed whenever a layer changes.
     resolved: Resolved,
     locator: Option<String>,
+    /// What gpsd last said (`main` feeds it with [`App::on_gps`]).
+    gps: crate::gps::Gps,
     log_path: Option<PathBuf>,
     default_log_path: Option<PathBuf>,
     config_path: Option<PathBuf>,
@@ -337,6 +339,7 @@ impl App {
             exchange_saved: None,
             resolved: resolve(&Layers::default()),
             locator: None,
+            gps: crate::gps::Gps::Absent,
             log_path: None,
             default_log_path: None,
             config_path: None,
@@ -546,6 +549,42 @@ impl App {
 
     pub fn locator(&self) -> Option<&str> {
         self.locator.as_deref()
+    }
+
+    /// What gpsd last said about the position.
+    pub fn gps(&self) -> crate::gps::Gps {
+        self.gps
+    }
+
+    /// A change of GPS state, from the gpsd watcher `main` runs.
+    pub fn on_gps(&mut self, gps: crate::gps::Gps) {
+        self.gps = gps;
+        if let Some(dialog) = &mut self.config {
+            dialog.set_gps(gps);
+        }
+    }
+
+    /// `Ctrl-P`: use the GPS fix's Locator for this session. Nothing is saved; the config dialog
+    /// fills its Locator field from the GPS for that.
+    fn locator_from_gps(&mut self) {
+        use crate::gps::Gps;
+        self.status = Some(match self.gps {
+            Gps::Fix(fix) => {
+                let grid = fix.locator();
+                let message = if self.locator.as_deref() == Some(grid.as_str()) {
+                    format!("Locator {} already matches the GPS", grid.as_str())
+                } else {
+                    format!(
+                        "Locator {} from GPS for this session (Ctrl-O, Ctrl-P, Ctrl-S saves it)",
+                        grid.as_str()
+                    )
+                };
+                self.locator = Some(grid.as_str().to_string());
+                message
+            }
+            Gps::NoFix => "GPS has no fix yet; the Locator is unchanged".to_string(),
+            Gps::Absent => "no GPS (gpsd not running or no device)".to_string(),
+        });
     }
 
     /// The Log path in use; `None` means the default.
@@ -1310,12 +1349,14 @@ impl App {
     }
 
     fn open_config(&mut self) {
-        self.config = Some(ConfigDialog::open(
+        let mut dialog = ConfigDialog::open(
             self.config_path.as_deref(),
             &self.current_settings(),
             self.rig_name(),
             self.rig_addr(),
-        ));
+        );
+        dialog.set_gps(self.gps);
+        self.config = Some(dialog);
     }
 
     /// Do what a Chord or alias asks. The go-to palette, keybindings modal, bandplan and rig
@@ -1334,6 +1375,7 @@ impl App {
             Action::LogForm => self.open_log_form(),
             Action::SessionList => self.logging.open_list(),
             Action::Config => self.open_config(),
+            Action::LocatorFromGps => self.locator_from_gps(),
             Action::Quit => self.open_quit_confirm(),
             Action::Daemon => return self.ask_for_ports(),
             _ => {}

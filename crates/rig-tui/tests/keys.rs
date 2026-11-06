@@ -59,6 +59,7 @@ mod table {
                 ('k', Action::Keybindings),
                 ('l', Action::LogForm),
                 ('o', Action::Config),
+                ('p', Action::LocatorFromGps),
                 ('r', Action::RigSwitcher),
             ]
         );

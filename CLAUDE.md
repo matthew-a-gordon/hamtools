@@ -51,7 +51,12 @@ Verified on the user's FT-847 (2026-11-05, `rig-tui` from `main` at 06b45c5, a t
 - Right after the `rigctld` restart `s` read `0 Sub` and `i` read 0 although the radio had last been in split; the user did not look at its display then. Hamlib's ft847 backend has no split read-back.
 - Config dialog on a scratch config: editing the callsign and `Ctrl-S` changed only the `callsign` line; a change made outside the app to another part of the file was kept; a change outside to the same field showed "file W9EXT | yours N0CALLXYZ" and the file was not overwritten.
 
+Verified on the uConsole's GPS (2026-11-05, HackerGadgets AIO v2 on a CM4, uncommitted work on `main` after 4108525, gpsd 3.25 with `DEVICES="/dev/ttyS0"` and `-n`, GPS powered by `gpio=27=op,dh`; `rig-tui --offline` driven in a Python pty with a scratch config, no rig connected):
+- gpsd listed the u-blox on `/dev/ttyS0` at 9600 baud and reported a 3D fix (`TPV` mode 3). The strip showed the GPS Locator and coordinates with no Locator configured (`GPS EN71..  …N …W`), then `EN71..  …N …W` with one.
+- `Ctrl-P` outside the dialog set the session Locator ("Locator EN71.. from GPS"); in the config dialog the Locator line read `GPS: EN71.. (3D fix); Ctrl-P fills it in`, `Ctrl-P` filled the field and `Ctrl-S` wrote only `[station] locator = "EN71.."`, no coordinates.
+
 Still unverified (say "untested on hardware"):
+- GPS: losing the fix or gpsd while `rig-tui` runs (`GPS no fix`, reconnect), and a 2D-only fix. The Satellite Activity does not use the GPS position.
 - In the Satellite Activity: `Z` while tracking (#81 is open), and Doppler correction with a real pass on air. `sat-tui`'s UI-free code (tracker, cache, SatNOGS parsing) has unit tests only. Every other FT-847 behaviour not listed above is untested too.
 - The S-meter with a real signal (the KX3's quiet-band value, and the FT-847's no-antenna `S9+60` and dummy-load -54, were the only ones seen), the TX indicator and RF output during PTT (only the fan was heard), and `rig-tui`'s display while the transmitter is keyed: PTT was keyed through raw `rigctld`, not the app.
 - The start-`rigctld` prompt (see the KX3 entry of 2026-11-05) on anything but the KX3 with one port: the FT-847 (model 1001, 9600 baud), a second port, the Esc path against a real port, a port that cannot be opened, a missing `rigctld`, and a `rigctld` that exits by itself. Hamlib 4.6 (Raspberry Pi OS Trixie ships 4.6.x) and the ClockworkPi/CM4 are untested too.
