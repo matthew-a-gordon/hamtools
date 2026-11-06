@@ -24,7 +24,7 @@ Contents
 
 ## 1. Before you start
 
-`rig-tui` never touches a serial port. It talks to Hamlib's `rigctld` over TCP, and `rigctld` owns the radio. Start one for your rig first (on the author's setup these run from the NixOS config, not from this repo):
+`rig-tui` never touches a serial port. It talks to Hamlib's `rigctld` over TCP, and `rigctld` owns the radio. Start one for your rig first (on the author's setup these run from the NixOS config, not from this repo; on the ClockworkPi, which you reach over ssh, run them as systemd units, see section 8, "Running `rigctld` under systemd"):
 
 | Rig | Address | Hamlib model |
 | --- | --- | --- |
@@ -342,6 +342,78 @@ If the Active rig cannot be reached a few seconds after start-up, rig-tui offers
 
 *Untested on hardware.* The port listing and the start-up arguments are covered by tests; no daemon was started against a radio.
 
+### Running `rigctld` under systemd (ClockworkPi)
+
+On a machine you reach over ssh, like the ClockworkPi, the better setup is one systemd unit per radio instead of the prompt above. Reasons:
+
+- A daemon that `rig-tui` starts is its child. It stops when `rig-tui` quits, including when the ssh session drops, and the prompt asks again every launch (once per session, one port at a time).
+- A unit keeps running across ssh disconnects and `rig-tui` restarts, and a udev rule plus a device-bound unit starts it when the radio is plugged in. `rig-tui` reconnects on its own within a few seconds.
+- Nothing changes in the app. A `rigctld` that is already running is never touched, so the start prompt does not appear, and it cannot step on the unit.
+- With no radio plugged in there are no `ttyUSB*` or `ttyACM*` ports, so the prompt has nothing to offer and stays quiet. The yellow `⚠ cannot reach rigctld ... connection refused` line is then correct, not a fault: it stays until the daemon is reachable.
+
+The steps below are a recipe, **untested on hardware**: not yet tried on the ClockworkPi, whose hamlib is probably 4.6.x (the author's checks were on 4.7.2). Only `rigctld` ever opens the serial port.
+
+1. Find each radio's USB adapter. With it plugged in:
+
+   ```sh
+   ls -l /dev/serial/by-id/
+   udevadm info -q property -n /dev/ttyUSB0 | grep -E 'ID_VENDOR_ID|ID_MODEL_ID|ID_SERIAL_SHORT'
+   ```
+
+   Use the adapter's own vendor, product and serial, not `ttyUSB0`, which changes between plugs. The uConsole's built-in keyboard port is not a radio.
+
+2. Give each radio a stable name. Create `/etc/udev/rules.d/90-hamtools-rigs.rules`, one line per radio, with your values:
+
+   ```
+   SUBSYSTEM=="tty", ENV{ID_VENDOR_ID}=="<vendor>", ENV{ID_MODEL_ID}=="<product>", ENV{ID_SERIAL_SHORT}=="<serial>", SYMLINK+="kx3", GROUP="dialout", MODE="0660", TAG+="systemd"
+   ```
+
+   Use `ft847` for the FT-847. `TAG+="systemd"` makes systemd create `dev-kx3.device`, which the unit binds to.
+
+3. Create one unit per radio, `/etc/systemd/system/rigctld-kx3.service` (replace `<user>` with the account that runs `rig-tui`):
+
+   ```ini
+   [Unit]
+   Description=rigctld for the KX3
+   BindsTo=dev-kx3.device
+   After=dev-kx3.device
+
+   [Service]
+   User=<user>
+   SupplementaryGroups=dialout
+   ExecStart=/usr/bin/rigctld -m 2045 -s 38400 -r /dev/kx3 -T 127.0.0.1 -t 4532
+   Restart=on-failure
+   RestartSec=3
+
+   [Install]
+   WantedBy=dev-kx3.device
+   ```
+
+   For the FT-847, `rigctld-ft847.service` binds to `dev-ft847.device` and runs `rigctld -m 1001 -s 9600 -r /dev/ft847 -T 127.0.0.1 -t 4533`. The models, baud rates and TCP ports are the ones in section 1 (the FT-847's CAT speed was checked at 9600). Check the path with `command -v rigctld`, and the flags with `rigctld --help`: `-T` sets the listen address, and if your hamlib lacks it, drop it, but never listen on an address other than loopback. `SupplementaryGroups=dialout` is why the unit does not depend on your login session having the group.
+
+4. Install and start (these need root):
+
+   ```sh
+   sudo udevadm control --reload
+   sudo udevadm trigger
+   sudo systemctl daemon-reload
+   sudo systemctl enable --now rigctld-kx3.service rigctld-ft847.service
+   ```
+
+   A unit bound to a device that is not plugged in simply waits; `enable --now` does not fail for it.
+
+5. Check, reading only. Nothing here tunes or transmits:
+
+   ```sh
+   systemctl status rigctld-kx3
+   journalctl -u rigctld-kx3 -b
+   printf 'f\n' | nc -N 127.0.0.1 4532      # the frequency, as a plain number
+   ```
+
+   Then start `rig-tui`: the strip should show `connected` and no start prompt. Unplug the radio and plug it back in: the unit stops and starts with the device, and the strip reconnects by itself.
+
+Two limits. Hamlib 4.7.2's `rigctld` does not exit when it cannot open its port, so `Restart=on-failure` does not catch a wrong name or missing permission; it prints `IO error` and keeps running with no rig. Binding to the device is what covers unplugging and replugging. A wrong baud rate or model shows up as errors in the strip, not as a stopped unit. Look at `journalctl` for the daemon's own output.
+
 ### Satellite settings
 
 Satellite settings are the `[satellite]` table of the shared config (watch list, pass horizon, minimum elevation, short-pass threshold, and `[satellite.names]`); `sat-tui.toml`, its `rig_addr`, `[observer]` and `[logbook] grid` are gone. Position comes from flags, then the shared Locator, then the town-level default. Doppler commands are performed on the Active rig only while Satellite is in the foreground and the rig has the `sat_mode` capability.
@@ -494,7 +566,7 @@ Hunter row markers use characters, not color: `✓` worked today, `~` stale, `P`
 
 | Symptom | Check |
 | --- | --- |
-| Strip shows dashes and "disconnected" | Is `rigctld` running at the configured address? The app retries by itself. |
+| Strip shows dashes and "disconnected", with a yellow `⚠ cannot reach rigctld` line | Is `rigctld` running at the configured address, and is the radio plugged in? The line stays for as long as the rig is unreachable; the app retries by itself. If you reach the machine over ssh, run the daemons as systemd units (section 8) so they outlive your session. |
 | `Permission denied` opening the serial port | That is `rigctld`'s port, not the app's. Add the user to `dialout`, then start a fresh login (or `sg dialout -c '...'`). |
 | KX3 decode shows `*` | The radio could not decode the character. Weak or fading signals do this. |
 | Mode change altered the filter | The KX3 applies a per-mode filter. Restore it on the radio or with `M <mode> <passband>`. |

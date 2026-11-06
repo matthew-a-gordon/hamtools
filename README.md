@@ -77,6 +77,12 @@ rigctld -m 1 -t 4532
 
 Copy `config.example.toml` to `~/.config/hamtools/config.toml` and set your callsign, Locator and rig profiles. The config is edited in place from the app (`Ctrl-O`), and a field-level save keeps your comments and unknown keys. `--offline`, `--grid`, `--gpsd` and `--no-gps` are in `rig-tui --help`.
 
+### On the ClockworkPi (or any machine you reach over ssh)
+
+`rig-tui` can start a `rigctld` for you (`Ctrl-D`, or a one-time prompt when the rig is down and a serial port exists), but that daemon is a child of the app: it dies when the app quits or the ssh session drops, and it asks again every launch. With no radio plugged in it has nothing to offer, so the strip shows `disconnected` and a yellow `⚠ cannot reach rigctld ... connection refused` line, which is correct and stays until a daemon is reachable.
+
+For a machine you reach over ssh, run one systemd unit per radio instead, bound to the radio's device by a udev rule: the daemons then survive ssh drops and `rig-tui` restarts, start when a radio is plugged in, and `rig-tui` reconnects by itself. The app never touches a `rigctld` that is already running. The recipe (udev rule, a unit per rig, install and read-only checks) is in the [user guide](docs/user-guide.md), "Running `rigctld` under systemd (ClockworkPi)". It is **untested on hardware**: not yet tried on the ClockworkPi, whose hamlib is probably 4.6.x.
+
 ## The crates
 
 | Crate | Purpose |
