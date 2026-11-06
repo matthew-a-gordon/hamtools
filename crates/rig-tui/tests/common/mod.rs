@@ -5,7 +5,7 @@
 #![allow(dead_code)]
 
 use std::net::SocketAddr;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
@@ -22,6 +22,8 @@ pub struct FakeRigctld {
     pub received: Arc<Mutex<Vec<String>>>,
     /// Set to make the fake drop its connection, unanswered, on the next command it receives.
     pub hang_up: Arc<AtomicBool>,
+    /// Milliseconds the fake waits before answering each command: a slow or stalled radio.
+    pub delay_ms: Arc<AtomicU64>,
 }
 
 /// What the fake rig reports for `f` and `m`; `F` and `M` change it.
@@ -89,6 +91,8 @@ impl FakeRigctld {
         let log = Arc::clone(&received);
         let hang_up = Arc::new(AtomicBool::new(false));
         let hang = Arc::clone(&hang_up);
+        let delay_ms = Arc::new(AtomicU64::new(0));
+        let delay = Arc::clone(&delay_ms);
         let mut replies: Vec<String> = tb_replies.iter().rev().map(|s| s.to_string()).collect();
         tokio::spawn(async move {
             loop {
@@ -97,6 +101,10 @@ impl FakeRigctld {
                 let mut lines = BufReader::new(read).lines();
                 while let Some(line) = lines.next_line().await.unwrap() {
                     log.lock().unwrap().push(line.clone());
+                    let wait = delay.load(Ordering::SeqCst);
+                    if wait > 0 {
+                        tokio::time::sleep(std::time::Duration::from_millis(wait)).await;
+                    }
                     if hang.swap(false, Ordering::SeqCst) {
                         break;
                     }
@@ -170,12 +178,31 @@ impl FakeRigctld {
             addr,
             received,
             hang_up,
+            delay_ms,
         }
     }
 
     pub fn commands(&self) -> Vec<String> {
         self.received.lock().unwrap().clone()
     }
+}
+
+/// A fake `rigctld` on a runtime of its own thread, for tests that block their own thread
+/// (the Rig pool's `settle` does). The thread lives until the process ends.
+pub fn start_on_thread(state: RigState) -> FakeRigctld {
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        rt.block_on(async move {
+            let fake = FakeRigctld::start_with(&[], state).await;
+            tx.send(fake).unwrap();
+            std::future::pending::<()>().await;
+        });
+    });
+    rx.recv().unwrap()
 }
 
 /// An address nothing is listening on, that a fake rig can later bind to.

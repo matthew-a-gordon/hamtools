@@ -116,6 +116,10 @@ _Avoid_: Shortcut, global hotkey
 A radio the app can control, reached through its own `rigctld` and described by a profile in the shared config (name, address, kind). The app knows two today, the KX3 and the FT-847.
 _Avoid_: Radio, transceiver (except when quoting hardware), device
 
+**Rig pool**:
+The one module that owns every Rig's connection and a queue of commands for each, and does their `rigctld` I/O off the screen's thread. The app sends it a command for a named Rig and later collects the events it produced, each tagged with the Rig it came from. It coalesces repeated polls and Doppler steps so a slow radio never builds a backlog, and it never lets a queued transmit run late.
+_Avoid_: Rig manager, rig service, executor
+
 ### Band plan
 
 **Band plan**:

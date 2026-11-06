@@ -17,13 +17,12 @@ use rig_tui::reference::{
 };
 use rig_tui::satellite::{Satellite, load_data};
 use rig_tui::{
-    Activator, App, Command, Config, HostEvent, PotaHunter, Rig, SotaChaser, config_path,
+    Activator, App, Command, Config, HostEvent, PotaHunter, RigPool, SotaChaser, config_path,
     default_log_path, render,
 };
 use sat_tui::cache::{Cache, Dataset, Decision, decide};
 use sat_tui::fetch::Fetcher;
 use sat_tui::observer::{Spec, resolve};
-use tokio::runtime::Runtime;
 
 /// One loop pass. The KX3 clears its decode buffer on each `TB;` and holds only 40 characters,
 /// so this is also the CW panel's polling interval.
@@ -107,9 +106,6 @@ fn try_main() -> Result<(), Box<dyn Error>> {
             .as_ref(),
     )?;
 
-    let rt = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()?;
     let mut app = App::with_callsign(config.callsign.clone())
         .with_soft_keys(config.soft_keys)
         .with_softkey_sets(config.softkey_sets)
@@ -172,7 +168,7 @@ fn try_main() -> Result<(), Box<dyn Error>> {
         Utc::now(),
     )));
     // One connection per configured rig; both stay up.
-    let mut rigs: Vec<Rig> = app.rig_addrs().into_iter().map(Rig::new).collect();
+    let pool = RigPool::new(app.rig_addrs());
     let geocoder = Geocoder::new().with_offline(offline);
     // gpsd is local, so `--offline` leaves it on. With no gpsd (or no device) the state stays
     // Absent and nothing changes in the app.
@@ -186,8 +182,7 @@ fn try_main() -> Result<(), Box<dyn Error>> {
     let mut terminal = ratatui::init();
     let result = run(
         &mut terminal,
-        &rt,
-        &mut rigs,
+        &pool,
         app,
         &geocoder,
         Services {
@@ -324,8 +319,7 @@ struct Services<'a> {
 /// Run each command against the rig and feed what it reports back to the app. Returns true when
 /// the app asked to quit.
 fn dispatch(
-    rt: &Runtime,
-    rigs: &mut [Rig],
+    pool: &RigPool,
     app: &mut App,
     geocoder: &Geocoder,
     lookups: &Sender<GeocodeResult>,
@@ -362,30 +356,20 @@ fn dispatch(
             _ => {}
         }
         // Ordinary commands go to the Active rig; a light poll and an address change name
-        // their rig.
+        // their rig. The pool runs them off this thread; their events come back through
+        // `drain`, tagged with the rig they came from.
         let target = match &command {
             Command::LightPoll(rig) | Command::SetRigAddr { rig, .. } => *rig,
             _ => app.active_rig(),
         };
-        let background = matches!(command, Command::LightPoll(_));
-        let Some(rig) = rigs.get_mut(target) else {
-            continue;
-        };
-        for event in rt.block_on(rig.execute(command)) {
-            if background {
-                app.on_rig_at(target, event);
-            } else {
-                app.on_rig(event);
-            }
-        }
+        pool.send(target, command);
     }
     false
 }
 
 fn run(
     terminal: &mut DefaultTerminal,
-    rt: &Runtime,
-    rigs: &mut [Rig],
+    pool: &RigPool,
     mut app: App,
     geocoder: &Geocoder,
     services: Services,
@@ -394,6 +378,7 @@ fn run(
     // satellite downloads, so `App` stays free of threads.
     let (lookups, answers) = mpsc::channel();
     let mut services = services;
+    let mut active = app.active_rig();
     loop {
         app.set_utc(SystemTime::now());
         let size = terminal.size()?;
@@ -405,17 +390,20 @@ fn run(
             && key.kind == KeyEventKind::Press
         {
             let commands = app.on_key(key);
-            if dispatch(
-                rt,
-                rigs,
-                &mut app,
-                geocoder,
-                &lookups,
-                &mut services,
-                commands,
-            ) {
+            if dispatch(pool, &mut app, geocoder, &lookups, &mut services, commands) {
                 return Ok(());
             }
+        }
+
+        // What the rigs reported, tagged with the rig it came from, so a reading is never
+        // applied to the wrong radio after a switch. Switching drops queued sends first, so
+        // nothing keys the transmitter after the operator has moved on.
+        if app.active_rig() != active {
+            active = app.active_rig();
+            pool.cancel_sends();
+        }
+        for (rig, event) in pool.drain() {
+            app.on_rig_at(rig, event);
         }
 
         while let Ok(answer) = answers.try_recv() {
@@ -430,15 +418,7 @@ fn run(
         }
 
         let commands = app.tick(Instant::now());
-        if dispatch(
-            rt,
-            rigs,
-            &mut app,
-            geocoder,
-            &lookups,
-            &mut services,
-            commands,
-        ) {
+        if dispatch(pool, &mut app, geocoder, &lookups, &mut services, commands) {
             return Ok(());
         }
     }

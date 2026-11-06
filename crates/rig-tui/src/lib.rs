@@ -1,7 +1,7 @@
 //! rig-tui: a terminal app for any rig behind a `rigctld`.
 //!
-//! `App` is pure (key and rig events in, [`Command`]s out); [`Rig`] does the I/O; `main` is a
-//! thin loop between them.
+//! `App` is pure (key and rig events in, [`Command`]s out); [`Rig`] does the I/O and [`RigPool`]
+//! runs it off the screen's thread; `main` is a thin loop between them.
 
 mod activator;
 mod activity;
@@ -29,6 +29,7 @@ mod pota;
 pub mod refdata;
 pub mod reference;
 mod rig;
+mod rig_pool;
 mod rigs;
 pub mod satellite;
 pub mod softkeys;
@@ -54,6 +55,7 @@ pub use general::General;
 pub use panel::{LogDefaults, LogMode, Role};
 pub use pota::{PotaHunter, SPOTS_KEY, SPOTS_URL, spots_feed};
 pub use rig::{Command, Feature, Rig, RigEvent, RigMode};
+pub use rig_pool::RigPool;
 pub use rigs::{Capabilities, Capability, LIGHT_POLL_EVERY, Support, table as capability_table};
 pub use sota::{NOTICE as SOTA_SPOTS_NOTICE, SotaChaser};
 pub use tracker::{ActivationView, PlanBanner, Program, Tracker};
