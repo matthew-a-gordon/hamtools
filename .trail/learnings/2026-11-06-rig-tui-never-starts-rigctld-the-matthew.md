@@ -33,4 +33,4 @@ The on-demand launcher (prompt, Ctrl-D, serial-port scan, child process) is remo
 ## Watch out
 The systemd and udev recipe is untested on hardware: not yet tried on the ClockworkPi, whose hamlib is probably 4.6.x.
 
-In the code: docs/adr/0008-rig-tui-never-starts-rigctld.md, docs/systemd/, the Colors and "Under systemd" sections of docs/user-guide.md.
+In the code: docs/adr/0008-rig-tui-never-starts-rigctld.md, contrib/systemd/, the Colors and "Under systemd" sections of docs/user-guide.md.

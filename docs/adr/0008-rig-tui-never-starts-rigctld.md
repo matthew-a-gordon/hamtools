@@ -9,6 +9,6 @@ Why it went:
 - Its failure detection was weak. Hamlib 4.7.2's `rigctld` does not exit on a port it cannot open and block-buffers its stderr when piped, so a bad port could only be noticed when the daemon exited.
 - It was only ever tried on one KX3 port.
 
-What replaced it: `docs/systemd/` (a udev rule template that gives each radio a stable name and a systemd device tag, and one unit per rig bound to its device) with the recipe in the user guide, "Under systemd (the ClockworkPi)". `rig-tui` already reconnects on its own, so nothing else changed there. The status line explains an unreachable rig with a yellow `⚠` that stays while it is true, points at a connected rig that is not Active, and the `Ctrl-R` switcher greys out rigs it cannot reach but still lets you choose them. The app never switches rigs by itself.
+What replaced it: `contrib/systemd/` (a udev rule template that gives each radio a stable name and a systemd device tag, and one unit per rig bound to its device) with the recipe in the user guide, "Under systemd (the ClockworkPi)". `rig-tui` already reconnects on its own, so nothing else changed there. The status line explains an unreachable rig with a yellow `⚠` that stays while it is true, points at a connected rig that is not Active, and the `Ctrl-R` switcher greys out rigs it cannot reach but still lets you choose them. The app never switches rigs by itself.
 
 Reopen this if a platform without a service manager needs the app to start a daemon; start from a design that does not own the child process.
