@@ -13,6 +13,7 @@ Cargo workspace: `rigctld-client`, `rig-tui`, `sat-tui` (library only, used by `
 - Tools never open serial ports. Only `rigctld` does; everything else is a TCP client.
 - KX3: `127.0.0.1:4532`, model 2045. FT-847: `127.0.0.1:4533`, model 1001 (not 1038). The daemons are managed by the user's NixOS config, not this repo.
 - Observer position is runtime input (config, flags, later gpsd), never hard-coded. Defaults and fixtures use town-level Middlebury, IN only (~41.67 N, 85.71 W, EN71); no street address in the repo.
+- Styling comes from `hamtools_tui::theme` (ADR 0006): no literal `Color::` or `Modifier::REVERSED` for selection at a call site; add a word to the theme instead.
 
 ## Hardware status (say "untested on hardware" for anything not listed as verified)
 Before running anything against a radio, read `docs/agents/hardware-session.md`.

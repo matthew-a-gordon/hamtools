@@ -471,17 +471,20 @@ Exporting a Hunter log is out of scope for now.
 
 ## 12. Colors
 
-Color only ever adds to something already written in text: every colored item has a character, word or position that says the same thing, so the screen works on a monochrome terminal. Only the 16 ANSI colors are used, so your terminal's theme decides the exact shades.
+Color only ever adds to something already written in text: every colored item has a character, word or position that says the same thing, so the screen works on a monochrome terminal. Only the 16 ANSI colors are used, so your terminal's theme decides the exact shades. The look is shared by every screen and dialog (one theme, `crates/hamtools-tui/src/theme.rs`; see ADR 0006).
 
 | Color | Meaning | Non-color cue |
 | --- | --- | --- |
-| Cyan | The pane that has focus (its border); the ARRL voluntary band plan row | The focused border is the one with the cursor or highlighted selection; the row is labelled `ARRL` |
-| Dark gray (dim) | Secondary text: hints, placeholders, stale spots, "not cached", notes | The text itself says what it is (`~` marks a stale spot) |
-| Yellow | A warning, or text that is about to be or was sent on the air; a short satellite pass; a satellite below the minimum elevation (no Doppler correction); cached data older than 30 days | The wording ("older than 30 days", "outside ... privileges"); a short pass is marked in the pass list |
-| Red | An error or a refusal; being outside your license privileges in the band plan | The message names the error; the privilege row shows `-` where red and `+` where green |
-| Green | Doppler tracking active, and being inside your license privileges in the band plan | The `TRACKING` heading; the `+` in the privilege row |
-| Magenta | The satellite sub-band row of the band plan | The row is labelled `Sat` |
-| Reverse video | The selected row of a list | The selection is also the row the keys act on |
+| Yellow | The pane that has focus (its border and title), and every dialog's border; a warning, or text that is about to be or was sent on the air; split on and its transmit frequency; a short satellite pass; a satellite below the minimum elevation (no Doppler correction); cached data older than 30 days | The focused pane is the one with the cursor or selection; a dialog is the box on top; otherwise the wording ("older than 30 days", "outside ... privileges"); a short pass is marked in the pass list |
+| Black on yellow | The selected row of a list, or the focused field's label in a form | The selection is also the row the keys act on |
+| Dark gray (dim) | Secondary text: labels, hints, placeholders, unfocused borders, stale spots, "not cached", notes; a status lamp that is off | The text itself says what it is (`~` marks a stale spot) |
+| Red | An error or a refusal; `disconnected`; the `TX` chip and the mode chip while transmitting; being outside your license privileges in the band plan | The message names the state (`disconnected`, `TX`); the privilege row shows `-` where red and `+` where green |
+| Green | `connected`, `RX`, Doppler tracking active, and being inside your license privileges in the band plan; the S-meter up to S9 | The words themselves; the `TRACKING` heading; the `+` in the privilege row; the meter's S reading |
+| Cyan | A state value rather than a number: the VFO letter; the ARRL voluntary band plan row | The row is labelled `ARRL` |
+| Blue | The mode chip in the strip (red while transmitting) | The mode's name is in the chip |
+| Magenta | The Activity name in the strip's title; the satellite sub-band row of the band plan | The row is labelled `Sat` |
+
+The S-meter in the strip is a gauge: green up to S9, yellow up to S9+20, red above, with the S reading beside it in the same color. Panes have rounded corners and dialogs have thick borders, so a dialog is told apart from a pane without color.
 
 Hunter row markers use characters, not color: `✓` worked today, `~` stale, `P` park-to-park candidate, `!` outside privileges.
 
