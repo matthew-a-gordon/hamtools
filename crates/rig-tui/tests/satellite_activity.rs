@@ -36,6 +36,7 @@ fn profile(name: &str, kind: RigKind) -> RigProfile {
         cw: None,
         split: None,
         sat_mode: None,
+        bands: None,
     }
 }
 

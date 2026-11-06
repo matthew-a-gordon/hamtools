@@ -37,7 +37,7 @@ impl App {
 
     /// What the Active rig can do, from the capability table and the profile's overrides.
     pub fn capabilities(&self) -> Capabilities {
-        self.rigs[self.active].caps
+        self.rigs[self.active].caps.clone()
     }
 
     /// Whether a rig-switch is open on screen.
@@ -84,6 +84,7 @@ impl App {
                     cw: None,
                     split: None,
                     sat_mode: None,
+                    bands: None,
                 })
                 .collect()
         };
@@ -269,7 +270,7 @@ impl App {
                     active,
                     frequency: freq.as_ref().map(|r: &Reading<u64>| r.value),
                     mode: mode.as_ref().map(|r| r.value.0.name().to_string()),
-                    caps: slot.caps,
+                    caps: slot.caps.clone(),
                 }
             })
             .collect();

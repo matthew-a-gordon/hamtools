@@ -70,13 +70,13 @@ const fn no(verified: bool) -> Support {
 
 /// What a kind of rig can do. Verified means seen on the user's radio per CLAUDE.md's
 /// "Hardware status"; everything else is a datasheet or hamlib claim.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Capabilities {
     pub cw: Support,
     pub split: Support,
     pub sat_mode: Support,
     /// ADIF band names the rig covers.
-    pub bands: &'static [&'static str],
+    pub bands: Vec<&'static str>,
     pub bands_verified: bool,
 }
 
@@ -90,9 +90,10 @@ pub fn table(kind: RigKind) -> Capabilities {
             cw: yes(true),
             split: yes(true),
             sat_mode: no(false),
-            bands: &[
+            bands: [
                 "160m", "80m", "60m", "40m", "30m", "20m", "17m", "15m", "12m", "10m", "6m",
-            ],
+            ]
+            .to_vec(),
             bands_verified: false,
         },
         // Split is verified on the FT-847 (2026-11-04, CLAUDE.md: `s` reads `1 Sub`, `i`/`x`
@@ -105,9 +106,10 @@ pub fn table(kind: RigKind) -> Capabilities {
             cw: no(false),
             split: yes(true),
             sat_mode: yes(true),
-            bands: &[
+            bands: [
                 "160m", "80m", "40m", "30m", "20m", "17m", "15m", "12m", "10m", "6m", "2m", "70cm",
-            ],
+            ]
+            .to_vec(),
             bands_verified: false,
         },
         // A rig of unknown make: nothing is assumed, and the profile's overrides say more.
@@ -115,14 +117,14 @@ pub fn table(kind: RigKind) -> Capabilities {
             cw: no(false),
             split: no(false),
             sat_mode: no(false),
-            bands: &[],
+            bands: Vec::new(),
             bands_verified: false,
         },
     }
 }
 
 impl Capabilities {
-    /// The kind's row with the profile's overrides applied. An override is the operator's word,
+    /// The kind's row with the profile's overrides applied (cw, split, sat_mode and bands). An override is the operator's word,
     /// not a hardware check, so it is never verified.
     pub fn for_profile(profile: &RigProfile) -> Self {
         let mut caps = table(profile.kind);
@@ -137,6 +139,16 @@ impl Capabilities {
         over(&mut caps.cw, profile.cw);
         over(&mut caps.split, profile.split);
         over(&mut caps.sat_mode, profile.sat_mode);
+        if let Some(bands) = &profile.bands {
+            // The config only lets ADIF band names through, so every name finds its table entry.
+            caps.bands = bands
+                .iter()
+                .filter_map(|name| logbook::BANDS.iter().find(|b| b.name == name))
+                .map(|b| b.name)
+                .collect();
+            // The operator's word about what is installed, not a hardware check.
+            caps.bands_verified = false;
+        }
         caps
     }
 

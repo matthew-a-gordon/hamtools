@@ -287,6 +287,7 @@ impl App {
                     cw: None,
                     split: None,
                     sat_mode: None,
+                    bands: None,
                 },
                 DEFAULT_STEP,
             )],

@@ -24,6 +24,7 @@ fn profile(name: &str, addr: &str, kind: RigKind) -> RigProfile {
         cw: None,
         split: None,
         sat_mode: None,
+        bands: None,
     }
 }
 
@@ -563,5 +564,46 @@ mod unavailable_rigs_are_greyed {
         app.on_key(key(KeyCode::Down));
         app.on_key(key(KeyCode::Enter));
         assert_eq!(app.active_rig(), 1);
+    }
+}
+
+mod bands_override {
+    use super::*;
+    use rig_tui::Capabilities;
+
+    fn kx3_with(bands: Option<&[&str]>) -> RigProfile {
+        RigProfile {
+            bands: bands.map(|b| b.iter().map(|s| (*s).to_string()).collect()),
+            ..profile("kx3", "127.0.0.1:1", RigKind::Kx3)
+        }
+    }
+
+    fn bands_row(profile: &RigProfile) -> String {
+        Capabilities::for_profile(profile)
+            .rows()
+            .into_iter()
+            .find(|r| r.starts_with("bands"))
+            .unwrap()
+    }
+
+    #[test]
+    fn a_profile_with_a_2m_module_covers_2m_and_the_default_does_not() {
+        assert_eq!(
+            bands_row(&kx3_with(None)),
+            "bands 160m-6m, untested on hardware"
+        );
+        let with_2m = kx3_with(Some(&[
+            "160m", "80m", "60m", "40m", "30m", "20m", "17m", "15m", "12m", "10m", "6m", "2m",
+        ]));
+        // The operator's word, not a hardware check: still labelled untested.
+        assert_eq!(bands_row(&with_2m), "bands 160m-2m, untested on hardware");
+    }
+
+    #[test]
+    fn the_switcher_shows_the_configured_bands() {
+        let mut app = App::new().with_rigs(&[kx3_with(Some(&["40m", "20m", "2m"]))], None);
+        app.on_key(ctrl('r'));
+        let rows = screen(&app, 100, 24);
+        assert!(has(&rows, "bands 40m-2m"), "{rows:#?}");
     }
 }

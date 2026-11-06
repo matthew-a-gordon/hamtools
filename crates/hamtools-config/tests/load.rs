@@ -192,3 +192,52 @@ fn syntax_errors_carry_a_line() {
         other => panic!("{other:?}"),
     }
 }
+
+#[test]
+fn a_profile_may_list_the_bands_its_radio_covers() {
+    let dir = TempDir::new();
+    let path = dir.write(
+        "config.toml",
+        "[rig.kx3]\naddr = \"h:1\"\nkind = \"kx3\"\nbands = [\"40m\", \"6m\", \"2m\"]\n\n[rig.ft847]\naddr = \"h:2\"\nkind = \"ft847\"\n",
+    );
+    let cfg = ConfigFile::load(&path).unwrap();
+    let s = cfg.settings();
+    assert_eq!(
+        s.rig("kx3").unwrap().bands,
+        Some(vec!["40m".to_string(), "6m".to_string(), "2m".to_string()])
+    );
+    assert_eq!(s.rig("ft847").unwrap().bands, None);
+    assert!(cfg.warnings().is_empty(), "{:?}", cfg.warnings());
+}
+
+#[test]
+fn a_bad_bands_list_is_an_error_naming_the_key() {
+    for text in [
+        "[rig.a]\naddr = \"h:1\"\nkind = \"kx3\"\nbands = \"2m\"\n",
+        "[rig.a]\naddr = \"h:1\"\nkind = \"kx3\"\nbands = [2]\n",
+        "[rig.a]\naddr = \"h:1\"\nkind = \"kx3\"\nbands = [\"2 m\"]\n",
+        "[rig.a]\naddr = \"h:1\"\nkind = \"kx3\"\nbands = []\n",
+    ] {
+        let dir = TempDir::new();
+        let path = dir.write("config.toml", text);
+        match ConfigFile::load(&path) {
+            Err(ConfigError::Invalid { key, .. }) => assert_eq!(key, "rig.a.bands", "{text}"),
+            other => panic!("{text}: {other:?}"),
+        }
+    }
+}
+
+#[test]
+fn the_error_for_an_unknown_band_names_it_and_the_valid_ones() {
+    let dir = TempDir::new();
+    let path = dir.write(
+        "config.toml",
+        "[rig.a]\naddr = \"h:1\"\nkind = \"kx3\"\nbands = [\"2 m\"]\n",
+    );
+    let message = ConfigFile::load(&path).unwrap_err().to_string();
+    assert!(message.contains("\"2 m\""), "{message}");
+    assert!(
+        message.contains("2m") && message.contains("160m"),
+        "{message}"
+    );
+}

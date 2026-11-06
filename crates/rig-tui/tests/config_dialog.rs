@@ -41,6 +41,7 @@ fn kx3_profile(addr: &str) -> RigProfile {
         cw: None,
         split: None,
         sat_mode: None,
+        bands: None,
     }
 }
 

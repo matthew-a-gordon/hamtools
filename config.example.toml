@@ -39,10 +39,14 @@ kind = "kx3"
 addr = "127.0.0.1:4533"
 kind = "ft847"
 # Capabilities come from a built-in table for the kind; a profile may override any of these
-# three (the table's rows are labelled "untested on hardware" in Ctrl-R until verified):
+# (the table's rows are labelled "untested on hardware" in Ctrl-R until verified):
 # cw = true
 # split = true
 # sat_mode = true
+# The bands the radio covers, as ADIF names, when yours differs from the kind's default (a KX3
+# with the 2 m module, say; the default KX3 list is 160m to 6m). Shown in Ctrl-R; nothing else
+# reads it yet.
+# bands = ["160m", "80m", "60m", "40m", "30m", "20m", "17m", "15m", "12m", "10m", "6m", "2m"]
 
 # The Satellite Activity (Ctrl-G, then Satellite; needs a rig with sat mode, the FT-847).
 # Untested on hardware. Every key is optional; these are the defaults. Your position comes from

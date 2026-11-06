@@ -31,7 +31,8 @@
 //! [rig.kx3]               # one table per rig: a name, an address and a kind
 //! addr = "127.0.0.1:4532"
 //! kind = "kx3"            # "kx3", "ft847" or "generic"
-//! cw = true               # optional capability overrides: cw, split, sat_mode
+//! cw = true               # optional capability overrides: cw, split, sat_mode, and bands
+//! bands = ["40m", "2m"] # the ADIF bands this radio covers, if not the kind's default
 //! [satellite]             # optional: watch, horizon_hours, min_elevation_deg, short_pass_secs
 //! watch = [25544]         # NORAD ids; empty or absent: every satellite with a usable transmitter
 //! [satellite.names]       # name shown in the UI = name written as SAT_NAME
@@ -211,6 +212,9 @@ pub struct RigProfile {
     pub cw: Option<bool>,
     pub split: Option<bool>,
     pub sat_mode: Option<bool>,
+    /// The ADIF bands this radio covers, when it differs from the kind's default (an installed
+    /// transverter or VHF module, say). `None`: use the table.
+    pub bands: Option<Vec<String>>,
 }
 
 impl Settings {
@@ -714,6 +718,39 @@ fn check_addr(addr: &str, key: &str) -> Result<String, ConfigError> {
 const REMOVED: &str =
     "was removed; describe each rig as [rig.NAME] with addr and kind (see config.example.toml)";
 
+/// `bands = ["40m", "2m"]`: a non-empty array of ADIF band names.
+fn read_bands(item: &Item, key: &str) -> Result<Vec<String>, ConfigError> {
+    let array = item.as_array().ok_or_else(|| {
+        invalid(
+            key,
+            "expected a list of band names such as [\"40m\", \"2m\"]",
+        )
+    })?;
+    if array.is_empty() {
+        return Err(invalid(key, "expected at least one band"));
+    }
+    array
+        .iter()
+        .map(|value| {
+            let name = value
+                .as_str()
+                .ok_or_else(|| invalid(key, "expected band names as strings, such as \"2m\""))?;
+            if logbook::BANDS.iter().any(|b| b.name == name) {
+                Ok(name.to_string())
+            } else {
+                let valid: Vec<&str> = logbook::BANDS.iter().map(|b| b.name).collect();
+                Err(invalid(
+                    key,
+                    format!(
+                        "unknown band {name:?}; expected one of {}",
+                        valid.join(", ")
+                    ),
+                ))
+            }
+        })
+        .collect()
+}
+
 fn read_profile(name: &str, item: &Item) -> Result<RigProfile, ConfigError> {
     let key = format!("rig.{name}");
     let table = item
@@ -745,6 +782,9 @@ fn read_profile(name: &str, item: &Item) -> Result<RigProfile, ConfigError> {
         cw: flag("cw")?,
         split: flag("split")?,
         sat_mode: flag("sat_mode")?,
+        bands: field("bands")
+            .map(|(item, key)| read_bands(item, &key))
+            .transpose()?,
     })
 }
 
@@ -1044,7 +1084,7 @@ const KNOWN: [(&str, &[&str]); 8] = [
 ];
 
 /// Keys a `[rig.NAME]` table may hold.
-const PROFILE_KEYS: [&str; 5] = ["addr", "kind", "cw", "split", "sat_mode"];
+const PROFILE_KEYS: [&str; 6] = ["addr", "kind", "cw", "split", "sat_mode", "bands"];
 
 fn line_at(text: &str, span: Option<std::ops::Range<usize>>) -> usize {
     span.map_or(0, |s| {
