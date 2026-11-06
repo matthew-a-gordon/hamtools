@@ -342,6 +342,7 @@ If the Active rig cannot be reached a few seconds after start-up, rig-tui offers
 
 *Untested on hardware.* The port listing and the start-up arguments are covered by tests; no daemon was started against a radio.
 
+<<<<<<< Updated upstream
 ### Running `rigctld` under systemd (ClockworkPi)
 
 On a machine you reach over ssh, like the ClockworkPi, the better setup is one systemd unit per radio instead of the prompt above. Reasons:
@@ -413,6 +414,11 @@ The steps below are a recipe, **untested on hardware**: not yet tried on the Clo
    Then start `rig-tui`: the strip should show `connected` and no start prompt. Unplug the radio and plug it back in: the unit stops and starts with the device, and the strip reconnects by itself.
 
 Two limits. Hamlib 4.7.2's `rigctld` does not exit when it cannot open its port, so `Restart=on-failure` does not catch a wrong name or missing permission; it prints `IO error` and keeps running with no rig. Binding to the device is what covers unplugging and replugging. A wrong baud rate or model shows up as errors in the strip, not as a stopped unit. Look at `journalctl` for the daemon's own output.
+=======
+### Running `rigctld` under systemd
+
+The prompt above starts a `rigctld` that is a child of `rig-tui`: it dies with `rig-tui`, including when an ssh session drops. For a daemon that survives that and starts itself when the radio is plugged in, run it as a systemd service bound to a udev-tagged device instead. Example udev rules and units for the KX3 and FT-847 are in `docs/systemd/` (README there for install steps). `rig-tui` needs no changes either way — it already retries the connection and reconnects when a daemon appears, and a `rigctld` it finds already running is never touched.
+>>>>>>> Stashed changes
 
 ### Satellite settings
 

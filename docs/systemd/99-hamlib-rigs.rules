@@ -1,0 +1,23 @@
+# Stable device names for the hamlib rigctld units in this directory.
+#
+# Matched on the USB-serial adapter's own vendor/product/serial attributes,
+# not on ttyUSBn/ttyACMn, which are assigned in plug order and change
+# across reboots and replugs.
+#
+# Find the right ATTRS{} values for a given cable with:
+#   udevadm info -a -n /dev/ttyUSBn
+# (or ttyACMn) and walk up to the first "looking at parent device" block
+# that has idVendor/idProduct/serial — that is the USB device, not the
+# tty or usb-serial interface above it.
+#
+# TAG+="systemd" makes systemd generate a dev-<name>.device unit for the
+# SYMLINK, which is what rigctld-<rig>.service below binds to.
+#
+# Fill in <serial> for each cable before installing this file.
+
+SUBSYSTEM=="tty", ATTRS{idVendor}=="0403", ATTRS{idProduct}=="6001", ATTRS{serial}=="<serial>", SYMLINK+="kx3", GROUP="dialout", MODE="0660", TAG+="systemd"
+
+# Vendor/product for the FT-847 cable are a placeholder: fill them in from
+# `udevadm info -a -n` once that adapter is plugged in. It may not be the
+# same FTDI chip as the KX3's.
+SUBSYSTEM=="tty", ATTRS{idVendor}=="<vendor>", ATTRS{idProduct}=="<product>", ATTRS{serial}=="<serial>", SYMLINK+="ft847", GROUP="dialout", MODE="0660", TAG+="systemd"

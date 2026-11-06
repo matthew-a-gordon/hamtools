@@ -1,0 +1,17 @@
+[Unit]
+Description=rigctld for the FT-847 (hamlib model 1001, 9600 baud)
+# Only run while /dev/ft847 exists (see 99-hamlib-rigs.rules); starts on
+# plug, stops cleanly on unplug instead of spinning with no port.
+BindsTo=dev-ft847.device
+After=dev-ft847.device
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/rigctld -m 1001 -s 9600 -r /dev/ft847 -T 127.0.0.1 -t 4533
+User=<user>
+SupplementaryGroups=dialout
+Restart=on-failure
+RestartSec=2
+
+[Install]
+WantedBy=dev-ft847.device

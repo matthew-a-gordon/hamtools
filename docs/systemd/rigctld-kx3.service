@@ -1,0 +1,17 @@
+[Unit]
+Description=rigctld for the KX3 (hamlib model 2045, 38400 baud)
+# Only run while /dev/kx3 exists (see 99-hamlib-rigs.rules); starts on
+# plug, stops cleanly on unplug instead of spinning with no port.
+BindsTo=dev-kx3.device
+After=dev-kx3.device
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/rigctld -m 2045 -s 38400 -r /dev/kx3 -T 127.0.0.1 -t 4532
+User=<user>
+SupplementaryGroups=dialout
+Restart=on-failure
+RestartSec=2
+
+[Install]
+WantedBy=dev-kx3.device
