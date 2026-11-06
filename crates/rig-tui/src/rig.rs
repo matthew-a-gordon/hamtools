@@ -137,11 +137,6 @@ pub enum Command {
     Lookup(String),
     /// The config dialog closed: forget the lookup cache. Not a rig command either.
     ClearGeocodeCache,
-    /// List the serial ports (directory entries only) and hand them to `App::on_ports`. Not a
-    /// rig command: `main` answers it.
-    ScanPorts,
-    /// Start `rigctld` for this port as a child of the app. Not a rig command either.
-    StartDaemon(crate::daemon::Launch),
 }
 
 impl Command {
@@ -165,9 +160,7 @@ impl Command {
             | Self::SetRigAddr { .. }
             | Self::LightPoll(_)
             | Self::Lookup(_)
-            | Self::ClearGeocodeCache
-            | Self::ScanPorts
-            | Self::StartDaemon(_) => false,
+            | Self::ClearGeocodeCache => false,
         }
     }
 }
@@ -237,8 +230,6 @@ impl Rig {
             Command::Quit
             | Command::Lookup(_)
             | Command::ClearGeocodeCache
-            | Command::ScanPorts
-            | Command::StartDaemon(_)
             | Command::SatelliteRefresh { .. } => Vec::new(),
             Command::SetRigAddr { addr, .. } => {
                 self.addr = addr;

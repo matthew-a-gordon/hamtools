@@ -35,7 +35,7 @@ It started as separate tools (a KX3 CW sender, then `sat-tui`) and was folded in
 
 **Small screens.** It works from 80x24 and adds panes at wider and taller sizes. Below 80x24 it says "Window too small" rather than drawing garbage.
 
-Navigation is `Ctrl-G` (a go-to palette that lists upcoming plans and Activities), `Ctrl-K` (context-aware keybindings, so you never have to remember), and the other chords `Ctrl-B`, `Ctrl-R`, `Ctrl-D`, `Ctrl-L`, `Ctrl-J`, `Ctrl-O`, `Ctrl-P`. Quitting always asks, and the prompt defaults to cancel.
+Navigation is `Ctrl-G` (a go-to palette that lists upcoming plans and Activities), `Ctrl-K` (context-aware keybindings, so you never have to remember), and the other chords `Ctrl-B`, `Ctrl-R`, `Ctrl-L`, `Ctrl-J`, `Ctrl-O`, `Ctrl-P`. Quitting always asks, and the prompt defaults to cancel.
 
 ## What I have actually tested
 
@@ -79,9 +79,7 @@ Copy `config.example.toml` to `~/.config/hamtools/config.toml` and set your call
 
 ### On the ClockworkPi (or any machine you reach over ssh)
 
-`rig-tui` can start a `rigctld` for you (`Ctrl-D`, or a one-time prompt when the rig is down and a serial port exists), but that daemon is a child of the app: it dies when the app quits or the ssh session drops, and it asks again every launch. With no radio plugged in it has nothing to offer, so the strip shows `disconnected` and a yellow `⚠ cannot reach rigctld ... connection refused` line, which is correct and stays until a daemon is reachable.
-
-For a machine you reach over ssh, run one systemd unit per radio instead, bound to the radio's device by a udev rule: the daemons then survive ssh drops and `rig-tui` restarts, start when a radio is plugged in, and `rig-tui` reconnects by itself. The app never touches a `rigctld` that is already running. The recipe (udev rule, a unit per rig, install and read-only checks) is in the [user guide](docs/user-guide.md), "Running `rigctld` under systemd (ClockworkPi)". It is **untested on hardware**: not yet tried on the ClockworkPi, whose hamlib is probably 4.6.x.
+`rig-tui` does not start `rigctld`; it is a TCP client of one daemon per rig. On a machine you reach over ssh, run those daemons as systemd units bound to each radio's device by a udev rule: they survive ssh drops and `rig-tui` restarts, start when a radio is plugged in, and `rig-tui` reconnects by itself. With no radio plugged in the strip shows `disconnected` and a yellow `⚠ cannot reach rigctld ... connection refused` line, which is correct and stays until a daemon is reachable; if another rig is connected the line says so and points at `Ctrl-R`. The recipe (udev rule, a unit per rig, install and read-only checks) is in the [user guide](docs/user-guide.md), "Under systemd (the ClockworkPi)", and templates are in [`docs/systemd/`](docs/systemd). It is **untested on hardware**: not yet tried on the ClockworkPi, whose hamlib is probably 4.6.x.
 
 ## The crates
 

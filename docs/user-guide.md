@@ -24,7 +24,7 @@ Contents
 
 ## 1. Before you start
 
-`rig-tui` never touches a serial port. It talks to Hamlib's `rigctld` over TCP, and `rigctld` owns the radio. Start one for your rig first (on the author's setup these run from the NixOS config, not from this repo; on the ClockworkPi, which you reach over ssh, run them as systemd units, see section 8, "Running `rigctld` under systemd"):
+`rig-tui` never touches a serial port. It talks to Hamlib's `rigctld` over TCP, and `rigctld` owns the radio. Start one for your rig first (on the author's setup these run from the NixOS config, not from this repo; on the ClockworkPi, which you reach over ssh, run them as systemd units, see section 8, "Under systemd"):
 
 | Rig | Address | Hamlib model |
 | --- | --- | --- |
@@ -299,7 +299,6 @@ A **text-entering area** (the CW input, a form field, the palette filter, freque
 | `Ctrl-K` | Keybindings modal (context-aware, `/` filters, blocked keys greyed with a reason) |
 | `Ctrl-B` | Band plan |
 | `Ctrl-R` | Rig switcher |
-| `Ctrl-D` | Start `rigctld` for a serial port (see Starting `rigctld` under section 8) |
 | `Ctrl-L` | Contact form |
 | `Ctrl-J` | Session list |
 | `Ctrl-O` | Config |
@@ -327,98 +326,30 @@ addr = "127.0.0.1:4533"
 kind = "ft847"
 ```
 
-Both rigs stay connected. The inactive one is polled lightly (health, frequency and mode about every 5 seconds), so switching is instant. `Ctrl-R` opens the switcher with both connection states. Switching is refused while the current rig is transmitting (PTT on or a CW send in progress). If the new rig cannot run the current Activity, the app drops to General with a status line. Each rig keeps its own state: last frequency, mode, VFO, split, step, CW transcript and Soft key state.
+Both rigs stay connected. The inactive one is polled lightly (health, frequency and mode about every 5 seconds), so switching is instant. `Ctrl-R` opens the switcher with both connection states; a rig that cannot be reached is greyed out (with `disconnected` in red) but can still be chosen. Switching is refused while the current rig is transmitting (PTT on or a CW send in progress). If the new rig cannot run the current Activity, the app drops to General with a status line. Each rig keeps its own state: last frequency, mode, VFO, split, step, CW transcript and Soft key state.
 
 What each rig can do comes from a static capability table keyed by `kind` (`kx3`, `ft847`, `generic`), not from probing Hamlib. A profile may override `cw`, `split` or `sat_mode`; an override is never counted as verified. `Ctrl-R` shows each rig's row. Rows verified on hardware are the KX3's CW sending, VFO A/B, split and its transmit frequency, and the frequency, mode, passband and S-meter reads, and the FT-847's split (seen 2026-11-04) and SAT mode on and off (seen 2026-11-05, see `CLAUDE.md`). Everything else, including the FT-847's CW, is labelled *untested on hardware*.
 
-### Starting `rigctld`
+### Running `rigctld`
 
-If the Active rig cannot be reached a few seconds after start-up, rig-tui offers to start a `rigctld` for you, once per session. `Ctrl-D` opens the same prompt any time. It lists the serial ports it finds (`ttyUSB*` and `ttyACM*`, shown by their `/dev/serial/by-id` name when they have one; the ClockworkPi uConsole's own keyboard port, `usb-ClockworkPI_uConsole_*`, is left out). **Listing a port does not open it**: only the `rigctld` it starts does. For each port you choose which rig profile it is, with `Left`/`Right`, and press `Enter`. `Esc` starts nothing.
+`rig-tui` never starts a `rigctld` and never opens a serial port. You run one `rigctld` per rig, outside the app, and the profile's address in the config points at it. With more than one rig that means a daemon per radio that is always ready, so run them as systemd units (below). On the author's machines they come from the NixOS config. For a quick try with no radio, run Hamlib's dummy rig by hand (`rigctld -m 1 -t 4532`).
 
-- The model and baud come from the profile kind: KX3 is model 2045 at 38400 baud, FT-847 is model 1001 at 9600. A `generic` profile, or one whose address is not on this machine (`127.0.0.1` or `localhost`), is not offered, because nothing is known about it or a daemon here could not serve it.
-- The listening TCP port is the one in the profile's address.
-- The daemon is a child of rig-tui and stops when you quit. A `rigctld` your system already runs is never touched; if it is running, the prompt does not appear.
-- You must be in the `dialout` group. If `rigctld` exits, the status line shows what it printed last. Hamlib 4.7.2 does not exit when it cannot open the port (wrong name, no permission): it keeps running with no rig, prints the reason only when it stops, and the strip shows rig errors instead of connecting. Quit rig-tui to stop it and check the port and the `dialout` group. If `rigctld` is not installed: `apt install libhamlib-utils` on Debian and Raspberry Pi OS.
+- The model, baud rate and TCP port for each rig are in the table in section 1: KX3 is model 2045 at 38400 baud on 4532, FT-847 is model 1001 at 9600 baud on 4533.
+- The user running `rigctld` must be in the `dialout` group. A login session started before joining the group does not have it.
+- Hamlib 4.7.2's `rigctld` does not exit when it cannot open its port (wrong name, no permission): it keeps running with no rig, prints the reason only when it stops, and the strip shows rig errors instead of connecting. Stop it and check the port name and the `dialout` group. If `rigctld` is not installed: `apt install libhamlib-utils` on Debian and Raspberry Pi OS.
 
-*Untested on hardware.* The port listing and the start-up arguments are covered by tests; no daemon was started against a radio.
+### Under systemd (the ClockworkPi)
 
-<<<<<<< Updated upstream
-### Running `rigctld` under systemd (ClockworkPi)
+On a machine you reach over ssh, like the ClockworkPi, run one systemd unit per radio. Reasons:
 
-On a machine you reach over ssh, like the ClockworkPi, the better setup is one systemd unit per radio instead of the prompt above. Reasons:
+- A unit keeps running across ssh disconnects and `rig-tui` restarts, so a dropped session does not take the radio's daemon with it.
+- A udev rule plus a device-bound unit starts the daemon when the radio is plugged in. `rig-tui` reconnects on its own within a few seconds.
+- With two rigs, each has its own always-ready daemon and `Ctrl-R` can switch between them at any time. `rig-tui` once offered to start a daemon itself; that is gone (ADR 0008), because a daemon owned by one app run cannot serve two rigs and a dropped session.
+- With no radio plugged in the unit just waits, and the yellow `⚠ cannot reach rigctld ... connection refused` line is correct, not a fault: it stays until the daemon is reachable. It is about the Active rig. If another rig is connected, the line starts with `ft847 is connected (Ctrl-R to switch)`: the app starts on `rig.default` and never switches rigs on its own, so with only the FT-847 plugged in, switch with `Ctrl-R`, start with `rig-tui --rig ft847`, or set `default = "ft847"` in the config.
 
-- A daemon that `rig-tui` starts is its child. It stops when `rig-tui` quits, including when the ssh session drops, and the prompt asks again every launch (once per session, one port at a time).
-- A unit keeps running across ssh disconnects and `rig-tui` restarts, and a udev rule plus a device-bound unit starts it when the radio is plugged in. `rig-tui` reconnects on its own within a few seconds.
-- Nothing changes in the app. A `rigctld` that is already running is never touched, so the start prompt does not appear, and it cannot step on the unit.
-- With no radio plugged in there are no `ttyUSB*` or `ttyACM*` ports, so the prompt has nothing to offer and stays quiet. The yellow `⚠ cannot reach rigctld ... connection refused` line is then correct, not a fault: it stays until the daemon is reachable.
-
-The steps below are a recipe, **untested on hardware**: not yet tried on the ClockworkPi, whose hamlib is probably 4.6.x (the author's checks were on 4.7.2). Only `rigctld` ever opens the serial port.
-
-1. Find each radio's USB adapter. With it plugged in:
-
-   ```sh
-   ls -l /dev/serial/by-id/
-   udevadm info -q property -n /dev/ttyUSB0 | grep -E 'ID_VENDOR_ID|ID_MODEL_ID|ID_SERIAL_SHORT'
-   ```
-
-   Use the adapter's own vendor, product and serial, not `ttyUSB0`, which changes between plugs. The uConsole's built-in keyboard port is not a radio.
-
-2. Give each radio a stable name. Create `/etc/udev/rules.d/90-hamtools-rigs.rules`, one line per radio, with your values:
-
-   ```
-   SUBSYSTEM=="tty", ENV{ID_VENDOR_ID}=="<vendor>", ENV{ID_MODEL_ID}=="<product>", ENV{ID_SERIAL_SHORT}=="<serial>", SYMLINK+="kx3", GROUP="dialout", MODE="0660", TAG+="systemd"
-   ```
-
-   Use `ft847` for the FT-847. `TAG+="systemd"` makes systemd create `dev-kx3.device`, which the unit binds to.
-
-3. Create one unit per radio, `/etc/systemd/system/rigctld-kx3.service` (replace `<user>` with the account that runs `rig-tui`):
-
-   ```ini
-   [Unit]
-   Description=rigctld for the KX3
-   BindsTo=dev-kx3.device
-   After=dev-kx3.device
-
-   [Service]
-   User=<user>
-   SupplementaryGroups=dialout
-   ExecStart=/usr/bin/rigctld -m 2045 -s 38400 -r /dev/kx3 -T 127.0.0.1 -t 4532
-   Restart=on-failure
-   RestartSec=3
-
-   [Install]
-   WantedBy=dev-kx3.device
-   ```
-
-   For the FT-847, `rigctld-ft847.service` binds to `dev-ft847.device` and runs `rigctld -m 1001 -s 9600 -r /dev/ft847 -T 127.0.0.1 -t 4533`. The models, baud rates and TCP ports are the ones in section 1 (the FT-847's CAT speed was checked at 9600). Check the path with `command -v rigctld`, and the flags with `rigctld --help`: `-T` sets the listen address, and if your hamlib lacks it, drop it, but never listen on an address other than loopback. `SupplementaryGroups=dialout` is why the unit does not depend on your login session having the group.
-
-4. Install and start (these need root):
-
-   ```sh
-   sudo udevadm control --reload
-   sudo udevadm trigger
-   sudo systemctl daemon-reload
-   sudo systemctl enable --now rigctld-kx3.service rigctld-ft847.service
-   ```
-
-   A unit bound to a device that is not plugged in simply waits; `enable --now` does not fail for it.
-
-5. Check, reading only. Nothing here tunes or transmits:
-
-   ```sh
-   systemctl status rigctld-kx3
-   journalctl -u rigctld-kx3 -b
-   printf 'f\n' | nc -N 127.0.0.1 4532      # the frequency, as a plain number
-   ```
-
-   Then start `rig-tui`: the strip should show `connected` and no start prompt. Unplug the radio and plug it back in: the unit stops and starts with the device, and the strip reconnects by itself.
+The udev rule, the two units and the install and check steps are in [`docs/systemd/`](../docs/systemd/README.md), with placeholders for your own adapters and account (checked against hamlib 4.6.2's help output on Raspberry Pi OS Trixie, **untested on hardware**: the daemons have not been run against either radio there). The shape is: one udev rule per radio that matches the adapter's own vendor, product and serial and gives it a stable name (`/dev/kx3`, `/dev/ft847`) and a systemd tag; one unit per radio, `BindsTo` that device, running `rigctld` with the model, baud and loopback TCP port from section 1 and `SupplementaryGroups=dialout`. Only `rigctld` ever opens the serial port.
 
 Two limits. Hamlib 4.7.2's `rigctld` does not exit when it cannot open its port, so `Restart=on-failure` does not catch a wrong name or missing permission; it prints `IO error` and keeps running with no rig. Binding to the device is what covers unplugging and replugging. A wrong baud rate or model shows up as errors in the strip, not as a stopped unit. Look at `journalctl` for the daemon's own output.
-=======
-### Running `rigctld` under systemd
-
-The prompt above starts a `rigctld` that is a child of `rig-tui`: it dies with `rig-tui`, including when an ssh session drops. For a daemon that survives that and starts itself when the radio is plugged in, run it as a systemd service bound to a udev-tagged device instead. Example udev rules and units for the KX3 and FT-847 are in `docs/systemd/` (README there for install steps). `rig-tui` needs no changes either way — it already retries the connection and reconnects when a daemon appears, and a `rigctld` it finds already running is never touched.
->>>>>>> Stashed changes
 
 ### Satellite settings
 
@@ -572,7 +503,7 @@ Hunter row markers use characters, not color: `✓` worked today, `~` stale, `P`
 
 | Symptom | Check |
 | --- | --- |
-| Strip shows dashes and "disconnected", with a yellow `⚠ cannot reach rigctld` line | Is `rigctld` running at the configured address, and is the radio plugged in? The line stays for as long as the rig is unreachable; the app retries by itself. If you reach the machine over ssh, run the daemons as systemd units (section 8) so they outlive your session. |
+| Strip shows dashes and "disconnected", with a yellow `⚠ cannot reach rigctld` line | Is `rigctld` running at the configured address, and is the radio plugged in? The line stays for as long as the rig is unreachable; the app retries by itself. If you reach the machine over ssh, run the daemons as systemd units (section 8) so they outlive your session, and `rig-tui` does not start them. |
 | `Permission denied` opening the serial port | That is `rigctld`'s port, not the app's. Add the user to `dialout`, then start a fresh login (or `sg dialout -c '...'`). |
 | KX3 decode shows `*` | The radio could not decode the character. Weak or fading signals do this. |
 | Mode change altered the filter | The KX3 applies a per-mode filter. Restore it on the radio or with `M <mode> <passband>`. |

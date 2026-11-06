@@ -23,12 +23,10 @@ callsign = "N0CALL"
 # "generic". Both rigs stay connected; Ctrl-R switches.
 # The old single `[rig] addr` and `[kx3]` keys are no longer read and are rejected.
 #
-# The apps never open a serial port; rigctld does. If the Active rig cannot be reached, rig-tui
-# offers to start one (Ctrl-D opens that prompt any time) for a loopback address and a kx3 or
-# ft847 profile, as a child that stops when rig-tui quits. By hand, the same daemons are:
+# The apps never open a serial port; rigctld does, and rig-tui never starts one: run one per rig
+# (systemd units on a Pi, the NixOS config on the author's machines; see the user guide):
 #   KX3    rigctld -m 2045 -s 38400 -r /dev/kx3 -t 4532    (needs the dialout group)
 #   FT-847 rigctld -m 1001 -s 9600  -r <its serial port> -t 4533    (model 1001, not 1038)
-# On the author's machines both daemons are run by the NixOS config, so the prompt stays quiet.
 [rig]
 # The profile to start on. Omit it to start on the first one.
 default = "kx3"

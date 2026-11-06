@@ -41,7 +41,6 @@ use crate::softkeys::{Exchange, Layers, NamedSet, Resolved, resolve};
 use crate::style::{dim, red};
 use crate::tracker::{self, ActivationView, PlanBanner, Program, Tracker};
 
-mod daemon_offer;
 mod rig_switch;
 
 /// How long to wait between attempts to reach `rigctld`. A starting value, untested on hardware.
@@ -193,12 +192,6 @@ pub struct App {
     /// No profile was configured: `rigs` holds one stand-in named after its address.
     implicit_rig: bool,
     switcher: Option<Switcher>,
-    /// The start-rigctld prompt, when open, and whether to offer it unasked.
-    daemon_modal: Option<crate::daemon_modal::DaemonModal>,
-    daemon_auto: bool,
-    daemon_offered: bool,
-    /// The prompt was asked for with its Chord, so an empty answer is explained.
-    daemon_manual: bool,
     overlay: Option<Box<dyn Overlay>>,
     /// The quit confirmation, with a line for each thing quitting would lose. It sits above
     /// every other overlay, which stay untouched underneath.
@@ -301,10 +294,6 @@ impl App {
             rig_default: None,
             implicit_rig: true,
             switcher: None,
-            daemon_modal: None,
-            daemon_auto: false,
-            daemon_offered: false,
-            daemon_manual: false,
             overlay: None,
             quit_confirm: None,
             palette: None,
@@ -675,7 +664,6 @@ impl App {
             || self.keybindings.is_some()
             || self.bandplan.is_some()
             || self.switcher_open()
-            || self.daemon_open()
             || self.logging.list_open();
         any && self.config.is_none()
             && self.export_modal.is_none()
@@ -951,7 +939,6 @@ impl App {
         self.overlay.is_some()
             || self.config.is_some()
             || self.switcher_open()
-            || self.daemon_open()
             || self.bandplan.is_some()
             || self.logging_modal_open()
             || self.quit_confirm.is_some()
@@ -1408,7 +1395,6 @@ impl App {
             Action::Config => self.open_config(),
             Action::LocatorFromGps => self.locator_from_gps(),
             Action::Quit => self.open_quit_confirm(),
-            Action::Daemon => return self.ask_for_ports(),
             _ => {}
         }
         Vec::new()
@@ -1628,7 +1614,6 @@ impl App {
             self.keybindings = None;
             self.bandplan = None;
             self.switcher = None;
-            self.daemon_modal = None;
             self.logging.close_list();
             self.entry = None;
             return self.perform(action);
@@ -1648,9 +1633,6 @@ impl App {
                     commands
                 }
             };
-        }
-        if self.daemon_open() {
-            return self.on_daemon_key(key);
         }
         if self.switcher_open() {
             self.on_switcher_key(key);
@@ -2146,9 +2128,6 @@ impl App {
                 .last_connect
                 .is_none_or(|at| now.duration_since(at) >= RECONNECT_EVERY);
             let mut commands = self.tick_foreground(now);
-            if due && self.daemon_offer_due() {
-                commands.push(Command::ScanPorts);
-            }
             if due {
                 self.last_connect = Some(now);
                 commands.insert(0, Command::Connect);
@@ -2218,7 +2197,6 @@ impl App {
             dialog.render(frame, area);
         }
         self.render_switcher(frame, area);
-        self.render_daemon(frame, area);
         if let Some(modal) = &self.bandplan {
             let view = BandView {
                 rx: self.frequency(),

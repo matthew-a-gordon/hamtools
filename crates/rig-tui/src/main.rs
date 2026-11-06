@@ -9,7 +9,6 @@ use chrono::Utc;
 use hamtools_config::Grid;
 use ratatui::DefaultTerminal;
 use ratatui::crossterm::event::{self, Event, KeyEventKind};
-use rig_tui::daemon::{Daemons, scan_ports};
 use rig_tui::geocode::{GeocodeResult, Geocoder};
 use rig_tui::refdata::ReferenceData;
 use rig_tui::reference::{
@@ -120,8 +119,7 @@ fn try_main() -> Result<(), Box<dyn Error>> {
             std::env::var("HOME").ok().as_deref(),
         ))
         .with_rigs(&config.rigs, config.rig_default.as_deref())
-        .with_config_path(config_arg.or(default_path))
-        .with_daemon_prompt(true);
+        .with_config_path(config_arg.or(default_path));
     if let Some(name) = rig_arg {
         app = app.with_active_rig(&name)?;
     }
@@ -177,8 +175,6 @@ fn try_main() -> Result<(), Box<dyn Error>> {
         rig_tui::gps::watch_in_background(addr, gps_tx);
     }
 
-    // Daemons we start are children; dropping this (after the terminal is restored) kills them.
-    let mut daemons = Daemons::default();
     let mut terminal = ratatui::init();
     let result = run(
         &mut terminal,
@@ -187,7 +183,6 @@ fn try_main() -> Result<(), Box<dyn Error>> {
         &geocoder,
         Services {
             downloads: &mut downloads,
-            daemons: &mut daemons,
             gps: &gps_rx,
         },
     );
@@ -308,10 +303,9 @@ impl Downloads {
     }
 }
 
-/// What `dispatch` runs besides the rigs: satellite downloads and the daemons we started.
+/// What `dispatch` runs besides the rigs: satellite downloads and the gpsd watcher.
 struct Services<'a> {
     downloads: &'a mut Downloads,
-    daemons: &'a mut Daemons,
     /// Changes of GPS state from the gpsd watcher.
     gps: &'a Receiver<rig_tui::gps::Gps>,
 }
@@ -335,18 +329,6 @@ fn dispatch(
             }
             Command::ClearGeocodeCache => {
                 geocoder.clear_cache();
-                continue;
-            }
-            Command::ScanPorts => {
-                let held = services.daemons.ports_in_use();
-                let mut ports = scan_ports(std::path::Path::new("/dev"));
-                ports.retain(|p| !held.contains(&p.path));
-                app.on_ports(ports);
-                continue;
-            }
-            Command::StartDaemon(launch) => {
-                let message = services.daemons.start(launch.clone()).unwrap_or_else(|e| e);
-                app.set_status(Some(message));
                 continue;
             }
             Command::SatelliteRefresh { force } => {
@@ -413,9 +395,6 @@ fn run(
             app.on_gps(state);
         }
         services.downloads.poll(&mut app);
-        if let Some(message) = services.daemons.poll().pop() {
-            app.set_status(Some(message));
-        }
 
         let commands = app.tick(Instant::now());
         if dispatch(pool, &mut app, geocoder, &lookups, &mut services, commands) {

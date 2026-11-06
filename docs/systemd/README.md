@@ -1,11 +1,11 @@
 # rigctld under systemd
 
 Example udev rules and systemd units for running `rigctld` as a system
-service per rig, instead of as a child of `rig-tui` (see "Starting
-`rigctld`" in `docs/user-guide.md`). A `rigctld` managed this way survives
-ssh disconnects and `rig-tui` restarts, and starts itself when the radio's
-cable is plugged in. `rig-tui` needs no changes: it already retries the
-connection every few seconds and reconnects when a daemon appears.
+service per rig. `rig-tui` does not start `rigctld` itself (ADR 0008; see
+"Running `rigctld`" in `docs/user-guide.md`). A `rigctld` managed this way
+survives ssh disconnects and `rig-tui` restarts, and starts itself when the
+radio's cable is plugged in. `rig-tui` needs no changes: it already retries
+the connection every few seconds and reconnects when a daemon appears.
 
 These are templates. `<serial>`, `<vendor>`, `<product>` and `<user>` are
 placeholders — fill them in for your own cables and account before
@@ -77,10 +77,11 @@ systemctl status rigctld-kx3
 journalctl -u rigctld-kx3 -b
 ```
 
-With the cable plugged in, `rig-tui` should show the rig as connected
-without ever showing the start-`rigctld` prompt — that prompt only
-appears when `rig-tui` cannot reach a `rigctld` already running at the
-profile's address.
+With the cable plugged in, `rig-tui` should show the rig as connected.
+With no cable, the strip shows `disconnected` and a yellow
+`⚠ cannot reach rigctld ...` line; that is correct and stays until the
+daemon is reachable. If the other rig is up, the line says so and points
+at `Ctrl-R`.
 
 A read-only raw check, cable plugged in and nothing else holding the
 port:

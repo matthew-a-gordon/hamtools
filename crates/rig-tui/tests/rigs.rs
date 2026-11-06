@@ -518,3 +518,50 @@ mod another_rig_is_up {
         assert!(!has(&rows, "is connected"), "{rows:#?}");
     }
 }
+
+mod unavailable_rigs_are_greyed {
+    use super::*;
+    use ratatui::Terminal;
+    use ratatui::backend::TestBackend;
+    use ratatui::style::Color;
+    use rig_tui::render;
+
+    /// The foreground colour of the first cell of `word` on the screen's first row holding it.
+    fn colour_of(app: &App, word: &str) -> Color {
+        let rows = screen(app, 100, 24);
+        let (y, row) = rows
+            .iter()
+            .enumerate()
+            .find(|(_, r)| r.contains(word))
+            .unwrap_or_else(|| panic!("no {word:?} in {rows:#?}"));
+        let x = row
+            .char_indices()
+            .position(|(i, _)| row[i..].starts_with(word))
+            .unwrap();
+        let mut terminal = Terminal::new(TestBackend::new(100, 24)).unwrap();
+        terminal.draw(|f| render(app, f)).unwrap();
+        terminal.backend().buffer()[(x as u16, y as u16)].fg
+    }
+
+    #[test]
+    fn a_disconnected_rig_row_is_dim_and_a_connected_one_is_not() {
+        let mut app = connected_app_in(two_rigs(), "CW"); // kx3 active and connected
+        app.on_key(ctrl('r'));
+
+        assert_ne!(colour_of(&app, "kx3 (active)"), Color::DarkGray);
+        assert_eq!(colour_of(&app, "ft847  ft847"), Color::DarkGray);
+
+        app.on_rig_at(1, RigEvent::Connected);
+
+        assert_ne!(colour_of(&app, "ft847  ft847"), Color::DarkGray);
+    }
+
+    #[test]
+    fn a_greyed_rig_can_still_be_selected() {
+        let mut app = connected_app_in(two_rigs(), "CW");
+        app.on_key(ctrl('r'));
+        app.on_key(key(KeyCode::Down));
+        app.on_key(key(KeyCode::Enter));
+        assert_eq!(app.active_rig(), 1);
+    }
+}

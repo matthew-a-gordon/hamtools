@@ -24,7 +24,6 @@ pub enum Action {
     Keybindings,
     Bandplan,
     RigSwitcher,
-    Daemon,
     LogForm,
     SessionList,
     Config,
@@ -125,12 +124,11 @@ const fn soft(n: u8, label: &'static str) -> KeyEntry {
     )
 }
 
-const SHARED: [KeyEntry; 42] = [
+const SHARED: [KeyEntry; 41] = [
     chord('g', Action::GoTo, "go to"),
     chord('k', Action::Keybindings, "keybindings"),
     chord('b', Action::Bandplan, "bandplan"),
     chord('r', Action::RigSwitcher, "rig switcher"),
-    chord('d', Action::Daemon, "start rigctld"),
     chord('l', Action::LogForm, "log form"),
     chord('j', Action::SessionList, "session list"),
     chord('o', Action::Config, "config"),

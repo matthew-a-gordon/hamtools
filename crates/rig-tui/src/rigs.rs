@@ -342,8 +342,11 @@ impl Switcher {
                 (Some(hz), None) => format!("  {}", crate::ui::format_hz(hz)),
                 _ => String::new(),
             };
+            // An unreachable rig is greyed out, but can still be chosen.
             let style = if i == self.cursor {
                 crate::style::selected()
+            } else if !row.connected {
+                dim()
             } else {
                 Style::default()
             };
@@ -363,7 +366,7 @@ impl Switcher {
             ]));
             lines.push(Line::from(Span::styled(
                 format!("    {}", row.caps.rows().join("; ")),
-                if row.caps.bands_verified && row.caps.cw.verified {
+                if !row.connected || (row.caps.bands_verified && row.caps.cw.verified) {
                     dim()
                 } else {
                     yellow()
